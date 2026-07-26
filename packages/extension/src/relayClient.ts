@@ -11,6 +11,9 @@ export type ConnectionState = "connecting" | "online" | "offline";
 const INITIAL_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30_000;
 const PING_INTERVAL_MS = 25_000;
+/** Relay close codes that must not be retried. */
+const EVICTED_CODE = 4000;
+const UNAUTHORISED_CODE = 4003;
 
 export interface RelayClientOptions {
   url: string;
@@ -29,6 +32,12 @@ export interface RelayClientOptions {
   token?: string;
   onMessage: (msg: ServerMsg) => void;
   onStateChange: (state: ConnectionState) => void;
+  /**
+   * The relay closed this connection because another one claimed the same
+   * identity. Reconnecting would fight the other machine forever, so the client
+   * stops and reports instead.
+   */
+  onEvicted?: (reason: string) => void;
 }
 
 /**
@@ -84,12 +93,31 @@ export class RelayClient {
       }
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code: number, reason: Buffer) => {
       this.stopPing();
       if (this.disposed) {
         return;
       }
       this.setState("offline");
+
+      // 4000 means the relay handed our slot to a newer connection with the
+      // same identity. Reconnecting evicts *them*, they reconnect and evict us,
+      // and the room fills with join/leave forever — which is exactly what two
+      // machines sharing a GitHub account used to do. Stop and say why.
+      if (code === EVICTED_CODE) {
+        this.disposed = true;
+        this.opts.onEvicted?.(reason.toString() || "another session took this identity");
+        return;
+      }
+
+      // 4003 is an auth refusal. Retrying with the same bad token is pointless
+      // and hammers the relay.
+      if (code === UNAUTHORISED_CODE) {
+        this.disposed = true;
+        this.opts.onEvicted?.("the relay rejected this connection — check mpa.roomToken");
+        return;
+      }
+
       this.scheduleReconnect();
     });
 

@@ -123,11 +123,14 @@ export class Room {
       label = agent?.label ?? `${member.displayName}'s agent`;
       // Replacing by *agent id* — not by handle — is what lets one person run
       // several agents at once without them evicting each other.
-      this.agents.get(id)?.socket.close(4000, "replaced by a newer session");
+      this.agents.get(id)?.socket.close(4000, `another connection claimed the agent id ${id}`);
       this.agents.set(id, { member, socket, id, label });
     } else {
       label = member.displayName;
-      this.connections.get(member.handle)?.socket.close(4000, "replaced by a newer session");
+      this.connections.get(member.handle)?.socket.close(
+        4000,
+        `another session joined as @${member.handle}`
+      );
       this.connections.set(member.handle, { member, socket });
     }
 

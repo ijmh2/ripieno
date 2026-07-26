@@ -537,6 +537,18 @@ export function activate(context: vscode.ExtensionContext): void {
       room,
       member,
       token: roomToken(),
+      onEvicted: (reason) => {
+        // Two machines resolving to one handle is the usual cause, and it is
+        // invisible otherwise — the room just churns.
+        void vscode.window.showErrorMessage(
+          `Multiplayer Agent: disconnected — ${reason}. ` +
+            "If another machine is signed in as the same person, give one of them a different " +
+            "mpa.devIdentityOverride and rejoin.",
+          "Rejoin"
+        ).then((choice) => {
+          if (choice === "Rejoin") void joinRoom();
+        });
+      },
       onMessage: (msg) => handleServerMsg(msg),
       onStateChange: (state) => handleConnectionState(state),
     });
