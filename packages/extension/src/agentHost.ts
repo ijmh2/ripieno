@@ -14,7 +14,8 @@
 import * as vscode from "vscode";
 import { randomBytes } from "crypto";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { Member, TranscriptEntry } from "@mpa/protocol";
+import type { Member, RosterEntry, TranscriptEntry } from "@mpa/protocol";
+import { shouldAnswer, type AgentIdentity } from "./addressing";
 import { RelayClient } from "./relayClient";
 import type { ApprovalBridge } from "./approvals";
 import {
@@ -82,7 +83,7 @@ export interface AgentHostOptions extends AgentSpec {
   permissionServerPath: string;
   workspaceServerPath: string;
   onStateChange: (id: string, state: AgentState) => void;
-  /** Other agents this member runs, so this one can tell when it was not the one asked. */
+  /** Other agents this member runs. Superseded at runtime by the live roster. */
   siblingLabels?: string[];
 }
 
@@ -121,6 +122,15 @@ export class AgentHost implements vscode.Disposable {
   private readonly workspaceToken = randomBytes(24).toString("hex");
   private workspaceUrl: string | undefined;
   private state: AgentState = "detached";
+  /**
+   * Every other agent in the room, from the live roster.
+   *
+   * Knowing only this member's siblings was not enough: when somebody named
+   * *another member's* agent, this one did not recognise it as a name, ran a
+   * full turn, and then declined — having already spent the tokens. The roster
+   * carries all of them, so the gate can close before the model runs.
+   */
+  private others: AgentIdentity[] = [];
 
   constructor(private readonly opts: AgentHostOptions) {
     this.output = vscode.window.createOutputChannel(`Multiplayer Agent — ${opts.label}`);
@@ -160,12 +170,15 @@ export class AgentHost implements vscode.Disposable {
       onStateChange: (s) => this.setState(s === "online" ? "idle" : "attaching"),
       onMessage: (msg) => {
         if (msg.t === "joined") {
+          this.noteRoster(msg.roster);
           this.transcript.push(...msg.transcript);
           // Everything before we attached is context, not a question to answer.
           this.fed = this.transcript.length;
         } else if (msg.t === "entry") {
           this.transcript.push(msg.entry);
           this.consider(msg.entry);
+        } else if (msg.t === "roster") {
+          this.noteRoster(msg.roster);
         } else if (msg.t === "remoteToolReply") {
           const waiting = this.remoteCalls.get(msg.requestId);
           if (waiting) {
@@ -280,31 +293,32 @@ export class AgentHost implements vscode.Disposable {
     this.pending = setTimeout(() => void this.respond(), DEBOUNCE_MS);
   }
 
-  /**
-   * Answer when named, or when primary and nobody else was named.
-   *
-   * Deterministic rather than conventional: an addressed agent always replies,
-   * an unaddressed message gets exactly one reply per member, and a member can
-   * consult a specific agent without silencing the rest of the room.
-   */
+  /** Track every other agent in the room, so addressing can be decided locally. */
+  private noteRoster(roster: RosterEntry[]): void {
+    this.others = roster
+      .flatMap((member) =>
+        member.agents.map((agent) => ({ label: agent.label, handle: member.handle }))
+      )
+      .filter((agent) => agent.label !== this.opts.label);
+  }
+
   private shouldAnswer(entry: TranscriptEntry): boolean {
-    if (this.addresses(entry.text, this.opts.label)) return true;
-    // Somebody else was named — stay out of it.
-    if (this.namesAnyAgent(entry.text)) return false;
-    return this.opts.primary !== false;
-  }
-
-  /** Named by its own label, or by the distinctive part of it ("reviewer"). */
-  private addresses(text: string, label: string): boolean {
-    const haystack = text.toLowerCase();
-    if (haystack.includes(label.toLowerCase())) return true;
-    const distinctive = label.split(/[\s']+/).pop();
-    if (!distinctive || distinctive.length < 3) return false;
-    return new RegExp(`(^|[^a-z])@?${escapeRegExp(distinctive.toLowerCase())}([^a-z]|$)`).test(haystack);
-  }
-
-  private namesAnyAgent(text: string): boolean {
-    return this.opts.siblingLabels?.some((label) => this.addresses(text, label)) === true;
+    return shouldAnswer(
+      entry.text,
+      {
+        label: this.opts.label,
+        handle: this.opts.member.handle,
+        primary: this.opts.primary !== false,
+      },
+      // Fall back to configured siblings until the first roster arrives, so a
+      // message in the first moments after attaching is still routed sanely.
+      this.others.length > 0
+        ? this.others
+        : (this.opts.siblingLabels ?? []).map((label) => ({
+            label,
+            handle: this.opts.member.handle,
+          }))
+    );
   }
 
   private async respond(): Promise<void> {
@@ -507,10 +521,6 @@ export class AgentHost implements vscode.Disposable {
  * gets a modal and decides, exactly as they would in their own editor. The
  * bypass option exists for a room you are alone in, where the prompts are noise.
  */
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function permissionMode(): string {
   const mode = vscode.workspace
     .getConfiguration("mpa")

@@ -9,7 +9,7 @@ async function main() {
     // needs its own bundle rather than being part of the extension.
     // workspaceFs is also emitted on its own so its cache and parsing logic can
     // be unit-tested outside the editor; the bundle imports it either way.
-    entryPoints: ["src/extension.ts", "src/permissionServer.ts", "src/workspaceFs.ts", "src/workspaceServer.ts"],
+    entryPoints: ["src/extension.ts", "src/permissionServer.ts", "src/workspaceFs.ts", "src/workspaceServer.ts", "src/addressing.ts"],
     bundle: true,
     format: "cjs",
     platform: "node",
