@@ -1,0 +1,49 @@
+{
+  "$comment": [
+    "Project permissions for agents working in this repo, so ordinary read-only",
+    "and build work stops re-prompting.",
+    "",
+    "Be clear about what this does and does not do. It widens Bash only. It does",
+    "NOT restrain the Write tool — a room agent running with acceptEdits can",
+    "create or overwrite any file it can reach, while still being unable to run",
+    "`ls -R`. That asymmetry is real and backwards from a security standpoint;",
+    "the deny list below is the part that actually narrows reach, and the",
+    "mpa.agentPermissions setting is what decides whether commands run at all.",
+    "",
+    "Also note a headless room agent cannot answer an approval prompt: anything",
+    "needing one strands rather than being denied."
+  ],
+  "enabledMcpjsonServers": ["room"],
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(ls:*)",
+      "Bash(rg:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run typecheck:*)",
+      "Bash(node --check:*)",
+      "Bash(python3:*)",
+      "Bash(wc:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)"
+    ],
+    "deny": [
+      "Read(/~/.ssh/**)",
+      "Read(/~/.aws/**)",
+      "Read(/~/.config/anthropic/**)",
+      "Read(//**/.env)",
+      "Read(//**/.env.*)",
+      "Write(/~/.ssh/**)",
+      "Write(/~/.claude/**)",
+      "Write(/~/.config/**)",
+      "Bash(rm -rf:*)",
+      "Bash(curl:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}

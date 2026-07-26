@@ -1,0 +1,181 @@
+{
+  "name": "multiplayer-agent",
+  "displayName": "Multiplayer Agent",
+  "description": "A shared AI agent room in your editor \u2014 one conversation, multiple people, one agent that knows who said what.",
+  "version": "0.0.1",
+  "publisher": "ijmh2",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mpa",
+          "title": "Multiplayer Agent",
+          "icon": "media/room.svg"
+        }
+      ]
+    },
+    "views": {
+      "mpa": [
+        {
+          "id": "mpa.rooms",
+          "name": "Rooms & Agents"
+        },
+        {
+          "id": "mpa.room",
+          "name": "Room",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "mpa.joinRoom",
+        "title": "Multiplayer Agent: Join Room"
+      },
+      {
+        "command": "mpa.leaveRoom",
+        "title": "Multiplayer Agent: Leave Room"
+      },
+      {
+        "command": "mpa.signIn",
+        "title": "Multiplayer Agent: Sign in to GitHub"
+      },
+      {
+        "command": "mpa.attachAgent",
+        "title": "Multiplayer Agent: Attach an Agent",
+        "icon": "$(play)"
+      },
+      {
+        "command": "mpa.detachAgent",
+        "title": "Multiplayer Agent: Detach Agent",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "mpa.addAgent",
+        "title": "Multiplayer Agent: Add Another Agent",
+        "icon": "$(add)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "mpa.addAgent",
+          "when": "view == mpa.rooms",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "mpa.attachAgent",
+          "when": "view == mpa.rooms && viewItem == mpaAgentDetached",
+          "group": "inline"
+        },
+        {
+          "command": "mpa.detachAgent",
+          "when": "view == mpa.rooms && viewItem == mpaAgentAttached",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Multiplayer Agent",
+      "properties": {
+        "mpa.relayUrl": {
+          "type": "string",
+          "default": "ws://localhost:8787",
+          "description": "WebSocket URL of the relay server hosting the room."
+        },
+        "mpa.commandApproval": {
+          "type": "string",
+          "enum": [
+            "always",
+            "allowlist",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Confirm every command.",
+            "Run commands matching mpa.allowedCommands without asking; confirm the rest.",
+            "Run any command without asking. A shared room can then execute anything on your machine."
+          ],
+          "default": "always",
+          "description": "When to confirm before the agent runs a shell command in your workspace."
+        },
+        "mpa.allowedCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "git status",
+            "git diff",
+            "npm test",
+            "npm run build"
+          ],
+          "description": "Command prefixes that run without confirmation when mpa.commandApproval is \"allowlist\". A command containing shell separators is never matched."
+        },
+        "mpa.agentPermissions": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "bypassPermissions"
+          ],
+          "enumDescriptions": [
+            "Your agent asks you before anything with side effects \u2014 running code, launching apps, git writes. The prompt appears in your editor, so it is a real decision rather than a stalled request.",
+            "Your agent runs everything without asking, like an ordinary Claude Code session. Remember the room steers it: anyone in the room can talk your agent into running things on your machine."
+          ],
+          "default": "ask",
+          "markdownDescription": "What your own agents may do in a room. `ask` routes approvals to you in the editor and is the sane default; `bypassPermissions` is faster and only appropriate in a room you trust."
+        },
+        "mpa.devIdentityOverride": {
+          "type": "string",
+          "default": "",
+          "description": "Development only. Join as this handle instead of your GitHub account, so a second window can act as another member. Leave empty in normal use."
+        },
+        "mpa.devDisplayNameOverride": {
+          "type": "string",
+          "default": "",
+          "description": "Development only. Display name to pair with mpa.devIdentityOverride."
+        },
+        "mpa.roomToken": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Shared secret required by a deployed relay. Leave empty for a local relay. This is a gate, not a login \u2014 a holder can still claim any handle, so treat it as the key to the whole room."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node esbuild.js && node --test test/*.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.12",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ijmh2/multiplayer-agent.git"
+  }
+}

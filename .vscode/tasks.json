@@ -1,0 +1,63 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "watch extension",
+      "type": "shell",
+      "command": "npm run watch -w multiplayer-agent",
+      "isBackground": true,
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "silent", "panel": "dedicated" },
+      "problemMatcher": {
+        "owner": "esbuild",
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "\\[esbuild\\] watching",
+          "endsPattern": "\\[esbuild\\] watching"
+        }
+      }
+    },
+    {
+      "label": "start relay (BYO)",
+      "type": "shell",
+      "command": "npm start -w @mpa/relay",
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      // One-shot: your own Claude Code reads the room and answers, then exits.
+      // Your agent shows as present only while this runs.
+      "label": "ask my agent",
+      "type": "shell",
+      "command": "claude",
+      "args": [
+        "-p",
+        "${input:agentPrompt}",
+        "--allowedTools",
+        "mcp__room__room_read,mcp__room__room_post,mcp__room__room_roster"
+      ],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      // Resident: an interactive session stays attached, so your agent remains
+      // in the roster for as long as the terminal is open.
+      "label": "attach my agent (interactive)",
+      "type": "shell",
+      "command": "claude",
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "agentPrompt",
+      "type": "promptString",
+      "description": "What should your agent do in the room?",
+      "default": "Read the room and reply to whatever was last asked. Attribute anything you say to whoever said it."
+    }
+  ]
+}

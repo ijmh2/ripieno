@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+*.vsix
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example

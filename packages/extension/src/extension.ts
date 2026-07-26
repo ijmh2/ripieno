@@ -1,0 +1,455 @@
+import * as vscode from "vscode";
+import type { Member, ServerMsg } from "@mpa/protocol";
+import { resolveIdentity } from "./identity";
+import { RelayClient, type ConnectionState } from "./relayClient";
+import { ToolExecutor, registerProposedDocuments } from "./toolExecutor";
+import { RoomViewProvider } from "./roomView";
+import { AgentHost, type AgentState } from "./agentHost";
+import { RoomsTreeProvider, type MyAgent } from "./roomsTree";
+import { ApprovalBridge } from "./approvals";
+
+export function activate(context: vscode.ExtensionContext): void {
+  const toolExecutor = new ToolExecutor();
+  // Backs the right-hand side of the diff shown before any write is applied.
+  context.subscriptions.push(registerProposedDocuments());
+  let relay: RelayClient | undefined;
+  let currentRoom: string | undefined;
+  let me: Member | undefined;
+
+  // A member may run several agents at once — a coder and a reviewer, say —
+  // each with its own process, session and label in the transcript.
+  const agents = new Map<string, AgentHost>();
+  const specs = new Map<
+    string,
+    { id: string; label: string; brief?: string; cwd?: string; model?: string }
+  >();
+  const approvals = new ApprovalBridge();
+  const permissionServerPath = vscode.Uri.joinPath(
+    context.extensionUri,
+    "dist",
+    "permissionServer.js"
+  ).fsPath;
+
+  const roomView = new RoomViewProvider(context.extensionUri, (text) => {
+    if (handleRoomCommand(text)) return;
+    relay?.send({ t: "say", text });
+  });
+
+  const roomsTree = new RoomsTreeProvider({
+    attachAgent: (id) => attachAgent(id),
+    detachAgent: (id) => detachAgent(id),
+    addAgent: () => void addAgent(),
+    joinRoom: () => void joinRoom(),
+  });
+
+  // Prefer an inline card in the room panel over a focus-stealing modal; the
+  // bridge falls back to a modal when the panel is hidden, so a request is
+  // never shown nowhere.
+  approvals.setPrompt((request) => roomView.requestApproval(request));
+
+  // Everyone starts with one agent; more can be added.
+  ensureSpec("default", "agent");
+
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(RoomViewProvider.viewId, roomView),
+    vscode.window.createTreeView(RoomsTreeProvider.viewId, {
+      treeDataProvider: roomsTree,
+      dragAndDropController: roomsTree,
+    }),
+    vscode.commands.registerCommand("mpa.joinRoom", () => joinRoom()),
+    vscode.commands.registerCommand("mpa.leaveRoom", () => leaveRoom()),
+    vscode.commands.registerCommand("mpa.signIn", () => signIn()),
+    vscode.commands.registerCommand("mpa.addAgent", () => addAgent()),
+    vscode.commands.registerCommand("mpa.attachAgent", (node?: { id?: string }) =>
+      attachAgent(idFromNode(node))
+    ),
+    vscode.commands.registerCommand("mpa.detachAgent", (node?: { id?: string }) =>
+      detachAgent(idFromNode(node))
+    ),
+    approvals,
+    { dispose: () => { detachAll(); relay?.dispose(); } }
+  );
+
+  /** Tree item ids are prefixed so attached and detached rows stay distinct. */
+  function idFromNode(node?: { id?: string }): string | undefined {
+    const raw = node?.id;
+    return typeof raw === "string" ? raw.replace(/^(attached|detached):/, "") : undefined;
+  }
+
+  function ensureSpec(suffix: string, label: string): string {
+    const id = `local:${suffix}`;
+    if (!specs.has(id)) specs.set(id, { id, label });
+    return id;
+  }
+
+  function myAgentsForTree(): MyAgent[] {
+    return [...specs.values()].map((spec) => ({
+      id: spec.id,
+      label: labelFor(spec.label),
+      state: agents.get(spec.id)?.currentState ?? "detached",
+      folder: spec.cwd ? spec.cwd.split("/").pop() : undefined,
+      model: spec.model,
+      // The first agent answers anything not addressed to someone specific.
+      primary: [...specs.keys()][0] === spec.id,
+    }));
+  }
+
+  function labelFor(base: string): string {
+    return me ? `${me.displayName}'s ${base}` : base;
+  }
+
+  async function addAgent(): Promise<void> {
+    const name = await vscode.window.showInputBox({
+      title: "Add another agent",
+      prompt: "What is this agent for? Used as its name in the room.",
+      placeHolder: "e.g. reviewer",
+      ignoreFocusOut: true,
+    });
+    if (!name) return;
+
+    const brief = await vscode.window.showInputBox({
+      title: `Brief for "${name}"`,
+      prompt: "Optional standing instruction that makes this agent behave differently from your others.",
+      placeHolder: "e.g. review other people's changes critically; do not write code",
+      ignoreFocusOut: true,
+    });
+
+    const cwd = await pickWorkingFolder(name);
+    const model = await pickModel(name);
+    const id = `local:${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}:${specs.size}`;
+    specs.set(id, { id, label: name, brief: brief || undefined, cwd, model });
+    roomsTree.setMyAgents(myAgentsForTree());
+    // Attaching straight away is almost always what was meant.
+    if (currentRoom) attachAgent(id);
+  }
+
+  /** Models an agent can run on. Aliases track the latest of each family. */
+  const MODELS = [
+    { label: "$(sparkle) Opus", description: "most capable — deep reasoning, harder problems", value: "opus" },
+    { label: "$(zap) Sonnet", description: "faster and cheaper — good for routine work", value: "sonnet" },
+    { label: "$(dashboard) Haiku", description: "fastest — quick lookups and simple edits", value: "haiku" },
+    { label: "$(gear) Default", description: "whatever your Claude Code is configured to use", value: "" },
+  ];
+
+  async function pickModel(name: string): Promise<string | undefined> {
+    const choice = await vscode.window.showQuickPick(MODELS, {
+      title: `Which model should "${name}" run on?`,
+      ignoreFocusOut: true,
+    });
+    return choice?.value || undefined;
+  }
+
+  /**
+   * Room-level commands. `/model` and friends never reach a headless agent —
+   * the interactive CLI owns that layer — so the room provides its own, handled
+   * here rather than posted into the conversation for a model to puzzle over.
+   * Returns true when the message was a command and should not be sent.
+   */
+  function handleRoomCommand(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("/")) return false;
+
+    const [command, ...rest] = trimmed.slice(1).split(/\s+/);
+    const argument = rest.join(" ").trim();
+
+    switch (command.toLowerCase()) {
+      case "help":
+        note(
+          [
+            "Room commands (handled here, not sent to the room):",
+            "  /model <opus|sonnet|haiku|default> [agent]  — set the model for your agents",
+            "  /agents                                     — list your agents",
+            "  /detach [agent]                             — stop an agent",
+            "  /help                                       — this list",
+          ].join("\n")
+        );
+        return true;
+
+      case "agents": {
+        const rows = [...specs.values()].map((spec) => {
+          const state = agents.get(spec.id)?.currentState ?? "detached";
+          const where = spec.cwd ? ` · ${spec.cwd}` : "";
+          return `  ${labelFor(spec.label)} — ${state} · ${spec.model ?? "default model"}${where}`;
+        });
+        note(rows.length > 0 ? `Your agents:\n${rows.join("\n")}` : "You have no agents.");
+        return true;
+      }
+
+      case "model": {
+        const [wanted, target] = argument.split(/\s+/);
+        if (!wanted) {
+          note("Usage: /model <opus|sonnet|haiku|default> [agent name]");
+          return true;
+        }
+        const value = wanted.toLowerCase() === "default" ? undefined : wanted.toLowerCase();
+        const matched = [...specs.values()].filter(
+          (spec) => !target || spec.label.toLowerCase().includes(target.toLowerCase())
+        );
+        if (matched.length === 0) {
+          note(`No agent matching "${target}".`);
+          return true;
+        }
+        for (const spec of matched) {
+          spec.model = value;
+          // Restart so the change takes effect now rather than next attach; the
+          // session is per-process, so there is no way to switch mid-session.
+          if (agents.has(spec.id)) {
+            detachAgent(spec.id);
+            attachAgent(spec.id);
+          }
+        }
+        note(
+          `${matched.map((s) => labelFor(s.label)).join(", ")} now on ${value ?? "the default model"}` +
+            (matched.some((s) => agents.has(s.id)) ? " (restarted — its session starts fresh)." : ".")
+        );
+        return true;
+      }
+
+      case "detach": {
+        const matched = [...specs.values()].filter(
+          (spec) => !argument || spec.label.toLowerCase().includes(argument.toLowerCase())
+        );
+        for (const spec of matched) detachAgent(spec.id);
+        note(`Detached ${matched.map((s) => labelFor(s.label)).join(", ") || "nothing"}.`);
+        return true;
+      }
+
+      default:
+        note(`Unknown command "/${command}". Try /help.`);
+        return true;
+    }
+  }
+
+  /** Local-only feedback: shown to you, not broadcast to the room. */
+  function note(text: string): void {
+    roomView.addEntry({
+      id: `local_${Date.now()}`,
+      kind: "system",
+      authorHandle: "system",
+      authorName: "system",
+      text,
+      ts: Date.now(),
+    });
+  }
+
+  /**
+   * Which project this agent works in. Defaulting to the editor's workspace is
+   * right most of the time, but an agent can be pointed at a different — or
+   * brand-new — directory, so one room can span several projects.
+   */
+  async function pickWorkingFolder(name: string): Promise<string | undefined> {
+    const here = vscode.workspace.workspaceFolders?.[0];
+    const choice = await vscode.window.showQuickPick(
+      [
+        {
+          label: here ? `$(folder) ${here.name}` : "$(folder) This workspace",
+          description: "the folder open in this window",
+          picked: true,
+        },
+        {
+          label: "$(folder-opened) Choose a folder…",
+          description: "another project — create a new folder in the dialog if you need one",
+        },
+      ],
+      { title: `Where should "${name}" work?`, ignoreFocusOut: true }
+    );
+    if (!choice || choice.label.startsWith("$(folder) ")) return undefined;
+
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFolders: true,
+      canSelectFiles: false,
+      canSelectMany: false,
+      openLabel: `Use as ${name}'s project`,
+      title: `Working folder for "${name}"`,
+    });
+    return picked?.[0]?.fsPath;
+  }
+
+  /**
+   * Attaching starts a real process, which is what makes dragging an agent into
+   * a room meaningful rather than a picture of state you created by hand.
+   */
+  function attachAgent(id?: string): void {
+    const spec = id ? specs.get(id) : [...specs.values()][0];
+    if (!spec) return;
+    if (!currentRoom || !me) {
+      vscode.window.showInformationMessage("Multiplayer Agent: join a room first.");
+      return;
+    }
+    if (agents.has(spec.id)) return;
+
+    // The first agent a member creates answers anything not addressed to
+    // someone specific; the rest speak only when named. Exactly one primary per
+    // member is what keeps three agents from all replying to one question.
+    const isPrimary = [...specs.keys()][0] === spec.id;
+
+    const host = new AgentHost({
+      url: relayUrl(),
+      room: currentRoom,
+      member: me,
+      id: spec.id,
+      label: labelFor(spec.label),
+      brief: spec.brief,
+      cwd: spec.cwd,
+      model: spec.model,
+      primary: isPrimary,
+      siblingLabels: [...specs.values()]
+        .filter((other) => other.id !== spec.id)
+        .map((other) => labelFor(other.label)),
+      approvals,
+      permissionServerPath,
+      token: roomToken(),
+      onStateChange: (agentId, state) => onAgentState(agentId, state),
+    });
+    agents.set(spec.id, host);
+    host.attach();
+    roomsTree.setMyAgents(myAgentsForTree());
+  }
+
+  function detachAgent(id?: string): void {
+    const target = id ?? [...agents.keys()][0];
+    if (!target) return;
+    agents.get(target)?.dispose();
+    agents.delete(target);
+    roomsTree.setMyAgents(myAgentsForTree());
+  }
+
+  function detachAll(): void {
+    for (const host of agents.values()) host.dispose();
+    agents.clear();
+  }
+
+  function onAgentState(_id: string, _state: AgentState): void {
+    roomsTree.setMyAgents(myAgentsForTree());
+  }
+
+  function roomToken(): string | undefined {
+    const token = vscode.workspace.getConfiguration("mpa").get<string>("roomToken", "").trim();
+    return token || undefined;
+  }
+
+  function relayUrl(): string {
+    return vscode.workspace
+      .getConfiguration("mpa")
+      .get<string>("relayUrl", "ws://localhost:8787");
+  }
+
+  async function joinRoom(): Promise<void> {
+    const room = await vscode.window.showInputBox({
+      title: "Join Multiplayer Agent Room",
+      prompt: "Room code",
+      placeHolder: "e.g. tgtbt-standup",
+      ignoreFocusOut: true,
+    });
+    if (!room) {
+      return;
+    }
+
+    const member = await resolveIdentity(false);
+    if (!member) {
+      vscode.window.showErrorMessage(
+        "Multiplayer Agent: sign in to GitHub is required to join a room."
+      );
+      return;
+    }
+
+    relay?.dispose();
+
+    // A new room means the old agents are watching the wrong conversation.
+    detachAll();
+    currentRoom = room;
+    me = member;
+    roomsTree.setMyAgents(myAgentsForTree());
+
+    relay = new RelayClient({
+      url: relayUrl(),
+      room,
+      member,
+      token: roomToken(),
+      onMessage: (msg) => handleServerMsg(msg),
+      onStateChange: (state) => handleConnectionState(state),
+    });
+    relay.connect();
+
+    await vscode.commands.executeCommand("mpa.room.focus");
+  }
+
+  function leaveRoom(): void {
+    if (!relay) {
+      vscode.window.showInformationMessage("Multiplayer Agent: not connected to a room.");
+      return;
+    }
+    detachAll();
+    relay.dispose();
+    relay = undefined;
+    currentRoom = undefined;
+    roomView.reset();
+    roomsTree.setRoom(undefined, "byo");
+    roomsTree.setConnected(false);
+    roomsTree.setMyAgents(myAgentsForTree());
+  }
+
+  async function signIn(): Promise<void> {
+    const member = await resolveIdentity(false);
+    if (member) {
+      vscode.window.showInformationMessage(`Multiplayer Agent: signed in as ${member.handle}.`);
+    }
+  }
+
+  function handleConnectionState(state: ConnectionState): void {
+    roomView.setConnection(state);
+    roomsTree.setConnected(state === "online");
+  }
+
+  function handleServerMsg(msg: ServerMsg): void {
+    switch (msg.t) {
+      case "joined":
+        roomView.setJoined(msg.room, msg.you, msg.roster, msg.transcript, msg.mode);
+        roomsTree.setRoom(msg.room, msg.mode, msg.you.handle);
+        roomsTree.setRoster(msg.roster);
+        break;
+      case "roster":
+        roomView.setRoster(msg.roster);
+        roomsTree.setRoster(msg.roster);
+        break;
+      case "entry":
+        roomView.addEntry(msg.entry);
+        break;
+      case "agentDelta":
+        roomView.addDelta(msg.entryId, msg.text);
+        break;
+      case "agentDeltaCancel":
+        roomView.cancelDelta(msg.entryId);
+        break;
+      case "toolCall":
+        void runToolCall(msg);
+        break;
+      case "status":
+        roomView.setStatus(msg.status, msg.waitingOn);
+        break;
+      case "error":
+        vscode.window.showErrorMessage(`Multiplayer Agent: ${msg.message}`);
+        break;
+    }
+  }
+
+  async function runToolCall(msg: Extract<ServerMsg, { t: "toolCall" }>): Promise<void> {
+    // Report progress as we go. The relay cannot otherwise tell a member who has
+    // vanished from one reading a confirmation dialog from a slow command, and
+    // has to time all three on one clock — which is how a member taking 61
+    // seconds to click Run used to lose the race.
+    const result = await toolExecutor.execute(msg, (state) => {
+      relay?.send({ t: "toolProgress", callId: msg.callId, state });
+    });
+    relay?.send({
+      t: "toolResult",
+      callId: msg.callId,
+      content: result.content,
+      isError: result.isError,
+    });
+  }
+}
+
+export function deactivate(): void {
+  // Cleanup happens via context.subscriptions (relay.dispose()).
+}

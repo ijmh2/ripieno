@@ -1,0 +1,144 @@
+/**
+ * WebSocket client that attaches an agent to a room.
+ *
+ * Joins with role "agent", so the relay keeps it separate from its owner's
+ * editor connection — a member and their agent are both live on the same handle
+ * without evicting each other.
+ */
+
+import WebSocket = require("ws");
+import type { ClientMsg, RosterEntry, ServerMsg, TranscriptEntry } from "@mpa/protocol";
+
+export interface RoomClientConfig {
+  url: string;
+  room: string;
+  handle: string;
+  displayName: string;
+  repo?: string;
+}
+
+export class RoomClient {
+  private socket?: WebSocket;
+  private readonly transcript: TranscriptEntry[] = [];
+  private roster: RosterEntry[] = [];
+  private ready?: Promise<void>;
+  /** Index of the last entry already handed to the agent, so reads are incremental. */
+  private cursor = 0;
+
+  constructor(private readonly config: RoomClientConfig) {}
+
+  connect(): Promise<void> {
+    if (this.ready) return this.ready;
+    this.ready = new Promise((resolve, reject) => {
+      const socket = new WebSocket(this.config.url);
+      this.socket = socket;
+
+      socket.on("open", () => {
+        this.send({
+          t: "join",
+          room: this.config.room,
+          role: "agent",
+          member: {
+            handle: this.config.handle,
+            displayName: this.config.displayName,
+            repo: this.config.repo,
+          },
+        });
+        resolve();
+      });
+
+      socket.on("message", (raw: WebSocket.RawData) => this.receive(String(raw)));
+      socket.on("error", (err: Error) => reject(err));
+      socket.on("close", () => {
+        this.socket = undefined;
+        this.ready = undefined;
+      });
+    });
+    return this.ready;
+  }
+
+  private receive(raw: string): void {
+    let msg: ServerMsg;
+    try {
+      msg = JSON.parse(raw) as ServerMsg;
+    } catch {
+      return;
+    }
+    switch (msg.t) {
+      case "joined": {
+        // A reconnect replays the whole transcript. Appending it onto what we
+        // already hold would show the agent the conversation twice and, because
+        // the cursor jumps to the new end, mark the genuinely unseen messages as
+        // already read. Reconcile by id instead.
+        const known = new Set(this.transcript.map((e) => e.id));
+        const fresh = msg.transcript.filter((e) => !known.has(e.id));
+        const firstAttach = this.transcript.length === 0;
+        this.transcript.push(...fresh);
+        this.roster = msg.roster;
+        // On first attach, everything before us is history rather than news.
+        // On a reconnect, whatever arrived while we were away is genuinely new.
+        if (firstAttach) {
+          this.cursor = this.transcript.length;
+        }
+        break;
+      }
+      case "entry":
+        this.transcript.push(msg.entry);
+        break;
+      case "roster":
+        this.roster = msg.roster;
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Entries since the last call — what the agent has not yet seen. */
+  takeNew(): TranscriptEntry[] {
+    const fresh = this.transcript.slice(this.cursor);
+    this.cursor = this.transcript.length;
+    return fresh;
+  }
+
+  recent(limit: number): TranscriptEntry[] {
+    this.cursor = this.transcript.length;
+    return this.transcript.slice(-limit);
+  }
+
+  currentRoster(): RosterEntry[] {
+    return this.roster;
+  }
+
+  /**
+   * Post to the room and confirm it landed.
+   *
+   * Reporting success without confirmation is worse than failing: the agent is
+   * told it answered while the humans see silence. We wait for our own message
+   * to come back on the broadcast, which is the only proof the relay accepted it.
+   */
+  async post(text: string, timeoutMs = 5000): Promise<boolean> {
+    if (!this.send({ t: "say", text })) {
+      return false;
+    }
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.transcript.some((e) => e.text === text && e.authorHandle === this.config.handle)) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return false;
+  }
+
+  private send(msg: ClientMsg): boolean {
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify(msg));
+      return true;
+    }
+    return false;
+  }
+
+  close(): void {
+    this.socket?.close();
+  }
+}

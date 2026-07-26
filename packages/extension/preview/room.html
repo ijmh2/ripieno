@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Multiplayer Agent — room preview</title>
+<style>
+  /* VS Code supplies these at runtime; the preview stands in for it so the
+     real stylesheet renders exactly as it does inside the editor. Values are
+     taken from Dark+ / Light+. */
+  :root {
+    --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --vscode-font-size: 13px;
+    --vscode-editor-font-family: "SF Mono", Menlo, Consolas, monospace;
+
+    --vscode-foreground: #cccccc;
+    --vscode-editor-background: #1f1f1f;
+    --vscode-editorWidget-background: #202020;
+    --vscode-panel-border: #2b2b2b;
+    --vscode-descriptionForeground: #9d9d9d;
+    --vscode-badge-background: #616161;
+    --vscode-badge-foreground: #f8f8f8;
+    --vscode-input-background: #313131;
+    --vscode-input-foreground: #cccccc;
+    --vscode-input-border: #3c3c3c;
+    --vscode-button-background: #0078d4;
+    --vscode-button-foreground: #ffffff;
+    --vscode-button-hoverBackground: #026ec1;
+    --vscode-focusBorder: #0078d4;
+    --vscode-textCodeBlock-background: #2b2b2b;
+    --vscode-inputValidation-errorBackground: #5a1d1d;
+    --vscode-inputValidation-errorForeground: #f48771;
+    --vscode-inputValidation-warningBackground: #5a4b1d;
+    --vscode-inputValidation-warningForeground: #f4d871;
+  }
+
+  html[data-theme="light"] {
+    --vscode-foreground: #3b3b3b;
+    --vscode-editor-background: #ffffff;
+    --vscode-editorWidget-background: #f8f8f8;
+    --vscode-panel-border: #e5e5e5;
+    --vscode-descriptionForeground: #6a6a6a;
+    --vscode-badge-background: #cccccc;
+    --vscode-badge-foreground: #3b3b3b;
+    --vscode-input-background: #ffffff;
+    --vscode-input-foreground: #3b3b3b;
+    --vscode-input-border: #cecece;
+    --vscode-button-background: #005fb8;
+    --vscode-button-hoverBackground: #0258a8;
+    --vscode-focusBorder: #005fb8;
+    --vscode-textCodeBlock-background: #f3f3f3;
+    --vscode-inputValidation-errorBackground: #fdd;
+    --vscode-inputValidation-errorForeground: #a1260d;
+    --vscode-inputValidation-warningBackground: #fdf6d3;
+    --vscode-inputValidation-warningForeground: #7a6a00;
+  }
+</style>
+<link rel="stylesheet" href="../media/main.css" />
+</head>
+<body>
+<!-- Markup below is copied verbatim from roomView.ts so the preview exercises
+     the real stylesheet and the real script, not a mockup. -->
+<div id="header" class="header">
+  <div id="roomLabel" class="room-label">Not connected</div>
+  <div id="roster" class="roster"></div>
+  <div id="statusPill" class="status-pill idle">idle</div>
+</div>
+<div id="transcript" class="transcript" role="log" aria-live="polite"></div>
+<div id="composerBar" class="composer-bar">
+  <textarea id="composer" class="composer" rows="1" placeholder="Message the room…"></textarea>
+  <button id="sendButton" class="send-button" type="button">Send</button>
+</div>
+
+<script>
+  document.documentElement.dataset.theme =
+    new URLSearchParams(location.search).get("theme") === "light" ? "light" : "dark";
+
+  // Stand in for the VS Code webview bridge.
+  window.acquireVsCodeApi = () => ({
+    postMessage: (msg) => console.log("[preview] postMessage", msg),
+    getState: () => undefined,
+    setState: () => undefined,
+  });
+</script>
+<script src="../media/main.js"></script>
+<script>
+  const t = (n) => Date.now() - n * 60000;
+
+  const snapshot = {
+    type: "snapshot",
+    connection: "online",
+    status: "thinking",
+    waitingOn: undefined,
+    room: "tgtbt-review",
+    roster: [
+      { handle: "ijmh2", displayName: "Mira", present: true, color: 5, agentAttached: true },
+      { handle: "swhitfield", displayName: "Sam Whitfield", present: true, color: 0 },
+      { handle: "kate", displayName: "Kate Ellery", present: false, color: 3 },
+    ],
+    transcript: [
+      { id: "s1", kind: "system", authorHandle: "system", authorName: "system",
+        text: "Sam Whitfield joined the room.", ts: t(14) },
+      { id: "h1", kind: "human", authorHandle: "ijmh2", authorName: "Mira",
+        text: "can you check the sharpe on the latest tgtbt run?", ts: t(12) },
+      { id: "h2", kind: "human", authorHandle: "swhitfield", authorName: "Sam Whitfield",
+        text: "^ and compare it against last week's — mine looked off after the resampling change", ts: t(11) },
+      { id: "a1", kind: "agent", authorHandle: "agent", authorName: "Agent",
+        text: "Read `results/latest.json` from **Mira's** workspace and `results/2026-07-18.json` from **Sam's**.\n\n" +
+              "Mira's run: **1.42**. Sam's from last week: **1.31**.\n\n" +
+              "The gap is the resampling change Sam mentioned — his run still uses close-to-close returns:\n\n" +
+              "```python\nrets = px.pct_change()          # Sam's branch\nrets = px.resample('1D').last().pct_change()   # Mira's\n```\n\n" +
+              "So they aren't comparable yet. Sam, want me to re-run yours with Mira's resampling?",
+        ts: t(9) },
+      { id: "h3", kind: "human", authorHandle: "swhitfield", authorName: "Sam Whitfield",
+        text: "yes please", ts: t(7) },
+      { id: "s2", kind: "system", authorHandle: "system", authorName: "system",
+        text: "Kate Ellery's agent joined the room.", ts: t(5) },
+      { id: "h4", kind: "human", authorHandle: "kate", authorName: "Kate Ellery",
+        text: "careful — the 18th had a half-day, the resample will silently drop it", ts: t(4) },
+      { id: "a2", kind: "agent", authorHandle: "kate", authorName: "Kate Ellery's agent",
+        text: "Confirmed from Kate's calendar file: 2026-07-18 is flagged `early_close`.", ts: t(3) },
+    ],
+    liveDeltas: [["a3", "Good catch, Kate. Re-running Sam's with Mira's resampling and an explicit half-day mask"]],
+  };
+
+  window.dispatchEvent(new MessageEvent("message", { data: snapshot }));
+
+  // Render a permission request so the inline approval card can be reviewed
+  // without needing an agent to actually ask for something.
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      data: {
+        type: "approval",
+        id: "ap_preview",
+        agentLabel: "Mira Ellery's agent",
+        toolName: "Bash",
+        summary: 'command: npm test -- --runInBand\n(plus description)',
+      },
+    })
+  );
+
+  // ?diag=1 — measure what is overflowing, instead of guessing at it.
+  if (new URLSearchParams(location.search).get("diag") === "1") {
+    setTimeout(() => {
+      const rows = [];
+      const push = (name, el) =>
+        rows.push(`${name}: client=${el.clientWidth} scroll=${el.scrollWidth} offset=${el.offsetWidth}`);
+      push("html", document.documentElement);
+      push("body", document.body);
+      push("header", document.getElementById("header"));
+      push("transcript", document.getElementById("transcript"));
+      push("composerBar", document.getElementById("composerBar"));
+
+      let worst = null;
+      document.querySelectorAll("*").forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (!worst || r.right > worst.right) worst = { right: r.right, el };
+      });
+      rows.push(`widest right edge: ${Math.round(worst.right)} — <${worst.el.tagName.toLowerCase()} class="${worst.el.className}">`);
+
+      const box = document.createElement("pre");
+      box.style.cssText =
+        "position:fixed;inset:0;margin:0;padding:12px;background:#000;color:#0f0;font:12px monospace;z-index:9999;white-space:pre-wrap";
+      box.textContent = rows.join("\n");
+      document.body.appendChild(box);
+    }, 100);
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Multiplayer Agent — room UI preview</title>
+<style>
+  body {
+    margin: 0;
+    padding: 24px;
+    background: #16181d;
+    color: #d8dbe0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  p.note { font-size: 12px; color: #8b919b; margin: 0 0 20px; max-width: 760px; line-height: 1.5; }
+  .panes { display: flex; gap: 24px; flex-wrap: wrap; }
+  .pane { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #8b919b; }
+  /* Sidebar width: the room lives in a VS Code view container, not a full editor tab. */
+  iframe { width: 420px; height: 640px; border: 1px solid #2b2f36; border-radius: 8px; }
+</style>
+</head>
+<body>
+<h1>Room webview — rendered</h1>
+<p class="note">
+  The real <code>media/main.css</code> and <code>media/main.js</code>, with the same markup
+  <code>roomView.ts</code> emits and VS Code's theme variables supplied by the harness. Sized to
+  the sidebar width the view actually gets. Human messages carry their author's hue as a tint plus
+  a full-strength left bar; the agent is full-width and neutral so it reads as the room's shared
+  voice. The last bubble is mid-stream — note the caret.
+</p>
+<div class="panes">
+  <div class="pane">
+    <div class="label">Dark+</div>
+    <iframe src="room.html?theme=dark" title="Room preview, dark theme"></iframe>
+  </div>
+  <div class="pane">
+    <div class="label">Light+</div>
+    <iframe src="room.html?theme=light" title="Room preview, light theme"></iframe>
+  </div>
+</div>
+</body>
+</html>
