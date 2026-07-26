@@ -17,7 +17,9 @@ import { RelayClient } from "./relayClient";
 import type { ApprovalBridge } from "./approvals";
 import {
   ClaudeCodeRunner,
+  CliRunner,
   OpenAiCompatRunner,
+  providerById,
   isWorkspaceProvider,
   type ModelRunner,
   type RunnerCapability,
@@ -64,6 +66,9 @@ export interface AgentSpec {
   baseUrl?: string;
   /** Resolved from SecretStorage at attach time; never stored in settings. */
   apiKey?: string;
+  /** cli providers: the executable and its arguments. */
+  command?: string;
+  args?: string[];
 }
 
 export interface AgentHostOptions extends AgentSpec {
@@ -276,6 +281,19 @@ export class AgentHost implements vscode.Disposable {
         permissionMode: permissionMode(),
         mcpConfig,
         permissionPromptTool: "mcp__approvals__approve",
+      });
+      return this.runner;
+    }
+
+    if (providerById(this.opts.providerId ?? "")?.kind === "cli") {
+      if (!this.opts.command) {
+        throw new Error(`${this.opts.label} has no command configured — re-add the agent.`);
+      }
+      this.runner = new CliRunner({
+        command: this.opts.command,
+        args: this.opts.args ?? ["{prompt}"],
+        label: this.opts.label,
+        timeoutMs: 300_000,
       });
       return this.runner;
     }

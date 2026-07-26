@@ -214,16 +214,129 @@ export class OpenAiCompatRunner implements ModelRunner {
 }
 
 /* ------------------------------------------------------------------ */
+/* Any local coding-agent CLI — subscription-backed, workspace access   */
+/* ------------------------------------------------------------------ */
+
+export interface CliRunnerOptions {
+  /** Executable, e.g. "codex" or "gemini". Must be on PATH. */
+  command: string;
+  /**
+   * Arguments, with "{prompt}" replaced by the turn's text. If no placeholder
+   * appears, the prompt is written to stdin instead — different CLIs prefer
+   * different conventions and both are common.
+   */
+  args: string[];
+  label: string;
+  /** Abandon a turn that never returns, rather than wedging the agent. */
+  timeoutMs: number;
+}
+
+/**
+ * Runs another vendor's coding-agent CLI as a room participant.
+ *
+ * This is the same bargain as Claude Code in BYO mode: the member is already
+ * paying for a seat, the tool already has file and shell access to their
+ * machine, and the room only has to feed it the conversation and post what
+ * comes back. It is strictly better than an API key for both cost and
+ * capability.
+ *
+ * Two things it cannot inherit from the Claude path. Our approval bridge is
+ * wired through Claude Code's --permission-prompt-tool, which is specific to it;
+ * another CLI will use its own permission model, so a headless run may stall on
+ * a prompt nobody can answer unless that CLI is given its own non-interactive
+ * flag. And there is no session id to resume, so each turn is fed the recent
+ * room rather than continuing a conversation.
+ */
+export class CliRunner implements ModelRunner {
+  readonly capability = "workspace" as const;
+  private child: ChildProcess | undefined;
+
+  constructor(private readonly opts: CliRunnerOptions) {}
+
+  get description(): string {
+    return this.opts.command;
+  }
+
+  cancel(): void {
+    this.child?.kill();
+    this.child = undefined;
+  }
+
+  run(ctx: RunContext, log: (line: string) => void): Promise<string> {
+    const prompt = `${ctx.system}\n\n--- the room so far ---\n${ctx.recent}\n\n--- new ---\n${ctx.unseen}`;
+    const usesPlaceholder = this.opts.args.some((a) => a.includes("{prompt}"));
+    const args = this.opts.args.map((a) => a.replace("{prompt}", prompt));
+
+    log(`thinking (${this.opts.command}${usesPlaceholder ? "" : ", prompt on stdin"})`);
+
+    return new Promise<string>((resolve, reject) => {
+      const child = spawn(this.opts.command, args, {
+        cwd: ctx.cwd,
+        stdio: [usesPlaceholder ? "ignore" : "pipe", "pipe", "pipe"],
+      });
+      this.child = child;
+
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(
+          new Error(
+            `${this.opts.label} produced nothing in ${this.opts.timeoutMs / 1000}s. ` +
+              `If it is waiting for interactive approval, it needs its own non-interactive flag.`
+          )
+        );
+      }, this.opts.timeoutMs);
+
+      let out = "";
+      let err = "";
+      child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
+      child.stderr?.on("data", (d: Buffer) => {
+        const line = d.toString();
+        err += line;
+        log(line.trimEnd());
+      });
+
+      if (!usesPlaceholder) {
+        child.stdin?.write(prompt);
+        child.stdin?.end();
+      }
+
+      child.on("error", (e) => {
+        clearTimeout(timer);
+        this.child = undefined;
+        reject(new Error(`could not start ${this.opts.command}: ${e.message}`));
+      });
+
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        this.child = undefined;
+        const text = out.trim();
+        if (code !== 0 && !text) {
+          reject(new Error(`${this.opts.command} exited ${code}: ${err.trim().slice(0, 300)}`));
+          return;
+        }
+        resolve(text);
+      });
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Providers                                                           */
 /* ------------------------------------------------------------------ */
+
+export type ProviderKind = "claude-code" | "cli" | "openai-compatible";
 
 export interface ProviderPreset {
   id: string;
   label: string;
-  /** Undefined means Claude Code, which runs locally rather than over HTTP. */
+  kind: ProviderKind;
+  /** openai-compatible only. */
   baseUrl?: string;
   /** Offered as the default model name; anything the provider accepts works. */
   suggestedModel?: string;
+  /** cli only: the executable and its arguments, "{prompt}" substituted. */
+  command?: string;
+  args?: string[];
   hint: string;
 }
 
@@ -235,10 +348,34 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: "claude-code",
     label: "Claude Code (local)",
-    hint: "Full file and shell access to a project on this machine.",
+    kind: "claude-code",
+    hint: "Your Claude subscription. File and shell access, approvals routed to you.",
+  },
+  {
+    id: "codex",
+    label: "Codex CLI (local)",
+    kind: "cli",
+    command: "codex",
+    args: ["exec", "{prompt}"],
+    hint: "Your ChatGPT plan, via the codex CLI. File access. Check the flags suit your version.",
+  },
+  {
+    id: "gemini",
+    label: "Gemini CLI (local)",
+    kind: "cli",
+    command: "gemini",
+    args: ["-p", "{prompt}"],
+    hint: "Your Google account, via the gemini CLI. File access. Check the flags suit your version.",
+  },
+  {
+    id: "cli-custom",
+    label: "Another local CLI",
+    kind: "cli",
+    hint: "Any command that takes a prompt and prints a reply. Uses the seat you already pay for.",
   },
   {
     id: "grok",
+    kind: "openai-compatible",
     label: "Grok (x.ai)",
     baseUrl: "https://api.x.ai/v1",
     suggestedModel: "grok-4",
@@ -246,6 +383,7 @@ export const PROVIDERS: ProviderPreset[] = [
   },
   {
     id: "kimi",
+    kind: "openai-compatible",
     label: "Kimi (Moonshot)",
     baseUrl: "https://api.moonshot.ai/v1",
     suggestedModel: "kimi-k2-0905-preview",
@@ -253,6 +391,7 @@ export const PROVIDERS: ProviderPreset[] = [
   },
   {
     id: "deepseek",
+    kind: "openai-compatible",
     label: "DeepSeek",
     baseUrl: "https://api.deepseek.com/v1",
     suggestedModel: "deepseek-chat",
@@ -260,6 +399,7 @@ export const PROVIDERS: ProviderPreset[] = [
   },
   {
     id: "ollama",
+    kind: "openai-compatible",
     label: "Ollama (local)",
     baseUrl: "http://localhost:11434/v1",
     suggestedModel: "llama3.1",
@@ -267,6 +407,7 @@ export const PROVIDERS: ProviderPreset[] = [
   },
   {
     id: "custom",
+    kind: "openai-compatible",
     label: "Custom OpenAI-compatible endpoint",
     hint: "Any API exposing /chat/completions.",
   },
@@ -277,8 +418,10 @@ export function secretKeyFor(agentId: string): string {
   return `mpa.providerKey.${agentId}`;
 }
 
+/** Anything running locally can touch files; a hosted chat API cannot. */
 export function isWorkspaceProvider(providerId: string): boolean {
-  return providerId === "claude-code";
+  const kind = providerById(providerId)?.kind;
+  return kind === "claude-code" || kind === "cli";
 }
 
 /** Shown next to an agent so "cannot touch files" is visible, not implied. */

@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { spawn } from "child_process";
 import type { Member, ServerMsg } from "@mpa/protocol";
 import { resolveIdentity } from "./identity";
 import { RelayClient, type ConnectionState } from "./relayClient";
@@ -6,7 +7,7 @@ import { ToolExecutor, registerProposedDocuments } from "./toolExecutor";
 import { RoomViewProvider } from "./roomView";
 import { AgentHost, type AgentState } from "./agentHost";
 import { RoomsTreeProvider, type MyAgent } from "./roomsTree";
-import { PROVIDERS, isWorkspaceProvider, secretKeyFor, type ProviderPreset } from "./runners";
+import { PROVIDERS, isWorkspaceProvider, providerById, secretKeyFor, type ProviderPreset } from "./runners";
 import { ApprovalBridge } from "./approvals";
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -28,6 +29,9 @@ export function activate(context: vscode.ExtensionContext): void {
     model?: string;
     providerId: string;
     baseUrl?: string;
+    /** cli providers: the executable and its arguments. */
+    command?: string;
+    args?: string[];
   }
   const specs = new Map<string, AgentSpecRecord>();
   const approvals = new ApprovalBridge();
@@ -131,9 +135,44 @@ export function activate(context: vscode.ExtensionContext): void {
     let model: string | undefined;
     let baseUrl: string | undefined;
 
-    if (isWorkspaceProvider(provider.id)) {
+    let command: string | undefined;
+    let args: string[] | undefined;
+
+    if (provider.kind === "claude-code") {
       cwd = await pickWorkingFolder(name);
       model = await pickModel(name);
+    } else if (provider.kind === "cli") {
+      cwd = await pickWorkingFolder(name);
+      command = provider.command;
+      if (!command) {
+        command = await vscode.window.showInputBox({
+          title: `Command for "${name}"`,
+          prompt: "Executable to run. It must be on your PATH.",
+          placeHolder: "e.g. codex",
+          ignoreFocusOut: true,
+        });
+        if (!command) return;
+      }
+      // Editable even for presets: these CLIs change their flags, and a wrong
+      // one wedges the agent on a prompt nobody can answer.
+      const rawArgs = await vscode.window.showInputBox({
+        title: `Arguments for "${name}"`,
+        prompt:
+          "Space-separated. {prompt} is replaced with the conversation; omit it to send the prompt on stdin.",
+        value: (provider.args ?? ["{prompt}"]).join(" "),
+        ignoreFocusOut: true,
+      });
+      if (rawArgs === undefined) return;
+      args = rawArgs.split(/\s+/).filter(Boolean);
+
+      if (!(await commandExists(command))) {
+        const go = await vscode.window.showWarningMessage(
+          `"${command}" is not on your PATH. The agent will fail to start until it is installed and signed in.`,
+          "Add anyway",
+          "Cancel"
+        );
+        if (go !== "Add anyway") return;
+      }
     } else {
       baseUrl = provider.baseUrl;
       if (!baseUrl) {
@@ -173,10 +212,21 @@ export function activate(context: vscode.ExtensionContext): void {
       model,
       providerId: provider.id,
       baseUrl,
+      command,
+      args,
     });
     roomsTree.setMyAgents(myAgentsForTree());
     // Attaching straight away is almost always what was meant.
     if (currentRoom) void attachAgent(id);
+  }
+
+  /** Is this executable actually available? A missing CLI fails silently otherwise. */
+  async function commandExists(command: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const probe = spawn("which", [command], { stdio: "ignore" });
+      probe.on("close", (code) => resolve(code === 0));
+      probe.on("error", () => resolve(false));
+    });
   }
 
   /**
@@ -187,10 +237,17 @@ export function activate(context: vscode.ExtensionContext): void {
    * Claude Code agent has. The picker says so rather than leaving it implied.
    */
   async function pickProvider(name: string): Promise<ProviderPreset | undefined> {
-    return vscode.window.showQuickPick(
-      PROVIDERS.map((p) => ({ ...p, description: p.hint })),
+    // Wrapped rather than spread: a preset's `kind` would collide with
+    // QuickPickItem.kind and turn every entry into a separator.
+    const picked = await vscode.window.showQuickPick(
+      PROVIDERS.map((preset) => ({
+        label: preset.label,
+        description: preset.hint,
+        preset,
+      })),
       { title: `What should run "${name}"?`, ignoreFocusOut: true }
     );
+    return picked?.preset;
   }
 
   /** Models an agent can run on. Aliases track the latest of each family. */
@@ -353,9 +410,10 @@ export function activate(context: vscode.ExtensionContext): void {
     // member is what keeps three agents from all replying to one question.
     const isPrimary = [...specs.keys()][0] === spec.id;
 
-    const apiKey = isWorkspaceProvider(spec.providerId)
-      ? undefined
-      : await context.secrets.get(secretKeyFor(spec.id));
+    const apiKey =
+      providerById(spec.providerId)?.kind === "openai-compatible"
+        ? await context.secrets.get(secretKeyFor(spec.id))
+        : undefined;
 
     const host = new AgentHost({
       url: relayUrl(),
@@ -368,6 +426,8 @@ export function activate(context: vscode.ExtensionContext): void {
       model: spec.model,
       providerId: spec.providerId,
       baseUrl: spec.baseUrl,
+      command: spec.command,
+      args: spec.args,
       apiKey,
       primary: isPrimary,
       siblingLabels: [...specs.values()]
