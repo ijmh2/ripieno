@@ -12,10 +12,16 @@
 // session, so they genuinely reason separately rather than sharing a context.
 
 import * as vscode from "vscode";
-import { spawn, type ChildProcess } from "child_process";
 import type { Member, TranscriptEntry } from "@mpa/protocol";
 import { RelayClient } from "./relayClient";
 import type { ApprovalBridge } from "./approvals";
+import {
+  ClaudeCodeRunner,
+  OpenAiCompatRunner,
+  isWorkspaceProvider,
+  type ModelRunner,
+  type RunnerCapability,
+} from "./runners";
 
 /** Let the room settle before answering, so a burst produces one considered reply. */
 const DEBOUNCE_MS = 1500;
@@ -52,6 +58,12 @@ export interface AgentSpec {
    * them genuinely differ rather than being one model wearing two labels.
    */
   model?: string;
+  /** Which provider runs it: claude-code, grok, kimi, ollama, custom… */
+  providerId?: string;
+  /** OpenAI-compatible base URL, for every provider except claude-code. */
+  baseUrl?: string;
+  /** Resolved from SecretStorage at attach time; never stored in settings. */
+  apiKey?: string;
 }
 
 export interface AgentHostOptions extends AgentSpec {
@@ -68,12 +80,10 @@ export interface AgentHostOptions extends AgentSpec {
 
 export class AgentHost implements vscode.Disposable {
   private relay: RelayClient | undefined;
-  private child: ChildProcess | undefined;
+  private runner: ModelRunner | undefined;
   private readonly output: vscode.OutputChannel;
   private readonly transcript: TranscriptEntry[] = [];
 
-  /** Claude Code session this agent owns, so its turns share context. */
-  private sessionId: string | undefined;
   /** How far through the transcript that session has already been told about. */
   private fed = 0;
   private busy = false;
@@ -101,9 +111,11 @@ export class AgentHost implements vscode.Disposable {
     this.setState("attaching");
     this.transcript.length = 0;
     this.fed = 0;
-    // A fresh attach is a fresh conversation; resuming a stale session would
-    // carry over a chat about a room this agent is no longer in.
-    this.sessionId = undefined;
+    // A fresh attach is a fresh conversation: drop the runner so its session
+    // (or message history) starts clean rather than carrying over a chat about
+    // a room this agent is no longer in.
+    this.runner?.cancel();
+    this.runner = undefined;
 
     this.relay = new RelayClient({
       url: this.opts.url,
@@ -131,8 +143,8 @@ export class AgentHost implements vscode.Disposable {
 
   dispose(): void {
     this.clearPending();
-    this.child?.kill();
-    this.child = undefined;
+    this.runner?.cancel();
+    this.runner = undefined;
     this.relay?.dispose();
     this.relay = undefined;
     this.busy = false;
@@ -184,8 +196,8 @@ export class AgentHost implements vscode.Disposable {
   private async respond(): Promise<void> {
     if (this.busy || !this.relay) return;
 
-    // With a live session only the unseen messages need sending; the session
-    // remembers the rest, including whatever it read last turn.
+    // With a live session only the unseen messages need sending; the runner
+    // remembers the rest, however it happens to do that.
     const unseen = this.transcript.slice(this.fed).filter((e) => e.kind !== "system");
     if (unseen.length === 0) return;
     this.busy = true;
@@ -193,115 +205,100 @@ export class AgentHost implements vscode.Disposable {
     this.setState("thinking");
 
     try {
-      const args = await this.buildArgs(unseen);
-      const cwd = this.workingDirectory();
-      this.log(this.sessionId ? "thinking (resumed session)" : "thinking (new session)");
-      this.run(args, cwd);
-    } catch (err) {
-      this.busy = false;
-      this.setState("idle");
-      this.log(`could not start a turn: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  private async buildArgs(unseen: TranscriptEntry[]): Promise<string[]> {
-    const body = unseen.map((e) => `${e.authorName} (@${e.authorHandle}): ${e.text}`).join("\n\n");
-    const prompt = this.sessionId
-      ? body
-      : `${this.systemPreamble()}\n\n--- the room so far ---\n${this.recent()}`;
-
-    const bridge = await this.opts.approvals.start();
-    // Route permission requests to the member instead of leaving them
-    // unanswerable. A headless run cannot prompt, so without this anything
-    // needing approval strands rather than being decided.
-    const mcpConfig = {
-      mcpServers: {
-        approvals: {
-          // `process.execPath` in an extension host is the *Electron* binary,
-          // not node. Launched plainly it opens an editor window instead of
-          // running our script — the server never starts, the permission tool
-          // Claude Code was told to use cannot be found, and the agent hangs
-          // forever on a mechanism that does not exist. ELECTRON_RUN_AS_NODE
-          // makes the same binary behave as node, which avoids depending on
-          // node being on PATH at all.
-          command: process.execPath,
-          args: [this.opts.permissionServerPath],
-          env: {
-            ELECTRON_RUN_AS_NODE: "1",
-            MPA_APPROVAL_URL: bridge.url,
-            MPA_APPROVAL_TOKEN: bridge.token,
-            MPA_AGENT_ID: this.opts.id,
-            MPA_AGENT_LABEL: this.opts.label,
-          },
+      const runner = await this.ensureRunner();
+      const text = await runner.run(
+        {
+          system: this.systemPreamble(),
+          unseen: unseen.map((e) => `${e.authorName} (@${e.authorHandle}): ${e.text}`).join("\n\n"),
+          recent: this.recent(),
+          cwd: this.workingDirectory(),
         },
-      },
-    };
-
-    const args = [
-      "-p",
-      prompt,
-      "--output-format",
-      "json",
-      // Only our approvals server: .mcp.json would otherwise boot the room MCP
-      // server here too, joining as a second agent under the same handle.
-      "--mcp-config",
-      JSON.stringify(mcpConfig),
-      "--strict-mcp-config",
-      "--permission-prompt-tool",
-      "mcp__approvals__approve",
-      "--permission-mode",
-      permissionMode(),
-    ];
-    if (this.opts.model) args.push("--model", this.opts.model);
-    // Resume by explicit id rather than --continue, which would latch onto
-    // whatever conversation last ran in this folder — possibly the human's own.
-    if (this.sessionId) args.push("--resume", this.sessionId);
-    return args;
-  }
-
-  private run(args: string[], cwd: string | undefined): void {
-    const child = spawn("claude", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
-    this.child = child;
-
-    let out = "";
-    child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
-    child.stderr?.on("data", (d: Buffer) => this.log(d.toString().trimEnd()));
-
-    child.on("error", (err) => {
-      this.busy = false;
-      this.child = undefined;
-      this.setState("idle");
-      this.log(`could not start claude: ${err.message}`);
-      void vscode.window.showErrorMessage(
-        "Multiplayer Agent: could not start Claude Code. Is the `claude` CLI on your PATH?"
+        (line) => this.log(line)
       );
-    });
 
-    child.on("close", (code) => {
+      if (text) {
+        this.relay?.send({ t: "say", text });
+        this.log(`posted ${text.length} chars`);
+      } else {
+        this.log("no reply produced");
+      }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      this.log(`turn failed: ${detail}`);
+      // Say so in the room rather than going quiet: a silent agent looks like a
+      // thinking one, and nobody can tell a broken key from a slow model.
+      this.relay?.send({ t: "say", text: `(could not answer — ${detail})` });
+    } finally {
       this.busy = false;
-      this.child = undefined;
       this.setState("idle");
-
-      let text = out.trim();
-      try {
-        const parsed = JSON.parse(text) as { session_id?: string; result?: string };
-        if (parsed.session_id) this.sessionId = parsed.session_id;
-        text = String(parsed.result ?? "").trim();
-      } catch {
-        // Not JSON — fall back to raw output rather than losing the reply.
-      }
-      if (code !== 0 || !text) {
-        this.log(`no reply (exit ${code})`);
-        return;
-      }
-      this.relay?.send({ t: "say", text });
-      this.log(`posted ${text.length} chars`);
-
       // Anything said while we were thinking still needs an answer.
       if (this.transcript.length > this.fed) {
         this.consider(this.transcript[this.transcript.length - 1]);
       }
+    }
+  }
+
+  /**
+   * Build the runner for this agent's provider, once, on first use.
+   *
+   * Claude Code needs the approval bridge wired in; a hosted chat API needs a
+   * key and a URL. Both end up behind the same interface so the rest of this
+   * class does not care which is which.
+   */
+  private async ensureRunner(): Promise<ModelRunner> {
+    if (this.runner) return this.runner;
+
+    if (isWorkspaceProvider(this.opts.providerId ?? "claude-code")) {
+      const bridge = await this.opts.approvals.start();
+      // Route permission requests to the member instead of leaving them
+      // unanswerable. A headless run cannot prompt, so without this anything
+      // needing approval strands rather than being decided.
+      const mcpConfig = JSON.stringify({
+        mcpServers: {
+          approvals: {
+            // `process.execPath` in an extension host is the *Electron* binary,
+            // not node. ELECTRON_RUN_AS_NODE makes the same binary behave as
+            // node, which avoids depending on node being on PATH.
+            command: process.execPath,
+            args: [this.opts.permissionServerPath],
+            env: {
+              ELECTRON_RUN_AS_NODE: "1",
+              MPA_APPROVAL_URL: bridge.url,
+              MPA_APPROVAL_TOKEN: bridge.token,
+              MPA_AGENT_ID: this.opts.id,
+              MPA_AGENT_LABEL: this.opts.label,
+            },
+          },
+        },
+      });
+      this.runner = new ClaudeCodeRunner({
+        model: this.opts.model,
+        permissionMode: permissionMode(),
+        mcpConfig,
+        permissionPromptTool: "mcp__approvals__approve",
+      });
+      return this.runner;
+    }
+
+    if (!this.opts.baseUrl || !this.opts.apiKey) {
+      throw new Error(
+        `${this.opts.label} has no endpoint or API key configured — re-add the agent to set them.`
+      );
+    }
+    this.runner = new OpenAiCompatRunner({
+      baseUrl: this.opts.baseUrl,
+      model: this.opts.model ?? "",
+      apiKey: this.opts.apiKey,
+      label: this.opts.label,
     });
+    return this.runner;
+  }
+
+  /** What this agent can actually do, for the room to display honestly. */
+  get capability(): RunnerCapability {
+    return isWorkspaceProvider(this.opts.providerId ?? "claude-code")
+      ? "workspace"
+      : "conversation";
   }
 
   /** Where this agent works. Its own folder if given, else the editor's. */

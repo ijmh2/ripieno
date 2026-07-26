@@ -23,6 +23,10 @@ export interface MyAgent {
   model?: string;
   /** Answers messages addressed to nobody in particular; the others wait to be named. */
   primary?: boolean;
+  /** Whether it can touch files, or only talk. Shown, never implied. */
+  capability?: "workspace" | "conversation";
+  /** Which provider runs it — claude-code, grok, kimi, ollama… */
+  provider?: string;
 }
 
 type Node =
@@ -254,9 +258,12 @@ export class RoomsTreeProvider
 /** Model and project, when they differ from the defaults — otherwise noise. */
 function detailSuffix(agent: MyAgent): string {
   // "only when named" is worth surfacing: otherwise an agent that stays silent
-  // by design looks broken.
+  // by design looks broken. So is "no file access": otherwise somebody asks a
+  // chat-only agent to fix a file and gets a confident answer and no change.
   const role = agent.primary ? undefined : "only when named";
-  return [agent.model, agent.folder, role]
+  const reach = agent.capability === "conversation" ? "no file access" : undefined;
+  const provider = agent.provider && agent.provider !== "claude-code" ? agent.provider : undefined;
+  return [provider, agent.model, agent.folder, reach, role]
     .filter(Boolean)
     .map((bit) => ` · ${bit}`)
     .join("");

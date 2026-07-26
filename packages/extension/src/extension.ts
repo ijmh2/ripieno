@@ -6,6 +6,7 @@ import { ToolExecutor, registerProposedDocuments } from "./toolExecutor";
 import { RoomViewProvider } from "./roomView";
 import { AgentHost, type AgentState } from "./agentHost";
 import { RoomsTreeProvider, type MyAgent } from "./roomsTree";
+import { PROVIDERS, isWorkspaceProvider, secretKeyFor, type ProviderPreset } from "./runners";
 import { ApprovalBridge } from "./approvals";
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -19,10 +20,16 @@ export function activate(context: vscode.ExtensionContext): void {
   // A member may run several agents at once — a coder and a reviewer, say —
   // each with its own process, session and label in the transcript.
   const agents = new Map<string, AgentHost>();
-  const specs = new Map<
-    string,
-    { id: string; label: string; brief?: string; cwd?: string; model?: string }
-  >();
+  interface AgentSpecRecord {
+    id: string;
+    label: string;
+    brief?: string;
+    cwd?: string;
+    model?: string;
+    providerId: string;
+    baseUrl?: string;
+  }
+  const specs = new Map<string, AgentSpecRecord>();
   const approvals = new ApprovalBridge();
   const permissionServerPath = vscode.Uri.joinPath(
     context.extensionUri,
@@ -36,7 +43,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   const roomsTree = new RoomsTreeProvider({
-    attachAgent: (id) => attachAgent(id),
+    attachAgent: (id) => void attachAgent(id),
     detachAgent: (id) => detachAgent(id),
     addAgent: () => void addAgent(),
     joinRoom: () => void joinRoom(),
@@ -61,7 +68,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("mpa.signIn", () => signIn()),
     vscode.commands.registerCommand("mpa.addAgent", () => addAgent()),
     vscode.commands.registerCommand("mpa.attachAgent", (node?: { id?: string }) =>
-      attachAgent(idFromNode(node))
+      void attachAgent(idFromNode(node))
     ),
     vscode.commands.registerCommand("mpa.detachAgent", (node?: { id?: string }) =>
       detachAgent(idFromNode(node))
@@ -78,7 +85,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   function ensureSpec(suffix: string, label: string): string {
     const id = `local:${suffix}`;
-    if (!specs.has(id)) specs.set(id, { id, label });
+    if (!specs.has(id)) specs.set(id, { id, label, providerId: "claude-code" });
     return id;
   }
 
@@ -91,6 +98,8 @@ export function activate(context: vscode.ExtensionContext): void {
       model: spec.model,
       // The first agent answers anything not addressed to someone specific.
       primary: [...specs.keys()][0] === spec.id,
+      capability: isWorkspaceProvider(spec.providerId) ? "workspace" : "conversation",
+      provider: spec.providerId,
     }));
   }
 
@@ -114,13 +123,74 @@ export function activate(context: vscode.ExtensionContext): void {
       ignoreFocusOut: true,
     });
 
-    const cwd = await pickWorkingFolder(name);
-    const model = await pickModel(name);
+    const provider = await pickProvider(name);
+    if (!provider) return;
+
     const id = `local:${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}:${specs.size}`;
-    specs.set(id, { id, label: name, brief: brief || undefined, cwd, model });
+    let cwd: string | undefined;
+    let model: string | undefined;
+    let baseUrl: string | undefined;
+
+    if (isWorkspaceProvider(provider.id)) {
+      cwd = await pickWorkingFolder(name);
+      model = await pickModel(name);
+    } else {
+      baseUrl = provider.baseUrl;
+      if (!baseUrl) {
+        baseUrl = await vscode.window.showInputBox({
+          title: `Endpoint for "${name}"`,
+          prompt: "Base URL of an OpenAI-compatible API. /chat/completions is appended.",
+          placeHolder: "https://api.example.com/v1",
+          ignoreFocusOut: true,
+        });
+        if (!baseUrl) return;
+      }
+      model = await vscode.window.showInputBox({
+        title: `Model for "${name}"`,
+        prompt: `Model name as ${provider.label} expects it.`,
+        value: provider.suggestedModel ?? "",
+        ignoreFocusOut: true,
+      });
+      if (!model) return;
+
+      const key = await vscode.window.showInputBox({
+        title: `API key for "${name}"`,
+        prompt: "Stored in the editor's secret storage, never in settings.",
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (!key) return;
+      // SecretStorage, not settings: settings sync between machines and are
+      // readable by anything that can read the file.
+      await context.secrets.store(secretKeyFor(id), key);
+    }
+
+    specs.set(id, {
+      id,
+      label: name,
+      brief: brief || undefined,
+      cwd,
+      model,
+      providerId: provider.id,
+      baseUrl,
+    });
     roomsTree.setMyAgents(myAgentsForTree());
     // Attaching straight away is almost always what was meant.
-    if (currentRoom) attachAgent(id);
+    if (currentRoom) void attachAgent(id);
+  }
+
+  /**
+   * Which model provider runs this agent.
+   *
+   * The room is provider-agnostic, so a Grok or Kimi agent participates on the
+   * same terms as a Claude one — except for file access, which only a local
+   * Claude Code agent has. The picker says so rather than leaving it implied.
+   */
+  async function pickProvider(name: string): Promise<ProviderPreset | undefined> {
+    return vscode.window.showQuickPick(
+      PROVIDERS.map((p) => ({ ...p, description: p.hint })),
+      { title: `What should run "${name}"?`, ignoreFocusOut: true }
+    );
   }
 
   /** Models an agent can run on. Aliases track the latest of each family. */
@@ -195,7 +265,7 @@ export function activate(context: vscode.ExtensionContext): void {
           // session is per-process, so there is no way to switch mid-session.
           if (agents.has(spec.id)) {
             detachAgent(spec.id);
-            attachAgent(spec.id);
+            void attachAgent(spec.id);
           }
         }
         note(
@@ -269,7 +339,7 @@ export function activate(context: vscode.ExtensionContext): void {
    * Attaching starts a real process, which is what makes dragging an agent into
    * a room meaningful rather than a picture of state you created by hand.
    */
-  function attachAgent(id?: string): void {
+  async function attachAgent(id?: string): Promise<void> {
     const spec = id ? specs.get(id) : [...specs.values()][0];
     if (!spec) return;
     if (!currentRoom || !me) {
@@ -283,6 +353,10 @@ export function activate(context: vscode.ExtensionContext): void {
     // member is what keeps three agents from all replying to one question.
     const isPrimary = [...specs.keys()][0] === spec.id;
 
+    const apiKey = isWorkspaceProvider(spec.providerId)
+      ? undefined
+      : await context.secrets.get(secretKeyFor(spec.id));
+
     const host = new AgentHost({
       url: relayUrl(),
       room: currentRoom,
@@ -292,6 +366,9 @@ export function activate(context: vscode.ExtensionContext): void {
       brief: spec.brief,
       cwd: spec.cwd,
       model: spec.model,
+      providerId: spec.providerId,
+      baseUrl: spec.baseUrl,
+      apiKey,
       primary: isPrimary,
       siblingLabels: [...specs.values()]
         .filter((other) => other.id !== spec.id)
