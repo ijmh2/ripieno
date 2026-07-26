@@ -14,6 +14,9 @@
   const composerEl = document.getElementById("composer");
   const sendButtonEl = document.getElementById("sendButton");
   const composerBarEl = document.getElementById("composerBar");
+  const actionsEl = document.getElementById("actions");
+  const actionsSummaryEl = document.getElementById("actionsSummary");
+  const actionsListEl = document.getElementById("actionsList");
 
   /** @type {"connecting"|"online"|"offline"} */
   let connection = "offline";
@@ -21,6 +24,7 @@
   let waitingOn;
   let roster = [];
   let currentRoom;
+  let actions = [];
 
   /** entryId -> { container, textEl } for rows currently in the DOM. */
   const rowEls = new Map();
@@ -261,6 +265,7 @@
     status = msg.status;
     waitingOn = msg.waitingOn;
     roster = msg.roster;
+    actions = msg.actions || [];
     currentRoom = msg.room;
     // Name the driver: the same product has very different capability in each
     // mode, so the room should never leave members guessing which one they have.
@@ -284,6 +289,7 @@
     }
 
     renderRoster();
+    renderActions();
     renderStatusPill();
     updateComposerState();
     scrollToBottom();
@@ -382,8 +388,66 @@
       case "approval":
         showApproval(msg);
         break;
+      case "action":
+        addAction(msg.entry);
+        break;
     }
   });
+
+  /* ---------------------------------------------------------------- */
+  /* Action log — what agents did, as opposed to what people said       */
+  /* ---------------------------------------------------------------- */
+
+  /* Kept out of the transcript deliberately: work and conversation are
+     different streams, and mixing them buries both. Every row names the acting
+     agent and whose workspace it touched, because with a shared workspace those
+     are frequently different people. */
+  function addAction(entry) {
+    actions.push(entry);
+    renderActions();
+  }
+
+  function renderActions() {
+    if (actions.length === 0) {
+      actionsEl.hidden = true;
+      return;
+    }
+    actionsEl.hidden = false;
+    actionsSummaryEl.textContent = `Work — ${actions.length} action${actions.length === 1 ? "" : "s"}`;
+
+    actionsListEl.innerHTML = "";
+    for (const entry of actions.slice(-50)) {
+      const row = document.createElement("div");
+      row.className = "action-row" + (entry.ok ? "" : " failed");
+
+      const who = document.createElement("span");
+      who.className = "action-who";
+      who.style.color = `hsl(var(--mpa-hue-${colorIndexFor(entry.agentId || entry.agentLabel)}) 75% 55%)`;
+      who.textContent = entry.agentLabel;
+      row.appendChild(who);
+
+      const what = document.createElement("span");
+      what.className = "action-what";
+      // textContent throughout: these strings are paths and commands chosen by
+      // a model, and this panel is read by people deciding whether to trust it.
+      what.textContent = ` ${entry.verb} ${entry.target}`;
+      row.appendChild(what);
+
+      if (entry.detail) {
+        const detail = document.createElement("span");
+        detail.className = "action-detail";
+        detail.textContent = ` ${entry.detail}`;
+        row.appendChild(detail);
+      }
+
+      const where = document.createElement("span");
+      where.className = "action-where";
+      where.textContent = ` on @${entry.targetHandle}`;
+      row.appendChild(where);
+
+      actionsListEl.appendChild(row);
+    }
+  }
 
   /* ---------------------------------------------------------------- */
   /* Permission requests                                               */

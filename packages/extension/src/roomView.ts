@@ -6,7 +6,7 @@
 // process around) we just resend a full snapshot on visibility change.
 
 import * as vscode from "vscode";
-import type { RoomMode, RoomStatus, RosterEntry, TranscriptEntry } from "@mpa/protocol";
+import type { ActionEntry, RoomMode, RoomStatus, RosterEntry, TranscriptEntry } from "@mpa/protocol";
 import type { ConnectionState } from "./relayClient";
 import type { ApprovalChoice } from "./approvals";
 
@@ -17,6 +17,8 @@ interface RoomState {
   you?: RosterEntry;
   roster: RosterEntry[];
   transcript: TranscriptEntry[];
+  /** What agents have *done*, kept apart from what people have said. */
+  actions: ActionEntry[];
   /** entryId -> accumulated streamed text, cleared once the final entry lands. */
   liveDeltas: Map<string, string>;
   status: RoomStatus;
@@ -25,7 +27,7 @@ interface RoomState {
 }
 
 function emptyState(connection: ConnectionState): RoomState {
-  return { roster: [], transcript: [], liveDeltas: new Map(), status: "idle", connection };
+  return { roster: [], transcript: [], actions: [], liveDeltas: new Map(), status: "idle", connection };
 }
 
 /** Messages the extension host pushes into the webview. */
@@ -37,12 +39,15 @@ type ToWebview =
       you?: RosterEntry;
       roster: RosterEntry[];
       transcript: TranscriptEntry[];
+  /** What agents have *done*, kept apart from what people have said. */
+  actions: ActionEntry[];
       liveDeltas: [string, string][];
       status: RoomStatus;
       waitingOn?: string;
       connection: ConnectionState;
     }
   | { type: "entry"; entry: TranscriptEntry }
+  | { type: "action"; entry: ActionEntry }
   | { type: "delta"; entryId: string; text: string }
   | { type: "deltaCancel"; entryId: string }
   | { type: "roster"; roster: RosterEntry[] }
@@ -111,11 +116,13 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     you: RosterEntry,
     roster: RosterEntry[],
     transcript: TranscriptEntry[],
-    mode: RoomMode
+    mode: RoomMode,
+    actions: ActionEntry[] = []
   ): void {
     this.state = {
       room,
       mode,
+      actions,
       you,
       roster,
       transcript: [...transcript],
@@ -125,6 +132,12 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       connection: this.state.connection,
     };
     this.postSnapshot();
+  }
+
+  /** Work done by an agent, shown apart from the conversation. */
+  addAction(entry: ActionEntry): void {
+    this.state.actions.push(entry);
+    this.post({ type: "action", entry });
   }
 
   setRoster(roster: RosterEntry[]): void {
@@ -215,6 +228,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       you: this.state.you,
       roster: this.state.roster,
       transcript: this.state.transcript,
+      actions: this.state.actions,
       liveDeltas: [...this.state.liveDeltas.entries()],
       status: this.state.status,
       waitingOn: this.state.waitingOn,
@@ -257,6 +271,10 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   <div id="statusPill" class="status-pill idle">idle</div>
 </div>
 <div id="transcript" class="transcript" role="log" aria-live="polite"></div>
+<details id="actions" class="actions" hidden>
+  <summary id="actionsSummary" class="actions-summary">Work</summary>
+  <div id="actionsList" class="actions-list"></div>
+</details>
 <div id="composerBar" class="composer-bar">
   <textarea id="composer" class="composer" rows="1" placeholder="Message the room…"></textarea>
   <button id="sendButton" class="send-button" type="button">Send</button>

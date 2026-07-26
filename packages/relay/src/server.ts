@@ -152,7 +152,7 @@ export function startServer(config: ServerConfig): WebSocketServer {
     alive.add(socket);
     socket.on("pong", () => alive.add(socket));
     let joined:
-      | { room: Room; handle: string; role: ConnectionRole; agentId?: string }
+      | { room: Room; handle: string; role: ConnectionRole; agentId?: string; label: string }
       | undefined;
 
     // Frames are handled strictly in order. Without this, `joined` is still
@@ -207,7 +207,13 @@ export function startServer(config: ServerConfig): WebSocketServer {
                   }
                 : undefined;
             await room.join(member, socket, role, agent);
-            joined = { room, handle: member.handle, role, agentId: agent?.id };
+            joined = {
+              room,
+              handle: member.handle,
+              role,
+              agentId: agent?.id,
+              label: agent?.label ?? member.displayName,
+            };
             break;
           }
           case "say":
@@ -227,6 +233,32 @@ export function startServer(config: ServerConfig): WebSocketServer {
               msg.isError === true
             );
             break;
+          case "claimWorkspace":
+            if (!joined) return send(socket, "join a room before claiming the workspace");
+            if (joined.role !== "human") return send(socket, "only a member may host a workspace");
+            joined.room.claimWorkspace(joined.handle, msg.claim);
+            break;
+
+          case "remoteTool": {
+            if (!joined) return send(socket, "join a room before using another workspace");
+            if (joined.role !== "agent" || !joined.agentId) {
+              return send(socket, "only an agent may act on another member's workspace");
+            }
+            joined.room.routeRemoteTool(
+              { agentId: joined.agentId, label: joined.label, handle: joined.handle },
+              msg.requestId,
+              msg.targetHandle,
+              msg.name,
+              msg.input
+            );
+            break;
+          }
+
+          case "remoteToolResult":
+            if (!joined) return;
+            joined.room.completeRemoteTool(msg.requestId, msg.content, msg.isError === true);
+            break;
+
           case "ping":
             break;
         }

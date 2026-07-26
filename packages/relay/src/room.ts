@@ -8,6 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 import type {
+  ActionEntry,
   AttachedAgent,
   ConnectionRole,
   Member,
@@ -64,6 +65,18 @@ export class Room {
   private readonly completed = new Set<string>();
   private status: RoomStatus = "idle";
   private waitingOn?: string;
+  /**
+   * The member offering their machine as the room's shared workspace.
+   *
+   * Agents cannot share a filesystem by configuration — a local CLI acts where
+   * it runs — so "the room's workspace" means one member's machine, and other
+   * members' agents reach it by routing tool calls here.
+   */
+  private host?: string;
+  /** What agents have done, distinct from what people have said. */
+  private readonly actions: ActionEntry[] = [];
+  /** Outstanding remote tool requests, so a reply can find who asked. */
+  private readonly remoteCalls = new Map<string, { agentId: string }>();
 
   constructor(
     readonly code: string,
@@ -119,6 +132,8 @@ export class Room {
       t: "joined",
       room: this.code,
       mode: this.mode,
+      workspaceHost: this.host,
+      actions: this.actions,
       you: toRosterEntry(member, true, this.agentsOf(member.handle)),
       roster: this.roster,
       transcript: this.transcript,
@@ -154,12 +169,109 @@ export class Room {
       if (socket && conn.socket !== socket) return;
       label = conn.member.displayName;
       this.connections.delete(handle);
+      // A departed host leaves every room-pointed agent with nowhere to act, so
+      // release the claim rather than leaving agents addressing a dead machine.
+      if (this.host === handle) {
+        this.host = undefined;
+        this.system("The room's workspace host left; agents pointed at the room have nowhere to act.");
+      }
     }
     this.system(`${label} left the room.`);
     this.broadcastRoster();
     // A shared agent must stop addressing tools to them, or the room stalls
     // waiting on a machine that is no longer there.
     await this.driver.sendRoster(this.roster);
+  }
+
+  get workspaceHost(): string | undefined {
+    return this.host;
+  }
+
+  /**
+   * Claim or release the room's shared workspace.
+   *
+   * Only a present human may hold it: an agent cannot offer a machine, and an
+   * absent member's workspace is unreachable, which would strand every agent
+   * pointed at the room.
+   */
+  claimWorkspace(handle: string, claim: boolean): void {
+    if (claim) {
+      if (!this.connections.has(handle)) return;
+      if (this.host && this.host !== handle) return;
+      this.host = handle;
+      this.system(`${this.known.get(handle)?.displayName ?? handle} is hosting the room's workspace.`);
+    } else if (this.host === handle) {
+      this.host = undefined;
+      this.system("The room no longer has a shared workspace.");
+    }
+    this.broadcastRoster();
+  }
+
+  /**
+   * Route an agent's request to act on another member's workspace.
+   *
+   * Resolving "room" to the host here rather than at the agent means an agent
+   * never needs to know who is hosting, and the answer stays correct when the
+   * host changes mid-session.
+   */
+  routeRemoteTool(
+    requester: { agentId: string; label: string; handle: string },
+    requestId: string,
+    targetHandle: string,
+    name: string,
+    input: Record<string, unknown>
+  ): void {
+    const target = targetHandle === "room" ? this.host : targetHandle;
+    if (!target) {
+      this.replyRemote(requester.agentId, requestId, "This room has no shared workspace host.", true);
+      return;
+    }
+    const conn = this.connections.get(target);
+    if (!conn) {
+      this.replyRemote(
+        requester.agentId,
+        requestId,
+        `@${target} is not present, so their workspace cannot be reached.`,
+        true
+      );
+      return;
+    }
+
+    this.remoteCalls.set(requestId, { agentId: requester.agentId });
+    this.sendTo(conn.socket, {
+      t: "remoteToolRequest",
+      requestId,
+      requesterAgentId: requester.agentId,
+      requesterLabel: requester.label,
+      requesterHandle: requester.handle,
+      name,
+      input,
+    });
+  }
+
+  /** The executing member answering; routed back to the agent that asked. */
+  completeRemoteTool(requestId: string, content: string, isError: boolean): void {
+    const pending = this.remoteCalls.get(requestId);
+    if (!pending) return;
+    this.remoteCalls.delete(requestId);
+    this.replyRemote(pending.agentId, requestId, content, isError);
+  }
+
+  private replyRemote(agentId: string, requestId: string, content: string, isError: boolean): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+    this.sendTo(agent.socket, { t: "remoteToolReply", requestId, content, isError });
+  }
+
+  /** Record work, attributed to the acting agent rather than the host machine. */
+  recordAction(entry: Omit<ActionEntry, "id" | "ts">): void {
+    const full: ActionEntry = { ...entry, id: randomUUID(), ts: Date.now() };
+    this.actions.push(full);
+    this.broadcast({ t: "action", entry: full });
+  }
+
+  get actionLog(): ActionEntry[] {
+    return this.actions;
   }
 
   get isEmpty(): boolean {
@@ -315,7 +427,7 @@ export class Room {
   }
 
   private broadcastRoster(): void {
-    this.broadcast({ t: "roster", roster: this.roster });
+    this.broadcast({ t: "roster", roster: this.roster, workspaceHost: this.host });
     // Re-assert status so a joiner's UI is not stuck on a stale pill.
     this.broadcast({ t: "status", status: this.status, waitingOn: this.waitingOn });
   }

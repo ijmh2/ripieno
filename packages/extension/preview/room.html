@@ -65,6 +65,10 @@
   <div id="statusPill" class="status-pill idle">idle</div>
 </div>
 <div id="transcript" class="transcript" role="log" aria-live="polite"></div>
+<details id="actions" class="actions" hidden>
+  <summary id="actionsSummary" class="actions-summary">Work</summary>
+  <div id="actionsList" class="actions-list"></div>
+</details>
 <div id="composerBar" class="composer-bar">
   <textarea id="composer" class="composer" rows="1" placeholder="Message the room…"></textarea>
   <button id="sendButton" class="send-button" type="button">Send</button>
@@ -119,10 +123,20 @@
       { id: "a2", kind: "agent", authorHandle: "kate", authorName: "Kate Ellery's agent",
         text: "Confirmed from Kate's calendar file: 2026-07-18 is flagged `early_close`.", ts: t(3) },
     ],
+    actions: [
+      { id: "x1", agentId: "i:coder", agentLabel: "Mira's coder", targetHandle: "ijmh2",
+        verb: "wrote", target: "packages/relay/src/room.ts", detail: "+41 −6", ok: true, ts: Date.now() },
+      { id: "x2", agentId: "s:rev", agentLabel: "Sam's reviewer", targetHandle: "ijmh2",
+        verb: "ran", target: "npm test", detail: "failed", ok: false, ts: Date.now() },
+      { id: "x3", agentId: "k:1", agentLabel: "Kate's agent", targetHandle: "swhitfield",
+        verb: "read", target: "results/latest.json", ok: true, ts: Date.now() },
+    ],
     liveDeltas: [["a3", "Good catch, Kate. Re-running Sam's with Mira's resampling and an explicit half-day mask"]],
   };
 
   window.dispatchEvent(new MessageEvent("message", { data: snapshot }));
+
+  document.getElementById("actions").open = true;
 
   // Render a permission request so the inline approval card can be reviewed
   // without needing an agent to actually ask for something.

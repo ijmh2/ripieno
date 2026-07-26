@@ -133,7 +133,51 @@ export interface PingMsg {
   t: "ping";
 }
 
-export type ClientMsg = JoinMsg | SayMsg | ToolResultMsg | ToolProgressMsg | PingMsg;
+/**
+ * An agent asking to act on *another member's* workspace.
+ *
+ * This is what makes a shared workspace possible across machines. A local agent
+ * — Claude Code, Codex — runs tools on the filesystem it runs on; no amount of
+ * configuration makes Sam's CLI write to Mira's disk. So the request travels:
+ * agent → relay → the target member's editor, which executes it under that
+ * member's permissions and with their approval, and sends the result back.
+ */
+export interface RemoteToolMsg {
+  t: "remoteTool";
+  /** Correlates the reply; unique per requesting connection. */
+  requestId: string;
+  /** Whose workspace to act on. */
+  targetHandle: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** The target member's editor answering a RemoteToolMsg. */
+export interface RemoteToolResultMsg {
+  t: "remoteToolResult";
+  requestId: string;
+  /** Who asked, so the relay can route the answer back. */
+  requesterAgentId: string;
+  content: string;
+  isError?: boolean;
+}
+
+/** A member offering their workspace as the room's shared one. */
+export interface ClaimWorkspaceMsg {
+  t: "claimWorkspace";
+  /** False releases it. */
+  claim: boolean;
+}
+
+export type ClientMsg =
+  | JoinMsg
+  | SayMsg
+  | ToolResultMsg
+  | ToolProgressMsg
+  | RemoteToolMsg
+  | RemoteToolResultMsg
+  | ClaimWorkspaceMsg
+  | PingMsg;
 
 /* ------------------------------------------------------------------ */
 /* Server → Client                                                     */
@@ -149,6 +193,13 @@ export interface JoinedMsg {
   t: "joined";
   room: string;
   mode: RoomMode;
+  /**
+   * The member offering their workspace as the room's shared one, if any.
+   * Agents pointed at "the room" act there rather than on their owner's machine.
+   */
+  workspaceHost?: string;
+  /** Work already done in this room, so a joiner is not starting blind. */
+  actions?: ActionEntry[];
   you: RosterEntry;
   roster: RosterEntry[];
   /** Replayed so a joiner sees the conversation so far. */
@@ -158,6 +209,7 @@ export interface JoinedMsg {
 export interface RosterMsg {
   t: "roster";
   roster: RosterEntry[];
+  workspaceHost?: string;
 }
 
 export interface EntryMsg {
@@ -189,6 +241,59 @@ export interface AgentDeltaCancelMsg {
   entryId: string;
 }
 
+/**
+ * One thing an agent did to a workspace, for everyone — and every other agent —
+ * to see.
+ *
+ * Kept separate from the chat transcript on purpose: it is a record of *work*,
+ * not conversation, and it is what lets a second agent say "the reviewer already
+ * ran the tests and they failed" instead of running them again. It is also the
+ * attribution trail that makes a shared workspace defensible rather than a
+ * shared login — every entry names the acting agent, not the machine's owner.
+ */
+export interface ActionEntry {
+  id: string;
+  /** The agent that acted, not the member whose machine ran it. */
+  agentId: string;
+  agentLabel: string;
+  /** The member whose workspace was touched. */
+  targetHandle: string;
+  /** read | wrote | ran | searched … */
+  verb: string;
+  /** Path, command, or whatever the verb acted on. */
+  target: string;
+  /** Short outcome: "+41 −6", "failed", "3 matches". */
+  detail?: string;
+  ok: boolean;
+  ts: number;
+}
+
+export interface ActionMsg {
+  t: "action";
+  entry: ActionEntry;
+}
+
+/** A remote tool request arriving at the member who must execute it. */
+export interface RemoteToolRequestMsg {
+  t: "remoteToolRequest";
+  requestId: string;
+  /** Routed back with the result. */
+  requesterAgentId: string;
+  requesterLabel: string;
+  /** The member who owns the requesting agent — who to blame, and to thank. */
+  requesterHandle: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** The answer travelling back to the agent that asked. */
+export interface RemoteToolReplyMsg {
+  t: "remoteToolReply";
+  requestId: string;
+  content: string;
+  isError?: boolean;
+}
+
 export interface ToolCallMsg {
   t: "toolCall";
   callId: string;
@@ -215,6 +320,9 @@ export type ServerMsg =
   | AgentDeltaMsg
   | AgentDeltaCancelMsg
   | ToolCallMsg
+  | RemoteToolRequestMsg
+  | RemoteToolReplyMsg
+  | ActionMsg
   | StatusMsg
   | ErrorMsg;
 

@@ -38,11 +38,31 @@ export interface ToolResult {
  */
 export type ProgressReporter = (state: ToolProgressState) => void;
 
+/**
+ * Who asked, when the request came from another member's agent.
+ *
+ * A member approving a change to their own files must be told whose agent wants
+ * it. Once agents can reach across machines, "an agent wants permission" is no
+ * longer enough information to decide with.
+ */
+export interface Requester {
+  label: string;
+  handle: string;
+}
+
 type SafePath = { ok: true; abs: string } | { ok: false; reason: string };
 
 export class ToolExecutor {
+  /** Set per call: whose agent is asking, when it is not this member's own. */
+  private requester: Requester | undefined;
+
   /** Never throws — every failure mode is reported as {content, isError: true}. */
-  async execute(call: ToolCallMsg, report: ProgressReporter = () => {}): Promise<ToolResult> {
+  async execute(
+    call: ToolCallMsg,
+    report: ProgressReporter = () => {},
+    requester?: Requester
+  ): Promise<ToolResult> {
+    this.requester = requester;
     report("received");
     try {
       switch (call.name) {
@@ -230,8 +250,11 @@ export class ToolExecutor {
       // Tell the relay a human is now in the loop, so it stops counting down
       // against a machine timeout while somebody reads a dialog.
       report("awaiting-approval");
+      const asker = this.requester
+        ? `${this.requester.label} (@${this.requester.handle}) wants to run a command in your workspace.`
+        : "An agent in this room wants to run a command in your workspace.";
       const choice = await vscode.window.showWarningMessage(
-        "The shared agent room wants to run a command in your workspace.",
+        asker,
         { modal: true, detail: command },
         "Run",
         "Always allow this command",
@@ -341,8 +364,9 @@ export class ToolExecutor {
         `${path.basename(safe.abs)} — proposed by the room`,
         { preview: true }
       );
+      const who = this.requester ? `${this.requester.label}'s` : "the agent's";
       const choice = await vscode.window.showInformationMessage(
-        `Apply the agent's change to ${rawPath}?`,
+        `Apply ${who} change to ${rawPath}?`,
         { modal: true, detail: existed ? "Review the diff before applying." : "This creates a new file." },
         "Apply"
       );

@@ -541,7 +541,7 @@ export function activate(context: vscode.ExtensionContext): void {
   function handleServerMsg(msg: ServerMsg): void {
     switch (msg.t) {
       case "joined":
-        roomView.setJoined(msg.room, msg.you, msg.roster, msg.transcript, msg.mode);
+        roomView.setJoined(msg.room, msg.you, msg.roster, msg.transcript, msg.mode, msg.actions ?? []);
         roomsTree.setRoom(msg.room, msg.mode, msg.you.handle);
         roomsTree.setRoster(msg.roster);
         break;
@@ -561,6 +561,12 @@ export function activate(context: vscode.ExtensionContext): void {
       case "toolCall":
         void runToolCall(msg);
         break;
+      case "remoteToolRequest":
+        void runRemoteTool(msg);
+        break;
+      case "action":
+        roomView.addAction(msg.entry);
+        break;
       case "status":
         roomView.setStatus(msg.status, msg.waitingOn);
         break;
@@ -568,6 +574,30 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.showErrorMessage(`Multiplayer Agent: ${msg.message}`);
         break;
     }
+  }
+
+  /**
+   * Another member's agent asking to act on *this* machine.
+   *
+   * Executed by the same tool executor, under this member's permissions, with
+   * the same approval path — the only difference is that the approval names
+   * someone else's agent, which is exactly the thing the member needs to see.
+   */
+  async function runRemoteTool(
+    msg: Extract<ServerMsg, { t: "remoteToolRequest" }>
+  ): Promise<void> {
+    const result = await toolExecutor.execute(
+      { t: "toolCall", callId: msg.requestId, name: msg.name, input: msg.input },
+      () => undefined,
+      { label: msg.requesterLabel, handle: msg.requesterHandle }
+    );
+    relay?.send({
+      t: "remoteToolResult",
+      requestId: msg.requestId,
+      requesterAgentId: msg.requesterAgentId,
+      content: result.content,
+      isError: result.isError,
+    });
   }
 
   async function runToolCall(msg: Extract<ServerMsg, { t: "toolCall" }>): Promise<void> {

@@ -403,6 +403,154 @@ describe("several agents per member", () => {
   });
 });
 
+describe("shared workspace", () => {
+  test("a member hosts the workspace and the room says who", async () => {
+    const room = new Room("r", new FakeDriver());
+    const host = new FakeSocket();
+    await room.join(mira, host);
+
+    room.claimWorkspace("ijmh2", true);
+    assert.equal(room.workspaceHost, "ijmh2");
+    assert.ok(host.of("roster").at(-1)?.workspaceHost === "ijmh2");
+  });
+
+  test("an absent member cannot host — agents would have nowhere to act", async () => {
+    const room = new Room("r", new FakeDriver());
+    room.claimWorkspace("ijmh2", true);
+    assert.equal(room.workspaceHost, undefined);
+  });
+
+  test("the host leaving releases the workspace rather than stranding agents", async () => {
+    const room = new Room("r", new FakeDriver());
+    const socket = new FakeSocket();
+    await room.join(mira, socket);
+    room.claimWorkspace("ijmh2", true);
+
+    await room.leave("ijmh2", "human", socket);
+    assert.equal(room.workspaceHost, undefined);
+  });
+
+  test("one member's agent reaches another member's workspace", async () => {
+    const room = new Room("r", new FakeDriver());
+    const miraEditor = new FakeSocket();
+    const samAgent = new FakeSocket();
+    await room.join(mira, miraEditor);
+    await room.join(sam, samAgent, "agent", { id: "s:coder", label: "Sam's coder" });
+
+    room.routeRemoteTool(
+      { agentId: "s:coder", label: "Sam's coder", handle: "swhitfield" },
+      "req_1",
+      "ijmh2",
+      "read_file",
+      { path: "src/index.ts" }
+    );
+
+    // The request lands on Mira's editor, naming who asked — a member approving
+    // a read of their own files must see whose agent wants it.
+    const request = miraEditor.of("remoteToolRequest").at(-1);
+    assert.equal(request?.name, "read_file");
+    assert.equal(request?.requesterLabel, "Sam's coder");
+    assert.equal(request?.requesterHandle, "swhitfield");
+    assert.equal(samAgent.of("remoteToolRequest").length, 0, "the asker must not receive its own request");
+  });
+
+  test('"room" resolves to whoever is hosting, so agents need not know', async () => {
+    const room = new Room("r", new FakeDriver());
+    const miraEditor = new FakeSocket();
+    await room.join(mira, miraEditor);
+    await room.join(sam, new FakeSocket(), "agent", { id: "s:1", label: "Sam's agent" });
+    room.claimWorkspace("ijmh2", true);
+
+    room.routeRemoteTool(
+      { agentId: "s:1", label: "Sam's agent", handle: "swhitfield" },
+      "req_2",
+      "room",
+      "list_files",
+      {}
+    );
+    assert.equal(miraEditor.of("remoteToolRequest").at(-1)?.requestId, "req_2");
+  });
+
+  test("the result returns to the agent that asked, and nobody else", async () => {
+    const room = new Room("r", new FakeDriver());
+    const miraEditor = new FakeSocket();
+    const asking = new FakeSocket();
+    const other = new FakeSocket();
+    await room.join(mira, miraEditor);
+    await room.join(sam, asking, "agent", { id: "s:1", label: "Sam's agent" });
+    await room.join(sam, other, "agent", { id: "s:2", label: "Sam's reviewer" });
+
+    room.routeRemoteTool(
+      { agentId: "s:1", label: "Sam's agent", handle: "swhitfield" },
+      "req_3",
+      "ijmh2",
+      "read_file",
+      {}
+    );
+    room.completeRemoteTool("req_3", "file contents", false);
+
+    assert.equal(asking.of("remoteToolReply").at(-1)?.content, "file contents");
+    assert.equal(other.of("remoteToolReply").length, 0);
+  });
+
+  test("a request with no host, or an absent target, fails with a reason", async () => {
+    const room = new Room("r", new FakeDriver());
+    const agent = new FakeSocket();
+    await room.join(sam, agent, "agent", { id: "s:1", label: "Sam's agent" });
+
+    room.routeRemoteTool({ agentId: "s:1", label: "Sam's agent", handle: "swhitfield" }, "r1", "room", "x", {});
+    assert.match(agent.of("remoteToolReply").at(-1)?.content ?? "", /no shared workspace/i);
+
+    room.routeRemoteTool({ agentId: "s:1", label: "Sam's agent", handle: "swhitfield" }, "r2", "ijmh2", "x", {});
+    assert.match(agent.of("remoteToolReply").at(-1)?.content ?? "", /not present/i);
+  });
+});
+
+describe("action log", () => {
+  test("work is attributed to the acting agent, not the machine's owner", async () => {
+    const room = new Room("r", new FakeDriver());
+    const miraEditor = new FakeSocket();
+    await room.join(mira, miraEditor);
+
+    // Sam's agent wrote a file on Mira's machine. Recording Mira would be the
+    // shared-login failure this whole design exists to avoid.
+    room.recordAction({
+      agentId: "s:coder",
+      agentLabel: "Sam's coder",
+      targetHandle: "ijmh2",
+      verb: "wrote",
+      target: "src/index.ts",
+      detail: "+41 −6",
+      ok: true,
+    });
+
+    const entry = miraEditor.of("action").at(-1)?.entry;
+    assert.equal(entry?.agentLabel, "Sam's coder");
+    assert.equal(entry?.targetHandle, "ijmh2");
+    assert.equal(entry?.verb, "wrote");
+  });
+
+  test("a joiner receives the work already done, not just the chat", async () => {
+    const room = new Room("r", new FakeDriver());
+    await room.join(mira, new FakeSocket());
+    room.recordAction({
+      agentId: "i:1",
+      agentLabel: "Mira's agent",
+      targetHandle: "ijmh2",
+      verb: "ran",
+      target: "npm test",
+      detail: "failed",
+      ok: false,
+    });
+
+    const late = new FakeSocket();
+    await room.join(sam, late);
+    const joined = late.of("joined")[0];
+    assert.equal(joined?.actions?.length, 1);
+    assert.equal(joined?.actions?.[0].detail, "failed");
+  });
+});
+
 describe("tool routing", () => {
   test("a tool call goes only to the addressed member", async () => {
     const room = new Room("r", new FakeDriver());

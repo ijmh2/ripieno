@@ -398,3 +398,53 @@ body {
 .approval-button:hover {
   filter: brightness(1.15);
 }
+
+/* -------------------------------------------------------------- */
+/* Action log                                                      */
+/* -------------------------------------------------------------- */
+
+/* Collapsed by default and pinned above the composer: work is reference
+   material you consult, not a feed you read. */
+.actions {
+  border-top: 1px solid var(--vscode-panel-border);
+  flex-shrink: 0;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.actions-summary {
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  user-select: none;
+}
+
+.actions-list {
+  padding: 0 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.action-row {
+  font-size: 11px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.action-row.failed .action-detail {
+  color: var(--vscode-inputValidation-errorForeground, #f48771);
+}
+
+.action-who {
+  font-weight: 700;
+}
+
+.action-detail,
+.action-where {
+  color: var(--vscode-descriptionForeground);
+}
