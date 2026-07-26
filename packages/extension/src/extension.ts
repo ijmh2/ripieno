@@ -44,6 +44,11 @@ export function activate(context: vscode.ExtensionContext): void {
     "dist",
     "permissionServer.js"
   ).fsPath;
+  const workspaceServerPath = vscode.Uri.joinPath(
+    context.extensionUri,
+    "dist",
+    "workspaceServer.js"
+  ).fsPath;
 
   const roomView = new RoomViewProvider(context.extensionUri, (text) => {
     if (handleRoomCommand(text)) return;
@@ -604,6 +609,7 @@ export function activate(context: vscode.ExtensionContext): void {
         .map((other) => labelFor(other.label)),
       approvals,
       permissionServerPath,
+      workspaceServerPath,
       token: roomToken(),
       onStateChange: (agentId, state) => onAgentState(agentId, state),
     });

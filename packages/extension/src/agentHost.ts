@@ -12,6 +12,8 @@
 // session, so they genuinely reason separately rather than sharing a context.
 
 import * as vscode from "vscode";
+import { randomBytes } from "crypto";
+import { WebSocketServer, type WebSocket } from "ws";
 import type { Member, TranscriptEntry } from "@mpa/protocol";
 import { RelayClient } from "./relayClient";
 import type { ApprovalBridge } from "./approvals";
@@ -78,6 +80,7 @@ export interface AgentHostOptions extends AgentSpec {
   approvals: ApprovalBridge;
   token?: string;
   permissionServerPath: string;
+  workspaceServerPath: string;
   onStateChange: (id: string, state: AgentState) => void;
   /** Other agents this member runs, so this one can tell when it was not the one asked. */
   siblingLabels?: string[];
@@ -106,6 +109,17 @@ export class AgentHost implements vscode.Disposable {
     string,
     { resolve: (r: { content: string; isError: boolean }) => void; timer: NodeJS.Timeout }
   >();
+  /**
+   * Loopback bridge serving this agent's shared-workspace tools.
+   *
+   * The agent's MCP server cannot join the room itself without opening a second
+   * connection under the same identity, so it asks us instead and we use the
+   * connection we already hold. Same shape as the approval bridge, and for the
+   * same reason.
+   */
+  private workspaceBridge: WebSocketServer | undefined;
+  private readonly workspaceToken = randomBytes(24).toString("hex");
+  private workspaceUrl: string | undefined;
   private state: AgentState = "detached";
 
   constructor(private readonly opts: AgentHostOptions) {
@@ -170,6 +184,10 @@ export class AgentHost implements vscode.Disposable {
     this.clearPending();
     for (const { timer } of this.remoteCalls.values()) clearTimeout(timer);
     this.remoteCalls.clear();
+    for (const client of this.workspaceBridge?.clients ?? []) client.terminate();
+    this.workspaceBridge?.close();
+    this.workspaceBridge = undefined;
+    this.workspaceUrl = undefined;
     this.runner?.cancel();
     this.runner = undefined;
     this.relay?.dispose();
@@ -178,6 +196,47 @@ export class AgentHost implements vscode.Disposable {
     this.setState("detached");
     this.log("detached");
     this.output.dispose();
+  }
+
+  /** Start the loopback bridge once; the port is chosen by the OS. */
+  private startWorkspaceBridge(): Promise<string> {
+    if (this.workspaceUrl) return Promise.resolve(this.workspaceUrl);
+    return new Promise((resolve, reject) => {
+      // Loopback only, plus a per-agent secret: this socket can act on another
+      // member's machine, so no other local process should be able to drive it.
+      const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 }, () => {
+        const address = wss.address();
+        if (typeof address === "string" || address === null) {
+          reject(new Error("workspace bridge could not bind"));
+          return;
+        }
+        this.workspaceUrl = `ws://127.0.0.1:${address.port}`;
+        resolve(this.workspaceUrl);
+      });
+      this.workspaceBridge = wss;
+
+      wss.on("error", reject);
+      wss.on("connection", (socket: WebSocket, req) => {
+        if (req.headers["x-mpa-token"] !== this.workspaceToken) {
+          socket.close(4001, "bad token");
+          return;
+        }
+        socket.on("message", (raw) => void this.serveWorkspaceCall(socket, raw));
+      });
+    });
+  }
+
+  private async serveWorkspaceCall(socket: WebSocket, raw: unknown): Promise<void> {
+    let request: { id: string; name: string; input: Record<string, unknown> };
+    try {
+      request = JSON.parse(String(raw));
+    } catch {
+      return;
+    }
+    const result = await this.remoteTool(`ws_${request.id}`, request.name, request.input ?? {});
+    if (socket.readyState === socket.OPEN) {
+      socket.send(JSON.stringify({ id: request.id, ...result }));
+    }
   }
 
   /**
@@ -305,11 +364,23 @@ export class AgentHost implements vscode.Disposable {
 
     if (isWorkspaceProvider(this.opts.providerId ?? "claude-code")) {
       const bridge = await this.opts.approvals.start();
+    const workspaceUrl = await this.startWorkspaceBridge();
       // Route permission requests to the member instead of leaving them
       // unanswerable. A headless run cannot prompt, so without this anything
       // needing approval strands rather than being decided.
       const mcpConfig = JSON.stringify({
         mcpServers: {
+          // Shared-workspace tools, served through the room connection this
+          // host already holds — so the agent gets them without joining twice.
+          workspace: {
+            command: process.execPath,
+            args: [this.opts.workspaceServerPath],
+            env: {
+              ELECTRON_RUN_AS_NODE: "1",
+              MPA_WORKSPACE_URL: workspaceUrl,
+              MPA_WORKSPACE_TOKEN: this.workspaceToken,
+            },
+          },
           approvals: {
             // `process.execPath` in an extension host is the *Electron* binary,
             // not node. ELECTRON_RUN_AS_NODE makes the same binary behave as
