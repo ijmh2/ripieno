@@ -36,6 +36,11 @@
           "id": "mpa.room",
           "name": "Room",
           "type": "webview"
+        },
+        {
+          "id": "mpa.workspace",
+          "name": "Shared Workspace",
+          "when": "mpa.hasSharedWorkspace"
         }
       ]
     },
@@ -71,6 +76,16 @@
         "command": "mpa.hostWorkspace",
         "title": "Multiplayer Agent: Host / Release the Shared Workspace",
         "icon": "$(root-folder)"
+      },
+      {
+        "command": "mpa.mountWorkspace",
+        "title": "Multiplayer Agent: Mount Shared Workspace in Explorer",
+        "icon": "$(root-folder-opened)"
+      },
+      {
+        "command": "mpa.proposeChange",
+        "title": "Multiplayer Agent: Propose Change to Host",
+        "icon": "$(git-pull-request)"
       }
     ],
     "menus": {
@@ -84,6 +99,11 @@
           "command": "mpa.hostWorkspace",
           "when": "view == mpa.rooms",
           "group": "navigation"
+        },
+        {
+          "command": "mpa.mountWorkspace",
+          "when": "view == mpa.workspace",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -96,6 +116,13 @@
           "command": "mpa.detachAgent",
           "when": "view == mpa.rooms && viewItem == mpaAgentAttached",
           "group": "inline"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "mpa.proposeChange",
+          "when": "mpa.hasSharedWorkspace",
+          "group": "navigation"
         }
       ]
     },

@@ -44,7 +44,14 @@ function fakeBridge(decide) {
     seen,
     ready,
     url: () => `ws://127.0.0.1:${wss.address().port}`,
-    close: () => new Promise((r) => wss.close(r)),
+    // Terminate clients first: wss.close() waits for every connection to go, so
+    // closing while the permission server is still attached hangs forever — and
+    // the request it is waiting on sits out its full decision timeout.
+    close: () =>
+      new Promise((r) => {
+        for (const client of wss.clients) client.terminate();
+        wss.close(r);
+      }),
   };
 }
 

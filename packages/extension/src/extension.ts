@@ -9,6 +9,8 @@ import { AgentHost, type AgentState } from "./agentHost";
 import { RoomsTreeProvider, type MyAgent } from "./roomsTree";
 import { PROVIDERS, isWorkspaceProvider, providerById, secretKeyFor, type ProviderPreset } from "./runners";
 import { ApprovalBridge } from "./approvals";
+import { WorkspaceFileSystem, WORKSPACE_SCHEME, uriFor } from "./workspaceFs";
+import { WorkspaceTreeProvider, isHostDocument } from "./workspaceTree";
 
 export function activate(context: vscode.ExtensionContext): void {
   const toolExecutor = new ToolExecutor();
@@ -17,6 +19,7 @@ export function activate(context: vscode.ExtensionContext): void {
   let relay: RelayClient | undefined;
   let currentRoom: string | undefined;
   let hostingWorkspace = false;
+  let nextFsRequest = 0;
   let me: Member | undefined;
 
   // A member may run several agents at once — a coder and a reviewer, say —
@@ -47,6 +50,12 @@ export function activate(context: vscode.ExtensionContext): void {
     relay?.send({ t: "say", text });
   });
 
+  // The host's workspace, as a real filesystem. Read-only: edits go through
+  // "Propose change to host" so the owner sees a diff instead of a stream of
+  // approval prompts triggered by autosave.
+  const workspaceFs = new WorkspaceFileSystem();
+  const workspaceTree = new WorkspaceTreeProvider();
+
   const roomsTree = new RoomsTreeProvider({
     attachAgent: (id) => void attachAgent(id),
     detachAgent: (id) => detachAgent(id),
@@ -64,6 +73,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(RoomViewProvider.viewId, roomView),
+    vscode.workspace.registerFileSystemProvider(WORKSPACE_SCHEME, workspaceFs, {
+      isReadonly: true,
+      isCaseSensitive: true,
+    }),
+    vscode.window.createTreeView(WorkspaceTreeProvider.viewId, {
+      treeDataProvider: workspaceTree,
+    }),
     vscode.window.createTreeView(RoomsTreeProvider.viewId, {
       treeDataProvider: roomsTree,
       dragAndDropController: roomsTree,
@@ -73,6 +89,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("mpa.signIn", () => signIn()),
     vscode.commands.registerCommand("mpa.addAgent", () => addAgent()),
     vscode.commands.registerCommand("mpa.hostWorkspace", () => toggleWorkspaceHost()),
+    vscode.commands.registerCommand("mpa.mountWorkspace", () => mountSharedWorkspace()),
+    vscode.commands.registerCommand("mpa.proposeChange", () => proposeChange()),
     vscode.commands.registerCommand("mpa.attachAgent", (node?: { id?: string }) =>
       void attachAgent(idFromNode(node))
     ),
@@ -223,6 +241,49 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   /**
+   * Point the filesystem at whoever is hosting.
+   *
+   * Someone else's workspace is browsable; your own is already in the Explorer,
+   * so mounting it again would be confusing rather than useful.
+   */
+  function applyWorkspaceHost(host: string | undefined): void {
+    const someoneElse = host && host !== me?.handle ? host : undefined;
+    workspaceTree.setHost(someoneElse);
+    workspaceFs.setRemote(
+      someoneElse
+        ? async (name, input) => {
+            const requestId = `fs_${nextFsRequest++}`;
+            return remoteToolCall(requestId, name, input);
+          }
+        : undefined
+    );
+    void vscode.commands.executeCommand("setContext", "mpa.hasSharedWorkspace", Boolean(someoneElse));
+  }
+
+  /**
+   * Issue a remote tool call on behalf of the editor rather than an agent.
+   *
+   * The relay only routes remote tools for agent connections, so this rides the
+   * member's own agent identity — the browsing is attributed to the person, via
+   * their agent, which is what the action log should record anyway.
+   */
+  function remoteToolCall(
+    requestId: string,
+    name: string,
+    input: Record<string, unknown>
+  ): Promise<{ content: string; isError: boolean }> {
+    const browser = [...agents.values()][0];
+    if (!browser) {
+      return Promise.resolve({
+        content:
+          "Browsing a shared workspace needs one of your agents attached — it carries the identity the request is made under.",
+        isError: true,
+      });
+    }
+    return browser.remoteTool(requestId, name, input);
+  }
+
+  /**
    * Offer this machine as the room's shared workspace, or stop.
    *
    * Worth a confirmation the first time: hosting means other members' agents can
@@ -252,6 +313,80 @@ export function activate(context: vscode.ExtensionContext): void {
     if (go !== "Host the workspace") return;
     relay.send({ t: "claimWorkspace", claim: true });
     hostingWorkspace = true;
+  }
+
+  /**
+   * Put the shared workspace in the real Explorer.
+   *
+   * Opt-in rather than automatic: changing workspace folders can restart the
+   * extension host, which would drop every attached agent mid-room.
+   */
+  async function mountSharedWorkspace(): Promise<void> {
+    const host = workspaceTree.hostHandle;
+    if (!host) {
+      vscode.window.showInformationMessage("Multiplayer Agent: nobody is hosting a shared workspace.");
+      return;
+    }
+    const go = await vscode.window.showWarningMessage(
+      `Add @${host}'s workspace to the Explorer?`,
+      {
+        modal: true,
+        detail:
+          "VS Code may reload the window to add a folder, which detaches your agents. They can be reattached afterwards.",
+      },
+      "Add to Explorer"
+    );
+    if (go !== "Add to Explorer") return;
+
+    vscode.workspace.updateWorkspaceFolders(
+      vscode.workspace.workspaceFolders?.length ?? 0,
+      0,
+      { uri: uriFor(""), name: `${host} (shared)` }
+    );
+  }
+
+  /**
+   * Send the active editor's contents to the host as a proposed change.
+   *
+   * Deliberately explicit rather than save-through: VS Code saves eagerly, so
+   * transparent writes would mean an approval prompt on someone else's machine
+   * every time a buffer autosaved.
+   */
+  async function proposeChange(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      vscode.window.showInformationMessage("Multiplayer Agent: open a file to propose a change.");
+      return;
+    }
+    const host = workspaceTree.hostHandle;
+    if (!host) {
+      vscode.window.showInformationMessage("Multiplayer Agent: nobody is hosting a shared workspace.");
+      return;
+    }
+
+    // A host document already knows its path; a local file has to be told where
+    // it belongs in the host's tree, since the layouts need not match.
+    const suggested = isHostDocument(editor.document)
+      ? editor.document.uri.path.replace(/^\//, "")
+      : vscode.workspace.asRelativePath(editor.document.uri, false);
+
+    const target = await vscode.window.showInputBox({
+      title: `Propose a change to @${host}`,
+      prompt: "Path in their workspace",
+      value: suggested,
+      ignoreFocusOut: true,
+    });
+    if (!target) return;
+
+    const result = await remoteToolCall(`fs_${nextFsRequest++}`, "write_file", {
+      path: target,
+      content: editor.document.getText(),
+    });
+    void vscode.window.showInformationMessage(
+      result.isError
+        ? `Multiplayer Agent: ${result.content}`
+        : `Sent to @${host} — they decide whether to apply it.`
+    );
   }
 
   /** Is this executable actually available? A missing CLI fails silently otherwise. */
@@ -591,6 +726,7 @@ export function activate(context: vscode.ExtensionContext): void {
         roomsTree.setRoom(msg.room, msg.mode, msg.you.handle);
         roomsTree.setRoster(msg.roster, msg.workspaceHost);
         hostingWorkspace = msg.workspaceHost === msg.you.handle;
+        applyWorkspaceHost(msg.workspaceHost);
         roomsTree.setRoster(msg.roster);
         break;
       case "roster":
@@ -599,6 +735,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // The relay is the authority: it releases the claim when the host
         // leaves, so believing our own flag would leave the UI lying.
         hostingWorkspace = msg.workspaceHost === me?.handle;
+        applyWorkspaceHost(msg.workspaceHost);
         break;
       case "entry":
         roomView.addEntry(msg.entry);
@@ -617,6 +754,9 @@ export function activate(context: vscode.ExtensionContext): void {
         break;
       case "action":
         roomView.addAction(msg.entry);
+        // The provenance stream doubles as cache invalidation: a write to a path
+        // evicts exactly that path, so an open tab refreshes rather than lying.
+        workspaceFs.noteAction(msg.entry);
         break;
       case "status":
         roomView.setStatus(msg.status, msg.waitingOn);

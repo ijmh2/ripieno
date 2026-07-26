@@ -93,6 +93,19 @@ export class AgentHost implements vscode.Disposable {
   private fed = 0;
   private busy = false;
   private pending: NodeJS.Timeout | undefined;
+  /**
+   * Remote tool calls awaiting a reply from the member executing them.
+   *
+   * The relay only routes remote tools for *agent* connections, so anything in
+   * the extension that wants to reach another member's workspace — the
+   * filesystem view, "propose change" — borrows this agent's identity. That is
+   * also the right attribution: the action log records the agent, and the agent
+   * belongs to the person who asked.
+   */
+  private readonly remoteCalls = new Map<
+    string,
+    { resolve: (r: { content: string; isError: boolean }) => void; timer: NodeJS.Timeout }
+  >();
   private state: AgentState = "detached";
 
   constructor(private readonly opts: AgentHostOptions) {
@@ -139,6 +152,13 @@ export class AgentHost implements vscode.Disposable {
         } else if (msg.t === "entry") {
           this.transcript.push(msg.entry);
           this.consider(msg.entry);
+        } else if (msg.t === "remoteToolReply") {
+          const waiting = this.remoteCalls.get(msg.requestId);
+          if (waiting) {
+            clearTimeout(waiting.timer);
+            this.remoteCalls.delete(msg.requestId);
+            waiting.resolve({ content: msg.content, isError: msg.isError === true });
+          }
         }
       },
     });
@@ -148,6 +168,8 @@ export class AgentHost implements vscode.Disposable {
 
   dispose(): void {
     this.clearPending();
+    for (const { timer } of this.remoteCalls.values()) clearTimeout(timer);
+    this.remoteCalls.clear();
     this.runner?.cancel();
     this.runner = undefined;
     this.relay?.dispose();
@@ -156,6 +178,34 @@ export class AgentHost implements vscode.Disposable {
     this.setState("detached");
     this.log("detached");
     this.output.dispose();
+  }
+
+  /**
+   * Act on another member's workspace through this agent's connection.
+   *
+   * Generous timeout: the other end may be showing a human a diff to approve,
+   * and cutting that short would look like a failure rather than a decision.
+   */
+  remoteTool(
+    requestId: string,
+    name: string,
+    input: Record<string, unknown>,
+    timeoutMs = 300_000
+  ): Promise<{ content: string; isError: boolean }> {
+    if (!this.relay) {
+      return Promise.resolve({ content: "This agent is not attached to a room.", isError: true });
+    }
+    this.relay.send({ t: "remoteTool", requestId, targetHandle: "room", name, input });
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.remoteCalls.delete(requestId);
+        resolve({
+          content: `No answer from the workspace host within ${timeoutMs / 1000}s.`,
+          isError: true,
+        });
+      }, timeoutMs);
+      this.remoteCalls.set(requestId, { resolve, timer });
+    });
   }
 
   /**

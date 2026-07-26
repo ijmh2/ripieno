@@ -84,6 +84,10 @@ export class ToolExecutor {
           return await this.editorContext();
         case "diagnostics":
           return this.diagnostics();
+        case "list_dir":
+          return await this.listDir(call.input);
+        case "stat":
+          return await this.stat(call.input);
         default:
           return { content: `Unknown tool "${call.name}".`, isError: true };
       }
@@ -151,6 +155,67 @@ export class ToolExecutor {
       .map((u) => path.relative(root.abs, u.fsPath))
       .sort((a, b) => a.localeCompare(b));
     return capResult(lines.length > 0 ? lines.join("\n") : "(no files found)");
+  }
+
+  /**
+   * Immediate children of a directory, with type and size.
+   *
+   * `list_files` cannot answer this: it is a flat glob of matches, so it can
+   * neither say what is directly inside a directory nor distinguish a file from
+   * a folder. A filesystem provider needs both, on every expand.
+   *
+   * Output is line-oriented and machine-parsable — `type\tsize\tname` — because
+   * it is consumed by code as often as by a model.
+   */
+  private async listDir(input: Record<string, unknown>): Promise<ToolResult> {
+    const rel = typeof input.path === "string" && input.path.trim() !== "" ? input.path : ".";
+    const safe = await resolveSafePath(rel);
+    if (!safe.ok) {
+      return { content: safe.reason, isError: true };
+    }
+
+    let entries: [string, vscode.FileType][];
+    try {
+      entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(safe.abs));
+    } catch (err) {
+      return { content: `Cannot read ${rel}: ${errText(err)}`, isError: true };
+    }
+
+    const rows: string[] = [];
+    for (const [name, type] of entries) {
+      // Skipped everywhere else in this file too; listing them would bury the
+      // repo in a tree view and make every expand slow.
+      if (name === "node_modules" || name === ".git") continue;
+      const isDir = (type & vscode.FileType.Directory) !== 0;
+      let size = 0;
+      if (!isDir) {
+        try {
+          size = (await vscode.workspace.fs.stat(vscode.Uri.file(path.join(safe.abs, name)))).size;
+        } catch {
+          // A broken symlink or a race with a delete: report it as empty rather
+          // than failing the whole listing.
+        }
+      }
+      rows.push(`${isDir ? "dir" : "file"}\t${size}\t${name}`);
+    }
+    rows.sort();
+    return capResult(rows.join("\n"));
+  }
+
+  /** Type, size and mtime for one path — what a provider needs before reading. */
+  private async stat(input: Record<string, unknown>): Promise<ToolResult> {
+    const rel = requireString(input, "path");
+    const safe = await resolveSafePath(rel);
+    if (!safe.ok) {
+      return { content: safe.reason, isError: true };
+    }
+    try {
+      const info = await vscode.workspace.fs.stat(vscode.Uri.file(safe.abs));
+      const kind = (info.type & vscode.FileType.Directory) !== 0 ? "dir" : "file";
+      return { content: `${kind}\t${info.size}\t${info.mtime}` };
+    } catch (err) {
+      return { content: `Cannot stat ${rel}: ${errText(err)}`, isError: true };
+    }
   }
 
   private async search(input: Record<string, unknown>): Promise<ToolResult> {
