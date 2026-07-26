@@ -1,19 +1,24 @@
 {
   "$comment": [
-    "Project permissions for agents working in this repo, so ordinary read-only",
-    "and build work stops re-prompting.",
+    "Project permissions for agents working in this repo, so ordinary read-only and",
+    "build work stops re-prompting.",
     "",
-    "Be clear about what this does and does not do. It widens Bash only. It does",
-    "NOT restrain the Write tool — a room agent running with acceptEdits can",
-    "create or overwrite any file it can reach, while still being unable to run",
-    "`ls -R`. That asymmetry is real and backwards from a security standpoint;",
-    "the deny list below is the part that actually narrows reach, and the",
-    "mpa.agentPermissions setting is what decides whether commands run at all.",
+    "Deny rules must use Edit(...), not Write(...): Claude Code matches every",
+    "file-editing tool against Edit rules and silently ignores Write ones. An earlier",
+    "version of this file used Write and therefore denied nothing at all.",
     "",
-    "Also note a headless room agent cannot answer an approval prompt: anything",
-    "needing one strands rather than being denied."
+    "Be clear about what the allow list does and does not do. It widens Bash only. It",
+    "does not restrain file writing \u2014 a room agent running with acceptEdits can create",
+    "or overwrite any file it can reach while still being unable to run `ls -R`. That",
+    "asymmetry is real and backwards; the deny list is what narrows reach, and the",
+    "mpa.agentPermissions setting decides whether commands run unattended at all.",
+    "",
+    "Also note a headless room agent cannot answer an approval prompt: without the",
+    "extension's approval bridge, anything needing one strands rather than being denied."
   ],
-  "enabledMcpjsonServers": ["room"],
+  "enabledMcpjsonServers": [
+    "room"
+  ],
   "permissions": {
     "allow": [
       "Bash(git status:*)",
@@ -38,9 +43,9 @@
       "Read(/~/.config/anthropic/**)",
       "Read(//**/.env)",
       "Read(//**/.env.*)",
-      "Write(/~/.ssh/**)",
-      "Write(/~/.claude/**)",
-      "Write(/~/.config/**)",
+      "Edit(/~/.ssh/**)",
+      "Edit(/~/.claude/**)",
+      "Edit(/~/.config/**)",
       "Bash(rm -rf:*)",
       "Bash(curl:*)",
       "Bash(git push:*)"
