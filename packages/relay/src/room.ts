@@ -271,7 +271,7 @@ export class Room {
     this.replyRemote(pending.agentId, requestId, content, isError);
 
     const agent = this.agents.get(pending.agentId);
-    if (agent) {
+    if (agent && !isNavigation(pending.name)) {
       this.recordAction({
         agentId: pending.agentId,
         agentLabel: agent.label,
@@ -478,6 +478,19 @@ export class Room {
  * A past-tense verb, so the log reads as a record of what happened rather than
  * a list of function names.
  */
+/**
+ * Browsing is not work.
+ *
+ * A filesystem view stats and lists constantly — expanding one folder is a
+ * call, and every mouse click would become a row. The Work log exists to answer
+ * "what did the agents change", and drowning that in navigation makes it
+ * useless. Reads of file *contents* still count: an agent that read a file acted
+ * on information from it.
+ */
+function isNavigation(tool: string): boolean {
+  return tool === "list_dir" || tool === "stat" || tool === "list_files";
+}
+
 function verbFor(tool: string): string {
   switch (tool) {
     case "read_file":
@@ -491,7 +504,10 @@ function verbFor(tool: string): string {
     case "search":
       return "searched";
     case "list_files":
+    case "list_dir":
       return "listed";
+    case "stat":
+      return "checked";
     case "git_status":
       return "checked";
     case "diagnostics":
@@ -511,7 +527,11 @@ function describeToolTarget(tool: string, input: Record<string, unknown>): strin
       return value.length > 120 ? `${value.slice(0, 120)}…` : value;
     }
   }
-  return tool === "git_status" ? "git status" : "the workspace";
+  if (tool === "git_status") return "git status";
+  // "." is how a filesystem addresses the root, and it reads as nothing at all.
+  const dir = input.path;
+  if (dir === "." || dir === "" || dir === undefined) return "the workspace root";
+  return "the workspace";
 }
 
 /**

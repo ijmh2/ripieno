@@ -530,6 +530,31 @@ describe("action log", () => {
     assert.equal(entry?.verb, "wrote");
   });
 
+  test("browsing does not fill the log with navigation", async () => {
+    const room = new Room("r", new FakeDriver());
+    const miraEditor = new FakeSocket();
+    const agent = new FakeSocket();
+    await room.join(mira, miraEditor);
+    await room.join(sam, agent, "agent", { id: "s:1", label: "Sam's agent" });
+    room.claimWorkspace("ijmh2", true);
+
+    const ask = (id: string, name: string) => {
+      room.routeRemoteTool({ agentId: "s:1", label: "Sam's agent", handle: "swhitfield" }, id, "room", name, {});
+      room.completeRemoteTool(id, "ok", false);
+    };
+
+    // Expanding folders and stat-ing files is how a filesystem view works; each
+    // one becoming a row would bury the changes the log exists to show.
+    ask("n1", "list_dir");
+    ask("n2", "stat");
+    assert.equal(room.actionLog.length, 0);
+
+    // Reading a file's contents is still work — the agent acted on it.
+    ask("n3", "read_file");
+    assert.equal(room.actionLog.length, 1);
+    assert.equal(room.actionLog[0].verb, "read");
+  });
+
   test("a joiner receives the work already done, not just the chat", async () => {
     const room = new Room("r", new FakeDriver());
     await room.join(mira, new FakeSocket());
