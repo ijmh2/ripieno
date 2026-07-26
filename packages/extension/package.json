@@ -66,12 +66,22 @@
         "command": "mpa.addAgent",
         "title": "Multiplayer Agent: Add Another Agent",
         "icon": "$(add)"
+      },
+      {
+        "command": "mpa.hostWorkspace",
+        "title": "Multiplayer Agent: Host / Release the Shared Workspace",
+        "icon": "$(root-folder)"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "mpa.addAgent",
+          "when": "view == mpa.rooms",
+          "group": "navigation"
+        },
+        {
+          "command": "mpa.hostWorkspace",
           "when": "view == mpa.rooms",
           "group": "navigation"
         }

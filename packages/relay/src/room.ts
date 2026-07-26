@@ -76,7 +76,10 @@ export class Room {
   /** What agents have done, distinct from what people have said. */
   private readonly actions: ActionEntry[] = [];
   /** Outstanding remote tool requests, so a reply can find who asked. */
-  private readonly remoteCalls = new Map<string, { agentId: string }>();
+  private readonly remoteCalls = new Map<
+    string,
+    { agentId: string; targetHandle: string; name: string; input: Record<string, unknown> }
+  >();
 
   constructor(
     readonly code: string,
@@ -237,7 +240,12 @@ export class Room {
       return;
     }
 
-    this.remoteCalls.set(requestId, { agentId: requester.agentId });
+    this.remoteCalls.set(requestId, {
+      agentId: requester.agentId,
+      targetHandle: target,
+      name,
+      input,
+    });
     this.sendTo(conn.socket, {
       t: "remoteToolRequest",
       requestId,
@@ -249,12 +257,28 @@ export class Room {
     });
   }
 
-  /** The executing member answering; routed back to the agent that asked. */
+  /**
+   * The executing member answering; routed back to the agent that asked, and
+   * recorded so every other agent can see the work without redoing it.
+   */
   completeRemoteTool(requestId: string, content: string, isError: boolean): void {
     const pending = this.remoteCalls.get(requestId);
     if (!pending) return;
     this.remoteCalls.delete(requestId);
     this.replyRemote(pending.agentId, requestId, content, isError);
+
+    const agent = this.agents.get(pending.agentId);
+    if (agent) {
+      this.recordAction({
+        agentId: pending.agentId,
+        agentLabel: agent.label,
+        targetHandle: pending.targetHandle,
+        verb: verbFor(pending.name),
+        target: describeToolTarget(pending.name, pending.input),
+        detail: summariseResult(content, isError),
+        ok: !isError,
+      });
+    }
   }
 
   private replyRemote(agentId: string, requestId: string, content: string, isError: boolean): void {
@@ -441,4 +465,61 @@ export class Room {
   private sendTo(socket: SocketLike, msg: ServerMsg): void {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(msg));
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Describing work                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A past-tense verb, so the log reads as a record of what happened rather than
+ * a list of function names.
+ */
+function verbFor(tool: string): string {
+  switch (tool) {
+    case "read_file":
+      return "read";
+    case "write_file":
+      return "wrote";
+    case "edit_file":
+      return "edited";
+    case "run_command":
+      return "ran";
+    case "search":
+      return "searched";
+    case "list_files":
+      return "listed";
+    case "git_status":
+      return "checked";
+    case "diagnostics":
+      return "checked";
+    case "editor_context":
+      return "looked at";
+    default:
+      return tool;
+  }
+}
+
+/** The most identifying field, so a row says *what* was acted on. */
+function describeToolTarget(tool: string, input: Record<string, unknown>): string {
+  for (const key of ["path", "command", "query", "dir"]) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.length > 120 ? `${value.slice(0, 120)}…` : value;
+    }
+  }
+  return tool === "git_status" ? "git status" : "the workspace";
+}
+
+/**
+ * A glanceable outcome. The full result already went to the agent; this is for
+ * humans scanning the log and for other agents deciding whether to redo work.
+ */
+function summariseResult(content: string, isError: boolean): string {
+  const firstLine = content.split("\n")[0]?.trim() ?? "";
+  if (isError) {
+    return firstLine.length > 60 ? `failed — ${firstLine.slice(0, 60)}…` : `failed — ${firstLine}`;
+  }
+  const lines = content.split("\n").length;
+  return lines > 1 ? `${lines} lines` : firstLine.slice(0, 60);
 }

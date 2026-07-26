@@ -60,6 +60,8 @@ export class RoomsTreeProvider
   private roster: RosterEntry[] = [];
   private myAgents: MyAgent[] = [];
   private myHandle: string | undefined;
+  /** Whose machine is the room's shared workspace, if anyone has offered one. */
+  private host: string | undefined;
 
   constructor(private readonly handlers: RoomsTreeHandlers) {}
 
@@ -75,8 +77,9 @@ export class RoomsTreeProvider
     this.refresh();
   }
 
-  setRoster(roster: RosterEntry[]): void {
+  setRoster(roster: RosterEntry[], workspaceHost?: string): void {
     this.roster = roster;
+    this.host = workspaceHost;
     this.refresh();
   }
 
@@ -171,6 +174,9 @@ export class RoomsTreeProvider
         const bits = [`@${entry.handle}`];
         if (isYou) bits.push("you");
         if (!entry.present) bits.push("away");
+        // Hosting is worth showing on the member, not buried in a tooltip:
+        // it is the machine other people's agents are acting on.
+        if (this.host === entry.handle) bits.push("hosts the workspace");
         item.description = bits.join(" · ");
         item.iconPath = new vscode.ThemeIcon(entry.present ? "account" : "circle-outline");
         item.contextValue = "mpaMember";

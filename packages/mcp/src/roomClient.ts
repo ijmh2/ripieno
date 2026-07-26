@@ -7,7 +7,13 @@
  */
 
 import WebSocket = require("ws");
-import type { ClientMsg, RosterEntry, ServerMsg, TranscriptEntry } from "@mpa/protocol";
+import type {
+  ActionEntry,
+  ClientMsg,
+  RosterEntry,
+  ServerMsg,
+  TranscriptEntry,
+} from "@mpa/protocol";
 
 export interface RoomClientConfig {
   url: string;
@@ -21,6 +27,14 @@ export class RoomClient {
   private socket?: WebSocket;
   private readonly transcript: TranscriptEntry[] = [];
   private roster: RosterEntry[] = [];
+  private actions: ActionEntry[] = [];
+  private host: string | undefined;
+  /** Remote tool calls awaiting a reply from the member executing them. */
+  private readonly pendingRemote = new Map<
+    string,
+    { resolve: (r: { content: string; isError: boolean }) => void; timer: NodeJS.Timeout }
+  >();
+  private nextRequest = 0;
   private ready?: Promise<void>;
   /** Index of the last entry already handed to the agent, so reads are incremental. */
   private cursor = 0;
@@ -75,6 +89,8 @@ export class RoomClient {
         const firstAttach = this.transcript.length === 0;
         this.transcript.push(...fresh);
         this.roster = msg.roster;
+        this.host = msg.workspaceHost;
+        this.actions = msg.actions ?? [];
         // On first attach, everything before us is history rather than news.
         // On a reconnect, whatever arrived while we were away is genuinely new.
         if (firstAttach) {
@@ -87,7 +103,20 @@ export class RoomClient {
         break;
       case "roster":
         this.roster = msg.roster;
+        this.host = msg.workspaceHost;
         break;
+      case "action":
+        this.actions.push(msg.entry);
+        break;
+      case "remoteToolReply": {
+        const pending = this.pendingRemote.get(msg.requestId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          this.pendingRemote.delete(msg.requestId);
+          pending.resolve({ content: msg.content, isError: msg.isError === true });
+        }
+        break;
+      }
       default:
         break;
     }
@@ -107,6 +136,44 @@ export class RoomClient {
 
   currentRoster(): RosterEntry[] {
     return this.roster;
+  }
+
+  currentActions(): ActionEntry[] {
+    return this.actions;
+  }
+
+  workspaceHost(): string | undefined {
+    return this.host;
+  }
+
+  /**
+   * Act on another member's workspace.
+   *
+   * The request is executed on *their* machine, under their permissions and with
+   * their approval — this agent never touches their disk directly. A generous
+   * timeout, because the other end may be showing a human a confirmation dialog.
+   */
+  async remoteTool(
+    targetHandle: string,
+    name: string,
+    input: Record<string, unknown>,
+    timeoutMs = 300_000
+  ): Promise<{ content: string; isError: boolean }> {
+    const requestId = `rt_${this.nextRequest++}`;
+    if (!this.send({ t: "remoteTool", requestId, targetHandle, name, input })) {
+      // Never silently drop: an unsent request would look like a slow one.
+      return { content: "Not connected to the room.", isError: true };
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingRemote.delete(requestId);
+        resolve({
+          content: `No answer from @${targetHandle} within ${timeoutMs / 1000}s — they may not have approved it.`,
+          isError: true,
+        });
+      }, timeoutMs);
+      this.pendingRemote.set(requestId, { resolve, timer });
+    });
   }
 
   /**

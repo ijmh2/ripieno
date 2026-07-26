@@ -121,9 +121,162 @@ server.registerTool(
               const agents =
                 r.agents.length > 0 ? `, agents: ${r.agents.map((a) => a.label).join(", ")}` : "";
               const repo = r.repo ? `, in ${r.repo}` : "";
-              return `- ${r.displayName} (@${r.handle}) — ${state}${agents}${repo}`;
+              const hosting = client.workspaceHost() === r.handle ? ", HOSTS the shared workspace" : "";
+              return `- ${r.displayName} (@${r.handle}) — ${state}${hosting}${agents}${repo}`;
             })
             .join("\n");
+    return { content: [{ type: "text", text }] };
+  }
+);
+
+/* ------------------------------------------------------------------ */
+/* The shared workspace                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Tools that act on somebody else's machine.
+ *
+ * This agent cannot touch another member's disk directly — nor should it. The
+ * request travels to that member's editor, which executes it under their
+ * permissions and asks them to approve it. The result comes back here, and the
+ * room records what was done and by whom.
+ */
+const TARGET_DESCRIPTION =
+  'Whose workspace to act on: a member handle, or "room" for whoever is hosting the shared workspace. Defaults to "room".';
+
+function target(member: unknown): string {
+  return typeof member === "string" && member.trim() !== "" ? member.trim().replace(/^@/, "") : "room";
+}
+
+async function remote(
+  member: unknown,
+  name: string,
+  input: Record<string, unknown>
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  await client.connect();
+  const result = await client.remoteTool(target(member), name, input);
+  return { content: [{ type: "text", text: result.content }], isError: result.isError };
+}
+
+server.registerTool(
+  "workspace_read_file",
+  {
+    title: "Read a file from the shared workspace",
+    description:
+      "Read a file on another member's machine. Use this rather than guessing at contents you cannot see — " +
+      "you and they do not share a filesystem.",
+    inputSchema: {
+      path: z.string().describe("Workspace-relative path."),
+      member: z.string().optional().describe(TARGET_DESCRIPTION),
+      offset: z.number().int().optional().describe("First line, 1-based."),
+      limit: z.number().int().optional().describe("How many lines to return."),
+    },
+  },
+  ({ path, member, offset, limit }) => remote(member, "read_file", { path, offset, limit })
+);
+
+server.registerTool(
+  "workspace_list_files",
+  {
+    title: "List files in the shared workspace",
+    description: "List files on another member's machine, to orient yourself before reading.",
+    inputSchema: {
+      dir: z.string().optional().describe("Workspace-relative directory."),
+      glob: z.string().optional().describe('Filter, e.g. "**/*.ts".'),
+      member: z.string().optional().describe(TARGET_DESCRIPTION),
+    },
+  },
+  ({ dir, glob, member }) => remote(member, "list_files", { dir, glob })
+);
+
+server.registerTool(
+  "workspace_search",
+  {
+    title: "Search the shared workspace",
+    description: "Text-search another member's workspace when you do not know which file to read.",
+    inputSchema: {
+      query: z.string().describe("Literal text to find."),
+      glob: z.string().optional(),
+      member: z.string().optional().describe(TARGET_DESCRIPTION),
+    },
+  },
+  ({ query, glob, member }) => remote(member, "search", { query, glob })
+);
+
+server.registerTool(
+  "workspace_write_file",
+  {
+    title: "Write a file in the shared workspace",
+    description:
+      "Create or overwrite a file on another member's machine. They are shown a diff and must approve it, " +
+      "so send the complete intended contents and expect a wait.",
+    inputSchema: {
+      path: z.string(),
+      content: z.string().describe("The complete file contents."),
+      member: z.string().optional().describe(TARGET_DESCRIPTION),
+    },
+  },
+  ({ path, content, member }) => remote(member, "write_file", { path, content })
+);
+
+server.registerTool(
+  "workspace_edit_file",
+  {
+    title: "Edit a file in the shared workspace",
+    description:
+      "Replace an exact string in a file on another member's machine. old_text must match exactly once. " +
+      "They review a diff before anything is applied.",
+    inputSchema: {
+      path: z.string(),
+      old_text: z.string(),
+      new_text: z.string(),
+      member: z.string().optional().describe(TARGET_DESCRIPTION),
+    },
+  },
+  ({ path, old_text, new_text, member }) =>
+    remote(member, "edit_file", { path, old_text, new_text })
+);
+
+server.registerTool(
+  "workspace_run_command",
+  {
+    title: "Run a command in the shared workspace",
+    description:
+      "Run a shell command on another member's machine. They approve it unless they have allowlisted it, " +
+      "so prefer the narrowest command that answers the question.",
+    inputSchema: {
+      command: z.string(),
+      member: z.string().optional().describe(TARGET_DESCRIPTION),
+    },
+  },
+  ({ command, member }) => remote(member, "run_command", { command })
+);
+
+server.registerTool(
+  "room_actions",
+  {
+    title: "What agents have already done",
+    description:
+      "The room's record of work: which agent read, wrote or ran what, on whose machine, and whether it " +
+      "succeeded. Check this before repeating something — another agent may have already run the tests or " +
+      "made the change you are about to make. It is also how you find out what changed under you.",
+    inputSchema: {
+      limit: z.number().int().min(1).max(200).optional().describe("How many recent actions. Defaults to 30."),
+    },
+  },
+  async ({ limit }) => {
+    await client.connect();
+    const actions = client.currentActions().slice(-(limit ?? 30));
+    if (actions.length === 0) {
+      return { content: [{ type: "text", text: "No agent has done any work in this room yet." }] };
+    }
+    const text = actions
+      .map((a) => {
+        const when = new Date(a.ts).toISOString().slice(11, 19);
+        const detail = a.detail ? ` — ${a.detail}` : "";
+        return `[${when}] ${a.agentLabel} ${a.verb} ${a.target} on @${a.targetHandle}${detail}${a.ok ? "" : " (failed)"}`;
+      })
+      .join("\n");
     return { content: [{ type: "text", text }] };
   }
 );

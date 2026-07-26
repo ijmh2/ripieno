@@ -273,6 +273,11 @@ export class ToolExecutor {
         cwd: root.abs,
         timeout: COMMAND_TIMEOUT_MS,
         maxBuffer: MAX_RESULT_BYTES * 4,
+        // A commit made by a remote agent must name that agent, not the member
+        // whose machine happened to run it. Without this, provenance quietly
+        // collapses into the host's identity the moment work is shared — which
+        // is the failure the whole shared-workspace design exists to avoid.
+        env: this.commandEnv(),
       });
       const combined = [stdout, stderr].filter(Boolean).join("\n");
       return capResult(combined.length > 0 ? combined : "(command produced no output)");
@@ -281,6 +286,22 @@ export class ToolExecutor {
       const combined = [e.stdout, e.stderr, e.message].filter(Boolean).join("\n");
       return { ...capResult(combined || "Command failed."), isError: true };
     }
+  }
+
+  /**
+   * Environment for a command run on this member's behalf.
+   *
+   * When another member's agent is driving, git authorship follows the agent.
+   * The committer stays this machine's user, which is the honest description of
+   * what happened: their agent authored it, your machine committed it.
+   */
+  private commandEnv(): NodeJS.ProcessEnv {
+    if (!this.requester) return process.env;
+    return {
+      ...process.env,
+      GIT_AUTHOR_NAME: this.requester.label,
+      GIT_AUTHOR_EMAIL: `${this.requester.handle}+agent@users.noreply.github.com`,
+    };
   }
 
   /* ---------------------------------------------------------------- */

@@ -16,6 +16,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(registerProposedDocuments());
   let relay: RelayClient | undefined;
   let currentRoom: string | undefined;
+  let hostingWorkspace = false;
   let me: Member | undefined;
 
   // A member may run several agents at once — a coder and a reviewer, say —
@@ -71,6 +72,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("mpa.leaveRoom", () => leaveRoom()),
     vscode.commands.registerCommand("mpa.signIn", () => signIn()),
     vscode.commands.registerCommand("mpa.addAgent", () => addAgent()),
+    vscode.commands.registerCommand("mpa.hostWorkspace", () => toggleWorkspaceHost()),
     vscode.commands.registerCommand("mpa.attachAgent", (node?: { id?: string }) =>
       void attachAgent(idFromNode(node))
     ),
@@ -218,6 +220,38 @@ export function activate(context: vscode.ExtensionContext): void {
     roomsTree.setMyAgents(myAgentsForTree());
     // Attaching straight away is almost always what was meant.
     if (currentRoom) void attachAgent(id);
+  }
+
+  /**
+   * Offer this machine as the room's shared workspace, or stop.
+   *
+   * Worth a confirmation the first time: hosting means other members' agents can
+   * read, write and run things here — with your approval each time, but the
+   * reach is real and should be a deliberate choice rather than a toggle.
+   */
+  async function toggleWorkspaceHost(): Promise<void> {
+    if (!relay || !currentRoom) {
+      vscode.window.showInformationMessage("Multiplayer Agent: join a room first.");
+      return;
+    }
+    if (hostingWorkspace) {
+      relay.send({ t: "claimWorkspace", claim: false });
+      hostingWorkspace = false;
+      return;
+    }
+    const go = await vscode.window.showWarningMessage(
+      "Host this room's shared workspace?",
+      {
+        modal: true,
+        detail:
+          "Other members' agents will be able to read, write and run commands in this folder. " +
+          "Each action still asks your approval, and the room records which agent did what.",
+      },
+      "Host the workspace"
+    );
+    if (go !== "Host the workspace") return;
+    relay.send({ t: "claimWorkspace", claim: true });
+    hostingWorkspace = true;
   }
 
   /** Is this executable actually available? A missing CLI fails silently otherwise. */
@@ -543,11 +577,16 @@ export function activate(context: vscode.ExtensionContext): void {
       case "joined":
         roomView.setJoined(msg.room, msg.you, msg.roster, msg.transcript, msg.mode, msg.actions ?? []);
         roomsTree.setRoom(msg.room, msg.mode, msg.you.handle);
+        roomsTree.setRoster(msg.roster, msg.workspaceHost);
+        hostingWorkspace = msg.workspaceHost === msg.you.handle;
         roomsTree.setRoster(msg.roster);
         break;
       case "roster":
         roomView.setRoster(msg.roster);
-        roomsTree.setRoster(msg.roster);
+        roomsTree.setRoster(msg.roster, msg.workspaceHost);
+        // The relay is the authority: it releases the claim when the host
+        // leaves, so believing our own flag would leave the UI lying.
+        hostingWorkspace = msg.workspaceHost === me?.handle;
         break;
       case "entry":
         roomView.addEntry(msg.entry);
