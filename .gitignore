@@ -7,3 +7,6 @@ out/
 .env
 .env.*
 !.env.example
+
+# Holds the relay token — copy .mcp.json.example and fill it in locally.
+.mcp.json

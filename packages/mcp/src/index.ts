@@ -30,6 +30,7 @@ const client = new RoomClient({
   handle: required("MPA_HANDLE"),
   displayName: process.env.MPA_NAME ?? required("MPA_HANDLE"),
   repo: process.env.MPA_REPO,
+  token: process.env.MPA_TOKEN,
 });
 
 /** Render entries the way the agent should read them: authored, never anonymous. */

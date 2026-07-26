@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "room": {
+      "command": "node",
+      "args": [
+        "packages/mcp/dist/index.js"
+      ],
+      "env": {
+        "MPA_RELAY_URL": "wss://your-relay.up.railway.app",
+        "MPA_TOKEN": "set-me-the-relay-token",
+        "MPA_ROOM": "demo",
+        "MPA_HANDLE": "your-github-handle",
+        "MPA_NAME": "Your Name"
+      }
+    }
+  }
+}

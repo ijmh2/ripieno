@@ -21,6 +21,8 @@ export interface RoomClientConfig {
   handle: string;
   displayName: string;
   repo?: string;
+  /** Required by any deployed relay; absent is fine for a local one. */
+  token?: string;
 }
 
 export class RoomClient {
@@ -52,6 +54,7 @@ export class RoomClient {
           t: "join",
           room: this.config.room,
           role: "agent",
+          token: this.config.token,
           member: {
             handle: this.config.handle,
             displayName: this.config.displayName,
