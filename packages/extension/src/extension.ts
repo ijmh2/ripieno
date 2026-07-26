@@ -20,6 +20,10 @@ export function activate(context: vscode.ExtensionContext): void {
   let currentRoom: string | undefined;
   let hostingWorkspace = false;
   let nextFsRequest = 0;
+  let watcher: vscode.FileSystemWatcher | undefined;
+  /** Paths changed since the last publish, coalesced — a build touches thousands. */
+  const changedPaths = new Set<string>();
+  let publishTimer: NodeJS.Timeout | undefined;
   let me: Member | undefined;
 
   // A member may run several agents at once — a coder and a reviewer, say —
@@ -103,7 +107,7 @@ export function activate(context: vscode.ExtensionContext): void {
       detachAgent(idFromNode(node))
     ),
     approvals,
-    { dispose: () => { detachAll(); relay?.dispose(); } }
+    { dispose: () => { stopWatching(); detachAll(); relay?.dispose(); } }
   );
 
   /** Tree item ids are prefixed so attached and detached rows stay distinct. */
@@ -252,6 +256,10 @@ export function activate(context: vscode.ExtensionContext): void {
    * so mounting it again would be confusing rather than useful.
    */
   function applyWorkspaceHost(host: string | undefined): void {
+    // Only the host watches: everyone else's disk is irrelevant to the room.
+    if (host && host === me?.handle) startWatching();
+    else stopWatching();
+
     const someoneElse = host && host !== me?.handle ? host : undefined;
     workspaceTree.setHost(someoneElse);
     workspaceFs.setRemote(
@@ -626,6 +634,54 @@ export function activate(context: vscode.ExtensionContext): void {
     roomsTree.setMyAgents(myAgentsForTree());
   }
 
+  /**
+   * While hosting, publish our own file changes.
+   *
+   * The action log only records work routed through the room, so an agent using
+   * its own local tools — or the host saving a file in the editor — left every
+   * other member reading a stale cache with nothing to tell them. Watching the
+   * filesystem catches both, and is the only thing that can.
+   */
+  function startWatching(): void {
+    if (watcher) return;
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) return;
+
+    watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(folder, "**/*")
+    );
+    const note = (uri: vscode.Uri) => {
+      const rel = vscode.workspace.asRelativePath(uri, false);
+      // Build output and dependencies churn constantly and nobody browses them;
+      // publishing every write during `npm install` would be pure noise.
+      if (/(^|\/)(node_modules|\.git|dist|out|build)(\/|$)/.test(rel)) return;
+      changedPaths.add(rel);
+      if (publishTimer) clearTimeout(publishTimer);
+      publishTimer = setTimeout(publishChanges, 400);
+    };
+    watcher.onDidCreate(note);
+    watcher.onDidChange(note);
+    watcher.onDidDelete(note);
+  }
+
+  function publishChanges(): void {
+    publishTimer = undefined;
+    if (changedPaths.size === 0) return;
+    // Cap the burst: a large checkout would otherwise send a huge frame, and
+    // past a point the useful signal is "a lot changed" rather than the list.
+    const paths = [...changedPaths].slice(0, 200);
+    changedPaths.clear();
+    relay?.send({ t: "workspaceChanged", paths });
+  }
+
+  function stopWatching(): void {
+    watcher?.dispose();
+    watcher = undefined;
+    if (publishTimer) clearTimeout(publishTimer);
+    publishTimer = undefined;
+    changedPaths.clear();
+  }
+
   function detachAll(): void {
     for (const host of agents.values()) host.dispose();
     agents.clear();
@@ -757,6 +813,12 @@ export function activate(context: vscode.ExtensionContext): void {
         break;
       case "remoteToolRequest":
         void runRemoteTool(msg);
+        break;
+      case "workspaceInvalidated":
+        // The host's disk changed by some route the room never saw — an agent's
+        // own local write, or a human saving a file. Drop those paths.
+        for (const changed of msg.paths) workspaceFs.invalidatePath(changed);
+        workspaceTree.refresh();
         break;
       case "action":
         roomView.addAction(msg.entry);

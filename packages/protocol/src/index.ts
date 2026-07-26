@@ -162,6 +162,20 @@ export interface RemoteToolResultMsg {
   isError?: boolean;
 }
 
+/**
+ * The host telling the room its files changed.
+ *
+ * The action log only records work routed *through* the room, so an agent
+ * writing with its own local tools — or the host simply saving a file — was
+ * invisible to everyone else, and their cached view of the workspace silently
+ * went stale. Watching the host's own filesystem catches both.
+ */
+export interface WorkspaceChangedMsg {
+  t: "workspaceChanged";
+  /** Workspace-relative paths that were created, changed or deleted. */
+  paths: string[];
+}
+
 /** A member offering their workspace as the room's shared one. */
 export interface ClaimWorkspaceMsg {
   t: "claimWorkspace";
@@ -177,6 +191,7 @@ export type ClientMsg =
   | RemoteToolMsg
   | RemoteToolResultMsg
   | ClaimWorkspaceMsg
+  | WorkspaceChangedMsg
   | PingMsg;
 
 /* ------------------------------------------------------------------ */
@@ -273,6 +288,12 @@ export interface ActionMsg {
   entry: ActionEntry;
 }
 
+/** Broadcast of the host's file changes, so other members drop stale reads. */
+export interface WorkspaceInvalidatedMsg {
+  t: "workspaceInvalidated";
+  paths: string[];
+}
+
 /** A remote tool request arriving at the member who must execute it. */
 export interface RemoteToolRequestMsg {
   t: "remoteToolRequest";
@@ -323,6 +344,7 @@ export type ServerMsg =
   | RemoteToolRequestMsg
   | RemoteToolReplyMsg
   | ActionMsg
+  | WorkspaceInvalidatedMsg
   | StatusMsg
   | ErrorMsg;
 

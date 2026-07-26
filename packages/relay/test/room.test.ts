@@ -555,6 +555,22 @@ describe("action log", () => {
     assert.equal(room.actionLog[0].verb, "read");
   });
 
+  test("only the host may announce that the workspace changed", async () => {
+    const room = new Room("r", new FakeDriver());
+    const host = new FakeSocket();
+    const other = new FakeSocket();
+    await room.join(mira, host);
+    await room.join(sam, other);
+    room.claimWorkspace("ijmh2", true);
+
+    // A statement about the host's disk that nobody else is in a position to make.
+    room.noteWorkspaceChanged("swhitfield", ["src/forged.ts"]);
+    assert.equal(other.of("workspaceInvalidated").length, 0);
+
+    room.noteWorkspaceChanged("ijmh2", ["src/real.ts"]);
+    assert.deepEqual(other.of("workspaceInvalidated").at(-1)?.paths, ["src/real.ts"]);
+  });
+
   test("a joiner receives the work already done, not just the chat", async () => {
     const room = new Room("r", new FakeDriver());
     await room.join(mira, new FakeSocket());

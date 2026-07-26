@@ -290,6 +290,17 @@ export class Room {
     this.sendTo(agent.socket, { t: "remoteToolReply", requestId, content, isError });
   }
 
+  /**
+   * The host's files changed — tell everyone else so their caches drop.
+   *
+   * Only the host may say this: it is a statement about their disk, and nobody
+   * else is in a position to make it.
+   */
+  noteWorkspaceChanged(handle: string, paths: string[]): void {
+    if (this.host !== handle || paths.length === 0) return;
+    this.broadcast({ t: "workspaceInvalidated", paths });
+  }
+
   /** Record work, attributed to the acting agent rather than the host machine. */
   recordAction(entry: Omit<ActionEntry, "id" | "ts">): void {
     const full: ActionEntry = { ...entry, id: randomUUID(), ts: Date.now() };

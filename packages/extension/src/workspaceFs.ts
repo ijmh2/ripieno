@@ -72,9 +72,19 @@ export class WorkspaceFileSystem implements vscode.FileSystemProvider {
    */
   noteAction(entry: ActionEntry): void {
     if (entry.verb !== "wrote" && entry.verb !== "edited") return;
-    const key = normalise(entry.target);
+    // The parent listing may be wrong too — a write can create a file.
+    this.invalidatePath(entry.target);
+  }
+
+  /**
+   * Drop one path and its parent listing.
+   *
+   * Used for changes the room learned about from the host's filesystem rather
+   * than from an action — an agent's own local write, or a human saving a file.
+   */
+  invalidatePath(relativePath: string): void {
+    const key = normalise(relativePath);
     this.files.delete(key);
-    // The parent listing may now be wrong too — a write can create a file.
     this.dirs.delete(parentOf(key));
     this.changed.fire([{ type: vscode.FileChangeType.Changed, uri: uriFor(key) }]);
   }

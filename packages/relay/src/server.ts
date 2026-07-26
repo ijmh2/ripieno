@@ -239,6 +239,11 @@ export function startServer(config: ServerConfig): WebSocketServer {
             joined.room.claimWorkspace(joined.handle, msg.claim);
             break;
 
+          case "workspaceChanged":
+            if (!joined) return;
+            joined.room.noteWorkspaceChanged(joined.handle, msg.paths);
+            break;
+
           case "remoteTool": {
             if (!joined) return send(socket, "join a room before using another workspace");
             if (joined.role !== "agent" || !joined.agentId) {
