@@ -196,6 +196,28 @@ describe("a container hosts the room's workspace", () => {
     agent.close();
   });
 
+  test("the workspace outlives everyone in the room", async () => {
+    // The claim the whole phase rests on. Before this, the shared workspace was
+    // a member's laptop: everyone closing their editor took the room's codebase
+    // with it, mid-turn.
+    const first = await Agent.join("shared", "ijmh2", "Mira's coder");
+    await first.callRoom("write_file", { path: "outlives.txt", content: "still here" });
+    first.close();
+
+    const second = await Agent.join("shared", "swhitfield", "Sam's coder");
+    second.close();
+    await wait(400);
+
+    // Everyone who was in the room is gone. A laptop host would have released
+    // the claim on the way out.
+    const latecomer = await Agent.join("shared", "alex", "Alex's coder");
+    assert.equal(
+      await latecomer.callRoom("read_file", { path: "outlives.txt" }).then((c) => /still here/.test(c)),
+      true
+    );
+    latecomer.close();
+  });
+
   test("an unlisted command does not run", async () => {
     const agent = await Agent.join("shared", "ijmh2", "Mira's coder");
     const out = await agent.callRoom("run_command", { command: "rm -rf /" });
