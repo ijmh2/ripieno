@@ -1,7 +1,7 @@
 {
   "name": "multiplayer-agent",
   "displayName": "Multiplayer Agent",
-  "description": "A shared AI agent room in your editor \u2014 one conversation, multiple people, one agent that knows who said what.",
+  "description": "A shared AI agent room in your editor — one conversation, multiple people, one agent that knows who said what.",
   "version": "0.0.1",
   "publisher": "ijmh2",
   "license": "MIT",
@@ -169,7 +169,7 @@
             "bypassPermissions"
           ],
           "enumDescriptions": [
-            "Your agent asks you before anything with side effects \u2014 running code, launching apps, git writes. The prompt appears in your editor, so it is a real decision rather than a stalled request.",
+            "Your agent asks you before anything with side effects — running code, launching apps, git writes. The prompt appears in your editor, so it is a real decision rather than a stalled request.",
             "Your agent runs everything without asking, like an ordinary Claude Code session. Remember the room steers it: anyone in the room can talk your agent into running things on your machine."
           ],
           "default": "ask",
@@ -188,7 +188,7 @@
         "mpa.roomToken": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Shared secret required by a deployed relay. Leave empty for a local relay. This is a gate, not a login \u2014 a holder can still claim any handle, so treat it as the key to the whole room."
+          "markdownDescription": "Shared secret required by a deployed relay. Leave empty for a local relay. This is a gate, not a login — a holder can still claim any handle, so treat it as the key to the whole room."
         }
       }
     }
@@ -202,7 +202,8 @@
   "dependencies": {
     "ws": "^8.18.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "zod": "^3.23.0"
+    "zod": "^3.23.0",
+    "@mpa/workspace-core": "*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
