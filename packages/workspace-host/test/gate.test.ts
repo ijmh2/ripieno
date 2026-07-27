@@ -74,13 +74,14 @@ describe("the gate applies writes and tells the room", () => {
     changed = [];
     failCommit = false;
     gate = new ContainerGate({
-      root,
       policy: { allow: [], allowAll: false },
       commit: async (p) => {
         if (failCommit) throw new Error("nope");
         committed.push({ rel: path.relative(root, p.abs), author: p.requester?.label });
       },
-      onChanged: (rel) => changed.push(rel),
+      // The gate reports absolutes; turning them into repo-relative paths is
+      // the host's job, because only it knows the real root.
+      onChanged: (abs) => changed.push(path.relative(root, abs)),
     });
   });
 

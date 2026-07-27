@@ -23,7 +23,30 @@ import * as fs from "fs/promises";
  * fails closed — an unsupported construct finds nothing rather than silently
  * matching more than the caller meant.
  */
-export function globToRegExp(glob: string): RegExp {
+/** Longer than any real glob; past this it is an attack, not a pattern. */
+const MAX_GLOB_LENGTH = 200;
+
+/**
+ * Flatten the repetition that makes a glob explosive.
+ *
+ * `**` compiles to a quantifier, so `**` next to `**` nests one inside another
+ * and matching goes exponential: nineteen characters bought 5.9 *seconds*
+ * against an ordinary source path — per file, across up to 2000 files, on the
+ * single thread that also answers the heartbeat. One tool call took the shared
+ * workspace down for as long as it liked.
+ *
+ * Collapsing is safe because the duplicates are semantically redundant:
+ * `**​/**​/x` matches exactly what `**​/x` matches, and `****x` what `**x` does.
+ */
+function collapse(glob: string): string {
+  return glob
+    .replace(/\*{2,}/g, "**") // ***… is just **
+    .replace(/(?:\*\*\/)+/g, "**/") // **/**/**/ is just **/
+    .replace(/(?:\*\*)+/g, "**"); // and any run left over
+}
+
+export function globToRegExp(rawGlob: string): RegExp {
+  const glob = collapse(rawGlob).slice(0, MAX_GLOB_LENGTH);
   let out = "";
   for (let i = 0; i < glob.length; i++) {
     const ch = glob[i]!;
@@ -106,9 +129,11 @@ export async function walkFiles(
         if (options.exclude.has(entry.name)) continue;
         await visit(abs);
       } else if (entry.isFile() || entry.isSymbolicLink()) {
-        // Symlinks are matched here but only survive `confineToWorkspace`, which
-        // resolves them. Excluding them at this level would hide legitimate
-        // in-repo links; including them without that check would leak.
+        // Symlinks are matched here and resolved by `confineToWorkspace`, which
+        // realpaths each path individually. Excluding them at this level would
+        // hide legitimate in-repo links; including them without that check
+        // leaked files from outside the workspace — which it did, because the
+        // check used to resolve only the parent directory.
         const rel = path.relative(root, abs).split(path.sep).join("/");
         if (pattern.test(rel)) found.push(abs);
       }

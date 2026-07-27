@@ -30,9 +30,15 @@ export interface ContainerGateOptions {
   policy: CommandPolicy;
   /** Commit a change, attributed to the agent that made it. */
   commit(proposal: WriteProposal): Promise<void>;
-  /** Tell the room a path changed, so open tabs and caches drop it. */
-  onChanged(relPath: string): void;
-  root: string;
+  /**
+   * Tell the room a path changed, so open tabs and caches drop it.
+   *
+   * Absolute, because only the host knows what it is relative to — and the root
+   * it is relative to must be the *real* one. `resolveSafePath` returns resolved
+   * paths, so comparing against a syntactic root silently produced nonsense the
+   * moment any ancestor was a link.
+   */
+  onChanged(absPath: string): void;
 }
 
 export class ContainerGate implements ApprovalGate {
@@ -60,7 +66,7 @@ export class ContainerGate implements ApprovalGate {
     } catch {
       committed = false;
     }
-    this.opts.onChanged(path.relative(this.opts.root, p.abs));
+    this.opts.onChanged(p.abs);
 
     const verb = p.existed ? "Updated" : "Created";
     return {

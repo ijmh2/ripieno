@@ -11,6 +11,8 @@
  * the claim — so from the agents' side nothing about this is new.
  */
 
+import { realpath } from "node:fs/promises";
+import * as path from "node:path";
 import type { RemoteToolRequestMsg, ServerMsg } from "@mpa/protocol";
 import { WORKSPACE_HANDLE } from "@mpa/protocol";
 import { RelayClient, type ConnectionState } from "@mpa/relay-client";
@@ -38,9 +40,18 @@ export class WorkspaceHost {
   private pendingChanges = new Set<string>();
   private changeTimer: NodeJS.Timeout | undefined;
   private ready = false;
+  /**
+   * The checkout as it really is on disk, resolved once it exists.
+   *
+   * Everything that turns an absolute path back into a repo-relative one has to
+   * agree with what `resolveSafePath` returns, or commits are attempted against
+   * paths git has never heard of.
+   */
+  private rootPath: string;
 
   constructor(private readonly opts: WorkspaceHostOptions) {
     const log = opts.log ?? (() => {});
+    this.rootPath = opts.root;
 
     this.git = new GitWorkspace({
       root: opts.root,
@@ -50,17 +61,14 @@ export class WorkspaceHost {
     });
 
     this.core = new WorkspaceCore({
-      resolveRoot: () => ({ ok: true, abs: opts.root }),
+      resolveRoot: () => ({ ok: true, abs: this.rootPath }),
       gate: new ContainerGate({
-        root: opts.root,
         policy: opts.policy,
-        commit: (p) =>
-          this.git.commit(
-            relative(opts.root, p.abs),
-            p.requester,
-            `${p.existed ? "Update" : "Add"} ${relative(opts.root, p.abs)}`
-          ),
-        onChanged: (rel) => this.noteChanged(rel),
+        commit: (p) => {
+          const rel = this.relative(p.abs);
+          return this.git.commit(rel, p.requester, `${p.existed ? "Update" : "Add"} ${rel}`);
+        },
+        onChanged: (abs) => this.noteChanged(this.relative(abs)),
       }),
     });
 
@@ -83,6 +91,8 @@ export class WorkspaceHost {
     const clone = await this.git.ensureClone();
     this.opts.log?.(clone.message);
     this.ready = clone.ok;
+    // Only now does the directory certainly exist.
+    this.rootPath = await realpath(this.opts.root).catch(() => this.opts.root);
     this.relay.connect();
     if (!clone.ok) {
       // Connect anyway: the room is the only place a member can be told what
@@ -169,9 +179,10 @@ export class WorkspaceHost {
   private say(text: string): void {
     this.relay.send({ t: "say", text });
   }
+
+  private relative(abs: string): string {
+    return path.relative(this.rootPath, abs) || path.basename(abs);
+  }
 }
 
-function relative(root: string, abs: string): string {
-  const rel = abs.startsWith(root) ? abs.slice(root.length) : abs;
-  return rel.replace(/^[/\\]+/, "");
-}
+

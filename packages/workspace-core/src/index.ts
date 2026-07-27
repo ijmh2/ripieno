@@ -19,6 +19,7 @@
 
 import * as path from "path";
 import * as fs from "fs/promises";
+import { realpath as fsRealpath } from "fs/promises";
 import type { Dirent } from "fs";
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -184,6 +185,31 @@ export class WorkspaceCore {
     return this.options.resolveRoot();
   }
 
+  /**
+   * The root as it really is on disk.
+   *
+   * `resolveSafePath` returns resolved paths, so everything that compares
+   * against the root has to be in the same space or the two disagree the moment
+   * any ancestor is a link — on macOS `/var` is a symlink to `/private/var`, so
+   * a temp directory alone is enough to break it. Cached, because this is on the
+   * path of every tool call.
+   */
+  private async rootReal(): Promise<SafePath> {
+    const root = this.root();
+    if (!root.ok) return root;
+    if (this.realRootFor !== root.abs) {
+      try {
+        this.realRootCache = await fsRealpath(root.abs);
+        this.realRootFor = root.abs;
+      } catch {
+        return { ok: false, reason: "The workspace root does not exist." };
+      }
+    }
+    return { ok: true, abs: this.realRootCache };
+  }
+  private realRootFor = "";
+  private realRootCache = "";
+
   private async safe(rawPath: string): Promise<SafePath> {
     const root = this.root();
     if (!root.ok) return root;
@@ -232,7 +258,7 @@ export class WorkspaceCore {
   }
 
   private async listFiles(input: Record<string, unknown>): Promise<ToolResult> {
-    const root = this.root();
+    const root = await this.rootReal();
     if (!root.ok) {
       return { content: root.reason, isError: true };
     }
@@ -320,7 +346,7 @@ export class WorkspaceCore {
   }
 
   private async search(input: Record<string, unknown>): Promise<ToolResult> {
-    const root = this.root();
+    const root = await this.rootReal();
     if (!root.ok) {
       return { content: root.reason, isError: true };
     }

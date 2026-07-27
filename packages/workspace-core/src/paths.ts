@@ -29,30 +29,76 @@ export async function resolveSafePath(root: string, rawPath: string): Promise<Sa
     return { ok: false, reason: `Path "${rawPath}" is outside the workspace.` };
   }
 
+  let realRoot: string;
   try {
-    const [realRoot, realResolved] = await Promise.all([fs.realpath(root), fs.realpath(resolved)]);
-    if (!isInside(realResolved, realRoot)) {
-      return { ok: false, reason: `Path "${rawPath}" escapes the workspace via a symlink.` };
-    }
+    realRoot = await fs.realpath(root);
   } catch {
-    // Target (or a path segment) doesn't exist yet — the syntactic check
-    // above already ruled out escape, so let the caller's fs op surface
-    // ENOENT naturally.
+    return { ok: false, reason: "The workspace root does not exist." };
   }
 
-  return { ok: true, abs: resolved };
+  // Resolve as much of the path as exists on disk.
+  //
+  // This used to be a plain realpath of the target, and ENOENT was swallowed on
+  // the reasoning that "the syntactic check above already ruled out escape". It
+  // had not: that check ran on the *unresolved* path, so a symlinked parent went
+  // unnoticed whenever the final component did not exist yet. A repository can
+  // carry a committed symlink — `vendor -> /` — and one write to a new path
+  // under it landed anywhere the process could reach.
+  const existing = await nearestExisting(resolved);
+  if (!existing) {
+    return { ok: false, reason: `Path "${rawPath}" is outside the workspace.` };
+  }
+  if (!isInside(existing.real, realRoot)) {
+    return { ok: false, reason: `Path "${rawPath}" escapes the workspace via a symlink.` };
+  }
+
+  // Hand back the *resolved* path so callers act on what was checked rather than
+  // on the syntactic form, which narrows the window between check and use.
+  const abs = path.join(existing.real, ...existing.missing);
+  return isInside(abs, realRoot)
+    ? { ok: true, abs }
+    : { ok: false, reason: `Path "${rawPath}" escapes the workspace via a symlink.` };
+}
+
+/**
+ * The deepest ancestor of `target` that exists, with its real path, plus the
+ * segments below it that do not exist yet.
+ */
+async function nearestExisting(
+  target: string
+): Promise<{ real: string; missing: string[] } | undefined> {
+  const missing: string[] = [];
+  let current = target;
+  // Bounded by path depth; the loop ends at the filesystem root at the latest.
+  for (let i = 0; i < 256; i++) {
+    try {
+      return { real: await fs.realpath(current), missing: missing.slice().reverse() };
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return undefined;
+      missing.push(path.basename(current));
+      current = parent;
+    }
+  }
+  return undefined;
 }
 
 /**
  * Keep only the paths that really live inside the workspace.
  *
- * A directory walk follows symlinks, so a link inside the workspace (a `vendor`
- * dir pointing at $HOME, a monorepo link) yields paths that are *syntactically*
- * under the root while resolving outside it. Only realpath catches that, and the
- * check has to happen before we read anything — reading is the leak.
+ * A directory walk yields paths that are *syntactically* under the root while
+ * resolving outside it — a `vendor` dir pointing at $HOME, a monorepo link, or a
+ * single file symlinked to something in /etc. The check has to happen before we
+ * read anything, because reading is the leak.
  *
- * One realpath per distinct directory rather than per file, so a 2000-file
- * search stays cheap.
+ * This used to realpath each file's *parent directory*, on the assumption that
+ * containment was a property of where a file sits. It is not: a symlink lying
+ * directly in the workspace root has a parent that resolves perfectly well
+ * inside it, so `search` printed the contents of files `read_file` refused. The
+ * inconsistency between the two was the tell.
+ *
+ * The directory verdict survives as a cheap pre-filter — a whole excluded tree
+ * is settled once — but every path is now resolved on its own.
  */
 export async function confineToWorkspace(absPaths: string[], rootAbs: string): Promise<string[]> {
   let realRoot: string;
@@ -62,21 +108,25 @@ export async function confineToWorkspace(absPaths: string[], rootAbs: string): P
     return [];
   }
 
-  const verdicts = new Map<string, boolean>();
+  const dirVerdicts = new Map<string, boolean>();
   const kept: string[] = [];
   for (const abs of absPaths) {
     const dir = path.dirname(abs);
-    let ok = verdicts.get(dir);
-    if (ok === undefined) {
+    let dirOk = dirVerdicts.get(dir);
+    if (dirOk === undefined) {
       try {
-        ok = isInside(await fs.realpath(dir), realRoot);
+        dirOk = isInside(await fs.realpath(dir), realRoot);
       } catch {
-        ok = false;
+        dirOk = false;
       }
-      verdicts.set(dir, ok);
+      dirVerdicts.set(dir, dirOk);
     }
-    if (ok) {
-      kept.push(abs);
+    if (!dirOk) continue;
+
+    try {
+      if (isInside(await fs.realpath(abs), realRoot)) kept.push(abs);
+    } catch {
+      // A broken link, or a race with a delete: drop it rather than read it.
     }
   }
   return kept;
