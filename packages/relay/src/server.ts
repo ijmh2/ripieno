@@ -348,7 +348,12 @@ export function startServer(config: ServerConfig): WebSocketServer {
 
           case "remoteToolResult":
             if (!joined) return;
-            joined.room.completeRemoteTool(msg.requestId, msg.content, msg.isError === true);
+            joined.room.completeRemoteTool(
+              joined.handle,
+              msg.requestId,
+              msg.content,
+              msg.isError === true
+            );
             break;
 
           case "ping":

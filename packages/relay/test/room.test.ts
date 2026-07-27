@@ -468,7 +468,11 @@ describe("shared workspace", () => {
       "list_files",
       {}
     );
-    assert.equal(miraEditor.of("remoteToolRequest").at(-1)?.requestId, "req_2");
+    // The host is handed a relay-minted id, not the agent's: two members'
+    // agents both counting from zero used to collide on one map entry.
+    const dispatched = miraEditor.of("remoteToolRequest").at(-1);
+    assert.equal(dispatched?.name, "list_files");
+    assert.notEqual(dispatched?.requestId, "req_2");
   });
 
   test("the result returns to the agent that asked, and nobody else", async () => {
@@ -487,8 +491,11 @@ describe("shared workspace", () => {
       "read_file",
       {}
     );
-    room.completeRemoteTool("req_3", "file contents", false);
+    const callId = miraEditor.of("remoteToolRequest").at(-1)!.requestId;
+    room.completeRemoteTool("ijmh2", callId, "file contents", false);
 
+    // The agent gets its own id back, whatever the relay used internally.
+    assert.equal(asking.of("remoteToolReply").at(-1)?.requestId, "req_3");
     assert.equal(asking.of("remoteToolReply").at(-1)?.content, "file contents");
     assert.equal(other.of("remoteToolReply").length, 0);
   });
@@ -540,7 +547,7 @@ describe("action log", () => {
 
     const ask = (id: string, name: string) => {
       room.routeRemoteTool({ agentId: "s:1", label: "Sam's agent", handle: "swhitfield" }, id, "room", name, {});
-      room.completeRemoteTool(id, "ok", false);
+      room.completeRemoteTool("ijmh2", miraEditor.of("remoteToolRequest").at(-1)!.requestId, "ok", false);
     };
 
     // Expanding folders and stat-ing files is how a filesystem view works; each

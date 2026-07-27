@@ -87,8 +87,25 @@ export class Room {
   /** Outstanding remote tool requests, so a reply can find who asked. */
   private readonly remoteCalls = new Map<
     string,
-    { agentId: string; targetHandle: string; name: string; input: Record<string, unknown> }
+    {
+      agentId: string;
+      /** The id the *asking* agent chose. Only ever echoed back to it. */
+      clientRequestId: string;
+      targetHandle: string;
+      name: string;
+      input: Record<string, unknown>;
+    }
   >();
+  /**
+   * Ids are minted here, never taken from the client.
+   *
+   * Every client counts from zero on its own — `fs_0`, `rt_1`, `w_0` — so two
+   * members' agents routinely pick the same id. Keying outstanding calls on that
+   * meant one agent's file was delivered to the other and recorded against the
+   * wrong agent. Agent ids are namespaced by owner for the same reason; this was
+   * simply missed.
+   */
+  private nextRemoteCall = 0;
 
   constructor(
     readonly code: string,
@@ -230,6 +247,10 @@ export class Room {
       label = this.containers.has(handle) ? "The shared workspace" : conn.member.displayName;
       this.connections.delete(handle);
       this.containers.delete(handle);
+      // Anything dispatched to them will never be answered now. Say so at once
+      // rather than leaving the asking agent to burn its full timeout on a
+      // machine that has gone — and leaving the entry in the map forever.
+      this.failRemoteCallsFor(handle);
       // A departed host leaves every room-pointed agent with nowhere to act, so
       // release the claim rather than leaving agents addressing a dead machine.
       if (this.host === handle) {
@@ -311,15 +332,19 @@ export class Room {
       return;
     }
 
-    this.remoteCalls.set(requestId, {
+    // The executor only ever echoes the id it is handed, so the relay can use
+    // its own and keep the agent's purely for the reply. No client changes.
+    const callId = `rc_${this.nextRemoteCall++}`;
+    this.remoteCalls.set(callId, {
       agentId: requester.agentId,
+      clientRequestId: requestId,
       targetHandle: target,
       name,
       input,
     });
     this.sendTo(conn.socket, {
       t: "remoteToolRequest",
-      requestId,
+      requestId: callId,
       requesterAgentId: requester.agentId,
       requesterLabel: requester.label,
       requesterHandle: requester.handle,
@@ -332,11 +357,16 @@ export class Room {
    * The executing member answering; routed back to the agent that asked, and
    * recorded so every other agent can see the work without redoing it.
    */
-  completeRemoteTool(requestId: string, content: string, isError: boolean): void {
-    const pending = this.remoteCalls.get(requestId);
+  completeRemoteTool(handle: string, callId: string, content: string, isError: boolean): void {
+    const pending = this.remoteCalls.get(callId);
     if (!pending) return;
-    this.remoteCalls.delete(requestId);
-    this.replyRemote(pending.agentId, requestId, content, isError);
+    // Only the member the call was dispatched to may answer it. Without this,
+    // any member could answer any call — forging the contents of somebody
+    // else's workspace into an agent's context, and silently discarding the
+    // real answer. `toolResult` below has always enforced the equivalent.
+    if (pending.targetHandle !== handle) return;
+    this.remoteCalls.delete(callId);
+    this.replyRemote(pending.agentId, pending.clientRequestId, content, isError);
 
     const agent = this.agents.get(pending.agentId);
     if (agent && !isNavigation(pending.name)) {
@@ -349,6 +379,20 @@ export class Room {
         detail: summariseResult(content, isError),
         ok: !isError,
       });
+    }
+  }
+
+  /** Fail every outstanding call aimed at a member who is no longer here. */
+  private failRemoteCallsFor(handle: string): void {
+    for (const [callId, pending] of this.remoteCalls) {
+      if (pending.targetHandle !== handle) continue;
+      this.remoteCalls.delete(callId);
+      this.replyRemote(
+        pending.agentId,
+        pending.clientRequestId,
+        `@${handle} disconnected before ${pending.name} could finish, so it was not completed.`,
+        true
+      );
     }
   }
 
