@@ -203,7 +203,8 @@
     "ws": "^8.18.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.23.0",
-    "@mpa/workspace-core": "*"
+    "@mpa/workspace-core": "*",
+    "@mpa/relay-client": "*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

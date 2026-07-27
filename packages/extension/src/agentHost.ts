@@ -16,7 +16,7 @@ import { randomBytes } from "crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { Member, RosterEntry, TranscriptEntry } from "@mpa/protocol";
 import { shouldAnswer, type AgentIdentity } from "./addressing";
-import { RelayClient } from "./relayClient";
+import { RelayClient } from "@mpa/relay-client";
 import type { ApprovalBridge } from "./approvals";
 import {
   ClaudeCodeRunner,

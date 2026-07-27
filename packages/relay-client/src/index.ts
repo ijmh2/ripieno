@@ -30,6 +30,14 @@ export interface RelayClientOptions {
   agentLabel?: string;
   /** Shared secret, when the relay requires one (any deployed relay should). */
   token?: string;
+  /**
+   * Role "workspace" only: the container's own secret.
+   *
+   * Separate from `token` because everyone in a room holds that one, and a
+   * connection serving the shared workspace is trusted to say what every file in
+   * the repository contains.
+   */
+  workspaceToken?: string;
   onMessage: (msg: ServerMsg) => void;
   onStateChange: (state: ConnectionState) => void;
   /**
@@ -78,6 +86,7 @@ export class RelayClient {
         agentId: this.opts.agentId,
         agentLabel: this.opts.agentLabel,
         token: this.opts.token,
+        workspaceToken: this.opts.workspaceToken,
       };
       this.sendRaw(join);
       this.flushQueue();

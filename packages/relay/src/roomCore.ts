@@ -46,9 +46,10 @@ function escapeAttr(value: string): string {
 export function toRosterEntry(
   member: Member,
   present: boolean,
-  agents: AttachedAgent[] = []
+  agents: AttachedAgent[] = [],
+  kind?: "workspace"
 ): RosterEntry {
-  return { ...member, present, color: colorIndexFor(member.handle), agents };
+  return { ...member, kind, present, color: colorIndexFor(member.handle), agents };
 }
 
 /**
@@ -57,10 +58,14 @@ export function toRosterEntry(
  * membership or presence changes.
  */
 export function rosterPrompt(roster: RosterEntry[]): string {
-  if (roster.length === 0) {
+  // The shared workspace is a container, not a participant. Listing it as a
+  // member would invite the agent to address it as a person and to attribute
+  // work to "workspace" — it is reached with the "room" target instead.
+  const people = roster.filter((r) => r.kind !== "workspace");
+  if (people.length === 0) {
     return "There are currently no members in this room.";
   }
-  const lines = roster.map((r) => {
+  const lines = people.map((r) => {
     const repo = r.repo ? `, working in ${r.repo}` : "";
     const state = r.present ? "present" : "OFFLINE — do not address tools to them";
     // Members may run their own agents alongside you. Naming them stops you
@@ -70,7 +75,7 @@ export function rosterPrompt(roster: RosterEntry[]): string {
     return `- @${r.handle} (${r.displayName}${repo}) — ${state}${agents}`;
   });
 
-  const agentCount = roster.reduce((n, r) => n + r.agents.length, 0);
+  const agentCount = people.reduce((n, r) => n + r.agents.length, 0);
   const mixedRoomNote =
     agentCount > 0
       ? [

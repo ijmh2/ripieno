@@ -74,6 +74,14 @@ export class Room {
    * members' agents reach it by routing tool calls here.
    */
   private host?: string;
+  /**
+   * Handles connected as the room's shared workspace rather than as people.
+   *
+   * Kept separate from presence because the difference is load-bearing: a
+   * container's claim on the workspace outranks a laptop's, and it must never be
+   * rendered — or described to an agent — as a member of the room.
+   */
+  private readonly containers = new Set<string>();
   /** What agents have done, distinct from what people have said. */
   private readonly actions: ActionEntry[] = [];
   /** Outstanding remote tool requests, so a reply can find who asked. */
@@ -122,7 +130,12 @@ export class Room {
 
   get roster(): RosterEntry[] {
     return [...this.known.values()].map((m) =>
-      toRosterEntry(m, this.connections.has(m.handle), this.agentsOf(m.handle))
+      toRosterEntry(
+        m,
+        this.connections.has(m.handle),
+        this.agentsOf(m.handle),
+        this.containers.has(m.handle) ? "workspace" : undefined
+      )
     );
   }
 
@@ -148,6 +161,10 @@ export class Room {
     if (role === "human" || !this.known.has(member.handle)) {
       this.known.set(member.handle, member);
     }
+    if (role === "workspace") {
+      this.known.set(member.handle, member);
+      this.containers.add(member.handle);
+    }
 
     let label: string;
     if (role === "agent") {
@@ -172,7 +189,12 @@ export class Room {
       mode: this.mode,
       workspaceHost: this.host,
       actions: this.actions,
-      you: toRosterEntry(member, true, this.agentsOf(member.handle)),
+      you: toRosterEntry(
+        member,
+        true,
+        this.agentsOf(member.handle),
+        this.containers.has(member.handle) ? "workspace" : undefined
+      ),
       roster: this.roster,
       transcript: this.transcript,
     });
@@ -205,8 +227,9 @@ export class Room {
       const conn = this.connections.get(handle);
       if (!conn) return;
       if (socket && conn.socket !== socket) return;
-      label = conn.member.displayName;
+      label = this.containers.has(handle) ? "The shared workspace" : conn.member.displayName;
       this.connections.delete(handle);
+      this.containers.delete(handle);
       // A departed host leaves every room-pointed agent with nowhere to act, so
       // release the claim rather than leaving agents addressing a dead machine.
       if (this.host === handle) {
@@ -235,7 +258,20 @@ export class Room {
   claimWorkspace(handle: string, claim: boolean): void {
     if (claim) {
       if (!this.connections.has(handle)) return;
-      if (this.host && this.host !== handle) return;
+      // A container outranks a laptop: it is the host that survives everyone
+      // closing their editor, which is the whole reason it exists. A member
+      // trying to claim over it is told why rather than silently ignored.
+      if (this.host && this.host !== handle) {
+        if (!this.containers.has(handle)) {
+          if (this.containers.has(this.host)) {
+            this.system(
+              `@${handle} cannot host: this room's workspace is a shared container, which stays hosted when everyone disconnects.`
+            );
+          }
+          return;
+        }
+        // Falls through: the container takes the claim from a member.
+      }
       this.host = handle;
       this.system(`${this.known.get(handle)?.displayName ?? handle} is hosting the room's workspace.`);
     } else if (this.host === handle) {

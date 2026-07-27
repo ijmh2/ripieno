@@ -29,6 +29,11 @@ export interface AttachedAgent {
 
 /** A member plus live connection state. */
 export interface RosterEntry extends Member {
+  /**
+   * Infrastructure rather than a person, so the UI can render it as the room's
+   * workspace instead of giving a container a colour and a seat at the table.
+   */
+  kind?: "workspace";
   present: boolean;
   /** Palette index 0-7, assigned deterministically. See colorIndexFor(). */
   color: number;
@@ -72,7 +77,20 @@ export type RoomStatus = "idle" | "thinking" | "awaiting-tool" | "error";
  * In BYO mode each member also connects their own local agent, which posts on
  * their behalf — so a handle can have two live connections with different roles.
  */
-export type ConnectionRole = "human" | "agent";
+/**
+ * "workspace" is the room's shared filesystem — a container, not a person. It
+ * serves the same remote tool requests a member's laptop serves, which is what
+ * lets the shared workspace outlive everyone in the room.
+ */
+export type ConnectionRole = "human" | "agent" | "workspace";
+
+/**
+ * The handle the shared workspace joins under.
+ *
+ * Reserved: no person may claim it, because a connection holding this handle is
+ * trusted to say what every file in the room contains.
+ */
+export const WORKSPACE_HANDLE = "workspace";
 
 export interface JoinMsg {
   t: "join";
@@ -97,6 +115,13 @@ export interface JoinMsg {
    * per-member identity is Phase 3 work.
    */
   token?: string;
+  /**
+   * Role "workspace" only: the container's own secret, never the room token.
+   *
+   * Separate because everyone in a room holds the room token, and a connection
+   * serving the shared workspace is trusted to say what every file contains.
+   */
+  workspaceToken?: string;
 }
 
 export interface SayMsg {

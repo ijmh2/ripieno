@@ -7,7 +7,7 @@
 
 import * as vscode from "vscode";
 import type { ActionEntry, RoomMode, RoomStatus, RosterEntry, TranscriptEntry } from "@mpa/protocol";
-import type { ConnectionState } from "./relayClient";
+import type { ConnectionState } from "@mpa/relay-client";
 import type { ApprovalChoice } from "./approvals";
 
 interface RoomState {

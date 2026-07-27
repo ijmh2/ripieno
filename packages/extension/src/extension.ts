@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { spawn } from "child_process";
 import type { Member, ServerMsg } from "@mpa/protocol";
 import { resolveIdentity } from "./identity";
-import { RelayClient, type ConnectionState } from "./relayClient";
+import { RelayClient, type ConnectionState } from "@mpa/relay-client";
 import { ToolExecutor, registerProposedDocuments } from "./toolExecutor";
 import { RoomViewProvider } from "./roomView";
 import { AgentHost, type AgentState } from "./agentHost";

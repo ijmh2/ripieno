@@ -9,6 +9,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientMsg, ConnectionRole, Member } from "@mpa/protocol";
+import { WORKSPACE_HANDLE } from "@mpa/protocol";
 import { ByoDriver } from "./byoDriver.js";
 import { HostedDriver } from "./hostedDriver.js";
 import { Room } from "./room.js";
@@ -34,6 +35,16 @@ export interface ServerConfig {
    * localhost, never acceptable on a public URL.
    */
   token?: string;
+  /**
+   * Secret held only by the shared-workspace container.
+   *
+   * Separate from the room token on purpose. Everyone in the room holds that
+   * one, and a connection claiming the workspace handle is trusted to say what
+   * every file in the repo contains — so with a single shared secret, any member
+   * could impersonate the workspace and quietly feed every agent in the room a
+   * different codebase than the real one.
+   */
+  workspaceToken?: string;
   /** Where room history is kept. Undefined means rooms vanish on restart. */
   dataDir?: string;
   /** Required in hosted mode only; BYO needs no Anthropic resources at all. */
@@ -241,7 +252,30 @@ export function startServer(config: ServerConfig): WebSocketServer {
             }
             const member = sanitise(msg.member);
             if (!member) return send(socket, "invalid member identity");
-            const role: ConnectionRole = msg.role === "agent" ? "agent" : "human";
+
+            const wantsWorkspace = msg.role === "workspace";
+            if (wantsWorkspace) {
+              if (!config.workspaceToken || msg.workspaceToken !== config.workspaceToken) {
+                send(socket, "invalid or missing workspace token");
+                socket.close(4003, "unauthorised");
+                return;
+              }
+              // Never taken from the client: the handle *is* the trust claim.
+              member.handle = WORKSPACE_HANDLE;
+              member.displayName = "Shared workspace";
+            } else if (member.handle === WORKSPACE_HANDLE) {
+              // Reserved. Without this any member could join under it and serve
+              // fabricated file contents to every agent in the room.
+              send(socket, `"${WORKSPACE_HANDLE}" is a reserved handle`);
+              socket.close(4003, "reserved handle");
+              return;
+            }
+
+            const role: ConnectionRole = wantsWorkspace
+              ? "workspace"
+              : msg.role === "agent"
+                ? "agent"
+                : "human";
             const room = await roomFor(msg.room.trim());
             // Several agents may belong to one person, so each carries its own
             // id. Defaulting keeps single-agent clients working unchanged.
@@ -288,7 +322,7 @@ export function startServer(config: ServerConfig): WebSocketServer {
             break;
           case "claimWorkspace":
             if (!joined) return send(socket, "join a room before claiming the workspace");
-            if (joined.role !== "human") return send(socket, "only a member may host a workspace");
+            if (joined.role === "agent") return send(socket, "only a member may host a workspace");
             joined.room.claimWorkspace(joined.handle, msg.claim);
             break;
 
