@@ -7,6 +7,8 @@ const mode: RelayMode = process.env.MPA_MODE === "hosted" ? "hosted" : "byo";
 const agentId = process.env.MPA_AGENT_ID;
 const environmentId = process.env.MPA_ENVIRONMENT_ID;
 const token = process.env.MPA_TOKEN;
+// Point this at a mounted volume and room history survives redeploys too.
+const dataDir = process.env.MPA_DATA_DIR;
 // A deployed relay must listen on all interfaces; a local one need not.
 const host = process.env.MPA_HOST ?? (process.env.PORT ? "0.0.0.0" : undefined);
 
@@ -46,7 +48,7 @@ if (process.env.PORT && !token) {
   process.exit(1);
 }
 
-const wss = startServer({ port, mode, agentId, environmentId, token, host });
+const wss = startServer({ port, mode, agentId, environmentId, token, host, dataDir });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {

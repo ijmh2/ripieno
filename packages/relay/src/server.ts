@@ -12,6 +12,7 @@ import type { ClientMsg, ConnectionRole, Member } from "@mpa/protocol";
 import { ByoDriver } from "./byoDriver.js";
 import { HostedDriver } from "./hostedDriver.js";
 import { Room } from "./room.js";
+import { createRoomStore } from "./roomStore.js";
 
 /**
  * How often to ping clients, and therefore how long a vanished member can look
@@ -33,6 +34,8 @@ export interface ServerConfig {
    * localhost, never acceptable on a public URL.
    */
   token?: string;
+  /** Where room history is kept. Undefined means rooms vanish on restart. */
+  dataDir?: string;
   /** Required in hosted mode only; BYO needs no Anthropic resources at all. */
   agentId?: string;
   environmentId?: string;
@@ -44,6 +47,37 @@ export function startServer(config: ServerConfig): WebSocketServer {
   // `ant auth login` profile) — never hardcoded, never accepted from a client.
   const client = config.mode === "hosted" ? new Anthropic() : undefined;
   const rooms = new Map<string, Room>();
+  const store = createRoomStore(config.dataDir);
+  /** Pending saves, so a busy room writes once rather than once per message. */
+  const saveTimers = new Map<string, NodeJS.Timeout>();
+
+  /**
+   * Persist shortly after a change rather than on every message.
+   *
+   * A room in full flow would otherwise write on every keystroke-sized event;
+   * a second's delay costs at most a second of history against a hard kill, and
+   * a clean shutdown flushes anyway.
+   */
+  function scheduleSave(code: string, room: Room): void {
+    if (!config.dataDir || saveTimers.has(code)) return;
+    const timer = setTimeout(() => {
+      saveTimers.delete(code);
+      void store.save(code, room.snapshot()).catch((err) => {
+        log(`could not save room ${code}: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }, 1000);
+    timer.unref();
+    saveTimers.set(code, timer);
+  }
+
+  async function flushSaves(): Promise<void> {
+    for (const [code, timer] of saveTimers) {
+      clearTimeout(timer);
+      const room = rooms.get(code);
+      if (room) await store.save(code, room.snapshot()).catch(() => undefined);
+    }
+    saveTimers.clear();
+  }
   /** In-flight creations, so two simultaneous joins do not build two sessions. */
   const starting = new Map<string, Promise<Room>>();
   // An HTTP server the WebSocket server rides on, rather than ws binding the
@@ -94,8 +128,10 @@ export function startServer(config: ServerConfig): WebSocketServer {
 
   async function createRoom(code: string): Promise<Room> {
     if (config.mode === "byo") {
+      const room = new Room(code, new ByoDriver(), "byo");
+      await restore(code, room);
       log(`room ${code} ready (byo — members attach their own agents)`);
-      return new Room(code, new ByoDriver(), "byo");
+      return room;
     }
 
     // Bound the forward reference so the driver's callbacks can reach the room
@@ -115,16 +151,32 @@ export function startServer(config: ServerConfig): WebSocketServer {
       }
     );
     room = new Room(code, driver, "hosted");
+    await restore(code, room);
     await driver.start(room.roster);
     log(`room ${code} session ${driver.id}`);
     if (driver.traceUrl) log(`  trace: ${driver.traceUrl}`);
     return room;
   }
 
+  /** Bring back whatever this room had before the last restart. */
+  async function restore(code: string, room: Room): Promise<void> {
+    room.onChanged = () => scheduleSave(code, room);
+    const snapshot = await store.load(code);
+    if (!snapshot) return;
+    room.hydrate(snapshot);
+    log(`room ${code} restored — ${snapshot.transcript.length} messages, ${snapshot.actions.length} actions`);
+  }
+
   /** Drop an empty room so its session, stream and timers do not leak. */
   async function reap(code: string, room: Room): Promise<void> {
     if (!room.isEmpty || rooms.get(code) !== room) return;
     rooms.delete(code);
+    // Save before dropping it from memory: an emptied room is exactly the one
+    // whose history someone will want when they come back.
+    const pending = saveTimers.get(code);
+    if (pending) clearTimeout(pending);
+    saveTimers.delete(code);
+    if (config.dataDir) await store.save(code, room.snapshot()).catch(() => undefined);
     await room.dispose();
     log(`room ${code} closed (empty)`);
   }
@@ -146,6 +198,7 @@ export function startServer(config: ServerConfig): WebSocketServer {
   wss.on("close", () => {
     clearInterval(heartbeat);
     http.close();
+    void flushSaves();
   });
 
   wss.on("connection", (socket: WebSocket) => {
@@ -288,7 +341,8 @@ export function startServer(config: ServerConfig): WebSocketServer {
 
   log(
     `relay listening on ${config.host ?? "0.0.0.0"}:${config.port} ` +
-      `(${config.mode} mode, ${config.token ? "token required" : "OPEN — no token"})`
+      `(${config.mode} mode, ${config.token ? "token required" : "OPEN — no token"}, ` +
+      `${config.dataDir ? `history in ${config.dataDir}` : "history in memory only"})`
   );
   if (!config.token && config.host !== "127.0.0.1") {
     log("  warning: no MPA_TOKEN set. Anyone who can reach this port can join any room.");

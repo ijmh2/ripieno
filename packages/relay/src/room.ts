@@ -21,6 +21,7 @@ import type {
 } from "@mpa/protocol";
 import { toRosterEntry } from "./roomCore.js";
 import type { RoomDriver } from "./driver.js";
+import type { RoomSnapshot } from "./roomStore.js";
 
 /**
  * The slice of a WebSocket the room actually uses. Depending on this rather
@@ -87,6 +88,37 @@ export class Room {
     /** Surfaced to clients so a room can never lie about which driver it runs. */
     readonly mode: RoomMode = "byo"
   ) {}
+
+  /**
+   * Restore a room from disk.
+   *
+   * Everyone is absent until they reconnect — a snapshot says who has been here,
+   * never who is here now, and restoring presence would have the agent
+   * addressing tools to machines that are not connected.
+   */
+  hydrate(snapshot: RoomSnapshot): void {
+    for (const member of snapshot.members) {
+      if (!this.known.has(member.handle)) this.known.set(member.handle, member);
+    }
+    this.transcript.push(...snapshot.transcript);
+    this.actions.push(...snapshot.actions);
+    // Agent messages restored from disk are already final; without this a
+    // late delta could resurrect one that finished before the restart.
+    for (const entry of snapshot.transcript) {
+      if (entry.kind === "agent") this.completed.add(entry.id);
+    }
+  }
+
+  snapshot(): RoomSnapshot {
+    return {
+      transcript: this.transcript,
+      actions: this.actions,
+      members: [...this.known.values()],
+    };
+  }
+
+  /** Called whenever something worth keeping changed. */
+  onChanged?: () => void;
 
   get roster(): RosterEntry[] {
     return [...this.known.values()].map((m) =>
@@ -306,6 +338,7 @@ export class Room {
     const full: ActionEntry = { ...entry, id: randomUUID(), ts: Date.now() };
     this.actions.push(full);
     this.broadcast({ t: "action", entry: full });
+    this.onChanged?.();
   }
 
   get actionLog(): ActionEntry[] {
@@ -462,6 +495,7 @@ export class Room {
   private append(entry: TranscriptEntry): void {
     this.transcript.push(entry);
     this.broadcast({ t: "entry", entry });
+    this.onChanged?.();
   }
 
   private broadcastRoster(): void {
