@@ -39,6 +39,19 @@ export interface ContainerGateOptions {
    * moment any ancestor was a link.
    */
   onChanged(absPath: string): void;
+  /**
+   * Run write-then-commit with exclusive access to the working tree.
+   *
+   * Both halves belong in one critical section. `git commit -- <path>` records
+   * whatever is on disk when it runs, so two agents writing the same file
+   * interleaved their bytes and one of them committed a file neither had
+   * written, under their own name.
+   *
+   * Required rather than optional: a caller that forgets it gets silent data
+   * loss under concurrency, which is exactly how this shipped the first time.
+   * A gate with no repository behind it passes an identity function, and says so.
+   */
+  serialise<T>(fn: () => Promise<T>): Promise<T>;
 }
 
 export class ContainerGate implements ApprovalGate {
@@ -54,25 +67,30 @@ export class ContainerGate implements ApprovalGate {
 
   async applyWrite(p: WriteProposal): Promise<ToolResult> {
     p.report("running");
-    await mkdir(path.dirname(p.abs), { recursive: true });
-    await writeFile(p.abs, p.proposed, "utf8");
+    const run = async (): Promise<boolean> => {
+      await mkdir(path.dirname(p.abs), { recursive: true });
+      await writeFile(p.abs, p.proposed, "utf8");
+      try {
+        await this.opts.commit(p);
+        return true;
+      } catch {
+        return false;
+      }
+    };
 
-    // Commit before announcing. If the commit fails the write still happened, so
-    // the room must hear about the change either way — but a caller that sees
-    // "Updated" should be able to trust that it is in history.
-    let committed = true;
-    try {
-      await this.opts.commit(p);
-    } catch {
-      committed = false;
-    }
+    const committed = await this.opts.serialise(run);
+
+    // The room hears about the change either way: the bytes are on disk, so
+    // every member's cache is stale regardless of whether git knows.
     this.opts.onChanged(p.abs);
 
     const verb = p.existed ? "Updated" : "Created";
+    if (committed) return { content: `${verb} ${p.rawPath}.` };
+    // isError, not prose. An agent reads the flag; it may never read a sentence
+    // explaining that its work exists on one disposable disk and nowhere else.
     return {
-      content: committed
-        ? `${verb} ${p.rawPath}.`
-        : `${verb} ${p.rawPath}, but it could not be committed — it is on the workspace disk only.`,
+      content: `${verb} ${p.rawPath}, but it could not be committed — it is on the workspace disk only and will be lost if this container is replaced.`,
+      isError: true,
     };
   }
 }

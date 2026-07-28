@@ -82,6 +82,8 @@ describe("the gate applies writes and tells the room", () => {
       // The gate reports absolutes; turning them into repo-relative paths is
       // the host's job, because only it knows the real root.
       onChanged: (abs) => changed.push(path.relative(root, abs)),
+      // No repository behind this gate, so nothing to serialise against.
+      serialise: (fn) => fn(),
     });
   });
 

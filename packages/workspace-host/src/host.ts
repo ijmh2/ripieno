@@ -69,6 +69,8 @@ export class WorkspaceHost {
           return this.git.commit(rel, p.requester, `${p.existed ? "Update" : "Add"} ${rel}`);
         },
         onChanged: (abs) => this.noteChanged(this.relative(abs)),
+        // The repository owns its own concurrency; the write belongs inside it.
+        serialise: (fn) => this.git.exclusive(fn),
       }),
     });
 

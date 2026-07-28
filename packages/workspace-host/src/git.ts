@@ -47,8 +47,14 @@ export interface GitWorkspaceOptions {
 export class GitWorkspace {
   private pushTimer: NodeJS.Timeout | undefined;
   private pushing = false;
+  /** The push currently running, so a second caller can await it rather than skip. */
+  private inFlight: Promise<void> | undefined;
+  /** A commit arrived while a push was running; the remote is behind again. */
+  private pushDirty = false;
   /** Set once a push has been refused, so the room is told once, not per write. */
   private blocked = false;
+  /** Serialises everything that touches the working tree. See exclusive(). */
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly opts: GitWorkspaceOptions) {}
 
@@ -155,6 +161,31 @@ export class GitWorkspace {
     await this.run('git config user.email "workspace@users.noreply.github.com"');
   }
 
+  /**
+   * Run something with exclusive access to the working tree.
+   *
+   * Git takes `.git/index.lock` for the duration of an `add` or a `commit`, so
+   * two agents writing at the same time meant one of them simply lost: the
+   * command threw, the file stayed on disk uncommitted, and the container is
+   * meant to be disposable — so it was gone at the next redeploy. Six concurrent
+   * writes produced one commit.
+   *
+   * The write itself belongs inside the same critical section, not just the git
+   * commands: `git commit -- <path>` records whatever is on disk at that moment,
+   * so an interleaved write meant one agent's commit contained another agent's
+   * bytes, under the wrong name.
+   */
+  async exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(fn, fn);
+    // Swallow here only so one failure does not poison every later caller; the
+    // rejection is still delivered to whoever asked for this piece of work.
+    this.queue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
   /** Commit one path, authored by the agent that wrote it. */
   async commit(relPath: string, requester: Requester | undefined, summary: string): Promise<void> {
     if (!(await this.isRepo())) return;
@@ -192,8 +223,33 @@ export class GitWorkspace {
 
   async push(): Promise<void> {
     const repo = this.opts.repo;
-    if (!repo || this.pushing || !(await this.isRepo())) return;
+    if (!repo) return;
+    // A second caller waits for the one already running instead of returning as
+    // though it had pushed. It also records that the remote is behind again:
+    // this used to drop the commit entirely, with nothing left to re-arm the
+    // timer, so the last write of a session could stay local forever.
+    if (this.pushing) {
+      this.pushDirty = true;
+      await this.inFlight;
+      return;
+    }
+    if (!(await this.isRepo())) return;
     this.pushing = true;
+    const done = this.doPush(repo);
+    this.inFlight = done;
+    try {
+      await done;
+    } finally {
+      this.pushing = false;
+      this.inFlight = undefined;
+      if (this.pushDirty) {
+        this.pushDirty = false;
+        this.schedulePush();
+      }
+    }
+  }
+
+  private async doPush(repo: RepoBinding): Promise<void> {
     try {
       await execAsync(`git push origin HEAD:${shellQuote(repo.branch)}`, {
         cwd: this.opts.root,
@@ -219,8 +275,6 @@ export class GitWorkspace {
             : `Could not push to ${repo.owner}/${repo.name}: ${detail}`
         );
       }
-    } finally {
-      this.pushing = false;
     }
   }
 
@@ -230,7 +284,17 @@ export class GitWorkspace {
       clearTimeout(this.pushTimer);
       this.pushTimer = undefined;
     }
+    // Twice at most: the first await may only be joining a push that started
+    // before the newest commits existed.
     await this.push();
+    if (this.pushDirty) {
+      this.pushDirty = false;
+      if (this.pushTimer) {
+        clearTimeout(this.pushTimer);
+        this.pushTimer = undefined;
+      }
+      await this.push();
+    }
   }
 
   private async run(command: string): Promise<void> {
