@@ -52,7 +52,15 @@ export interface ServerConfig {
   environmentId?: string;
 }
 
-export function startServer(config: ServerConfig): WebSocketServer {
+/**
+ * A relay, plus a way to make sure its history is on disk before the process
+ * goes. `wss.close()` cannot do that on its own: its callback fires in the same
+ * turn as the close listeners, so a flush started there never gets to await a
+ * single write.
+ */
+export type Relay = WebSocketServer & { flush(): Promise<void> };
+
+export function startServer(config: ServerConfig): Relay {
   // Only constructed in hosted mode, so BYO never needs a credential. Where it
   // is used, credentials resolve from the environment (ANTHROPIC_API_KEY, or an
   // `ant auth login` profile) — never hardcoded, never accepted from a client.
@@ -209,6 +217,8 @@ export function startServer(config: ServerConfig): WebSocketServer {
   wss.on("close", () => {
     clearInterval(heartbeat);
     http.close();
+    // Best effort for callers that never call flush(); the reliable path is
+    // awaiting relay.flush() before exiting.
     void flushSaves();
   });
 
@@ -386,7 +396,9 @@ export function startServer(config: ServerConfig): WebSocketServer {
   if (!config.token && config.host !== "127.0.0.1") {
     log("  warning: no MPA_TOKEN set. Anyone who can reach this port can join any room.");
   }
-  return wss;
+  const relay = wss as Relay;
+  relay.flush = flushSaves;
+  return relay;
 }
 
 /** Agent ids come from clients too, and end up as map keys. Keep them tame. */

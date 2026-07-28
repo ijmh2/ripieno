@@ -189,6 +189,27 @@ describe("a container hosts the room's workspace", () => {
     writer.close();
   });
 
+  test("a refused connection is reported, not endured in silence", async () => {
+    // RelayClient stops reconnecting for good on 4003. A container that carries
+    // on after that leaves the room permanently without a workspace while its
+    // /health still answers 200 — so the platform never restarts it, and nobody
+    // is told. Production turns this into a non-zero exit.
+    const evictions: string[] = [];
+    const rejected = new WorkspaceHost({
+      relayUrl: URL,
+      room: "shared",
+      root: checkout,
+      keyDir: path.join(base, "keys2"),
+      workspaceToken: "wrong-token",
+      policy: { allow: [], allowAll: false },
+      onEvicted: (reason) => evictions.push(reason),
+    });
+    await rejected.start();
+    await wait(700);
+    assert.equal(evictions.length, 1, `expected one eviction, got ${JSON.stringify(evictions)}`);
+    await rejected.stop();
+  });
+
   test("the confinement boundary holds in the container too", async () => {
     const agent = await Agent.join("shared", "ijmh2", "Mira's coder");
     const out = await agent.callRoom("read_file", { path: "../../etc/passwd" });

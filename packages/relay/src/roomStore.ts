@@ -85,6 +85,19 @@ function fitToBudget(entries: TranscriptEntry[], budget: number): TranscriptEntr
 export class FileRoomStore implements RoomStore {
   constructor(private readonly dir: string) {}
 
+  /**
+   * One save at a time per room, and a temp file per call.
+   *
+   * Both saves used to write `<room>.<pid>.tmp` and rename it, so two concurrent
+   * saves of one room raced: the loser's rename failed with ENOENT into a
+   * swallowed catch, and which snapshot survived was decided by rename order
+   * rather than by recency. The window also allowed a half-written temp to be
+   * renamed into place, at which point load() returns undefined and the room's
+   * whole history is silently gone.
+   */
+  private readonly writes = new Map<string, Promise<void>>();
+  private seq = 0;
+
   async load(code: string): Promise<RoomSnapshot | undefined> {
     try {
       const raw = await readFile(this.pathFor(code), "utf8");
@@ -102,6 +115,16 @@ export class FileRoomStore implements RoomStore {
   }
 
   async save(code: string, snapshot: RoomSnapshot): Promise<void> {
+    const previous = this.writes.get(code) ?? Promise.resolve();
+    const mine = previous.catch(() => undefined).then(() => this.write(code, snapshot));
+    this.writes.set(
+      code,
+      mine.catch(() => undefined)
+    );
+    return mine;
+  }
+
+  private async write(code: string, snapshot: RoomSnapshot): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     const trimmed: RoomSnapshot = {
       transcript: fitToBudget(snapshot.transcript.slice(-MAX_PERSISTED_TRANSCRIPT), MAX_PERSISTED_BYTES),
@@ -113,7 +136,7 @@ export class FileRoomStore implements RoomStore {
     // truncated file, and losing the history to a crash while *saving* it would
     // be a particularly annoying way to fail.
     const target = this.pathFor(code);
-    const temp = `${target}.${process.pid}.tmp`;
+    const temp = `${target}.${process.pid}.${this.seq++}.tmp`;
     await writeFile(temp, JSON.stringify(trimmed), "utf8");
     await rename(temp, target);
   }

@@ -30,6 +30,8 @@ export interface WorkspaceHostOptions {
   repo?: RepoBinding;
   policy: CommandPolicy;
   log?: (...parts: string[]) => void;
+  /** The relay refused this connection for good. Tests override; production exits. */
+  onEvicted?: (reason: string) => void;
 }
 
 export class WorkspaceHost {
@@ -85,7 +87,14 @@ export class WorkspaceHost {
       workspaceToken: opts.workspaceToken,
       onMessage: (msg) => this.onMessage(msg),
       onStateChange: (state) => this.onStateChange(state, log),
-      onEvicted: (reason) => log("evicted:", reason),
+      // A 4003 or 4000 stops RelayClient reconnecting for good. Staying alive
+      // after that leaves the room permanently without a workspace while the
+      // platform's healthcheck still reports 200, so nothing ever restarts us.
+      // Exit non-zero and let the platform do its job.
+      onEvicted: (reason) => {
+        log("evicted:", reason);
+        this.opts.onEvicted?.(reason);
+      },
     });
   }
 

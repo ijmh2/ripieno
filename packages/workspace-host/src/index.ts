@@ -74,6 +74,11 @@ const host = new WorkspaceHost({
     allowAll: process.env.MPA_ALLOW_ALL_COMMANDS === "1",
   },
   log: (...parts) => console.log("[workspace]", ...parts),
+  onEvicted: (reason) => {
+    console.error(`[workspace] the relay refused this connection: ${reason}`);
+    console.error("[workspace] exiting so the platform restarts us — a live /health with no room is worse.");
+    process.exit(1);
+  },
 });
 
 void host.start().then(async () => {

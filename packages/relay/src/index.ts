@@ -64,6 +64,13 @@ const wss = startServer({
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    wss.close(() => process.exit(0));
+    // Flush first, and await it. A redeploy sends SIGTERM, and the debounced
+    // save is up to a second behind: exiting from wss.close()'s callback ran in
+    // the same turn as the close listeners, so every graceful shutdown dropped
+    // the tail of every busy room's history.
+    void wss
+      .flush()
+      .catch(() => undefined)
+      .then(() => wss.close(() => process.exit(0)));
   });
 }

@@ -90,6 +90,8 @@ export class HostedDriver {
    */
   private readonly openPreviews = new Set<string>();
   private closed = false;
+  /** The live SSE stream, kept only so close() can abort it. */
+  private stream: { controller: AbortController } | undefined;
   /** Guards against two concurrent pump loops after a reconnect. */
   private pumping = false;
 
@@ -201,6 +203,15 @@ export class HostedDriver {
     this.closed = true;
     for (const { timer } of this.pending.values()) clearTimeout(timer);
     this.pending.clear();
+    // The pump only notices `closed` when an event *arrives*, and an idle
+    // session emits nothing — so without aborting, the loop parked forever and
+    // every reaped room kept a live HTTP connection and its whole transcript
+    // reachable. One leak per room ever created.
+    //
+    // Not covered by a test: this path needs a live Managed Agents session, and
+    // hosted mode has never run against one.
+    this.stream?.controller.abort();
+    this.stream = undefined;
   }
 
   /* ---------------------------------------------------------------- */
@@ -230,6 +241,7 @@ export class HostedDriver {
         backoff = 1000;
         consecutiveFailures = 0;
 
+        this.stream = stream;
         for await (const event of stream) {
           if (this.closed) break;
           this.handle(event as unknown as DeltaPreview & Record<string, unknown>);
