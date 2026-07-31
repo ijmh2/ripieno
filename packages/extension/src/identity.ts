@@ -158,3 +158,29 @@ function fromPath(path: string): string | undefined {
   const parts = path.split("/").filter(Boolean);
   return parts.length < 2 ? undefined : `${parts[0]}/${parts[1]}`;
 }
+
+/**
+ * Does this relay check who you are?
+ *
+ * Asked before prompting anyone to sign in, so the prompt only appears where it
+ * does something. A relay that never verifies gets whatever identity is already
+ * to hand — an existing GitHub session if there is one, and otherwise a local
+ * name — rather than demanding an account it will not look at.
+ *
+ * Unreachable or old relays answer "no". Being wrong that way costs a refused
+ * join with a message explaining exactly what is missing; being wrong the other
+ * way nags everybody on every relay that predates this field.
+ */
+export async function relayRequiresIdentity(relayUrl: string): Promise<boolean> {
+  try {
+    const health = new URL(relayUrl);
+    health.protocol = health.protocol === "wss:" ? "https:" : "http:";
+    health.pathname = "/health";
+    const res = await fetch(health.toString(), { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { identityRequired?: unknown };
+    return body.identityRequired === true;
+  } catch {
+    return false;
+  }
+}

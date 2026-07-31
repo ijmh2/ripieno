@@ -153,6 +153,11 @@ export function startServer(config: ServerConfig): Relay {
           status: "ok",
           mode: config.mode,
           tokenRequired: Boolean(config.token),
+          // So a client only asks somebody to sign in where the answer is
+          // actually checked. A prompt on a relay that never verifies buys
+          // attribution by convention and costs a barrier before anything has
+          // happened.
+          identityRequired: Boolean(config.requireGithub),
         })
       );
       return;

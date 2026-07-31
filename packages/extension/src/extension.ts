@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { spawn } from "child_process";
 import type { Member, ServerMsg } from "@mpa/protocol";
-import { resolveIdentity, resolveIdentityWithToken } from "./identity";
+import { resolveIdentity, resolveIdentityWithToken, relayRequiresIdentity } from "./identity";
 import { SoloRelay } from "./soloRelay";
 import { buildInvite, describeInvite, parseInvite } from "./invite";
 
@@ -798,8 +798,10 @@ export function activate(context: vscode.ExtensionContext): void {
    * provenance argument rests on it — but a room of one has nobody to convince,
    * and demanding a sign-in there is a barrier for no benefit.
    */
-  function localIdentity(url: string): { member: Member; githubToken?: string } | undefined {
-    if (url !== solo.address) return undefined;
+  function localIdentity(mustProve: boolean): { member: Member; githubToken?: string } | undefined {
+    // A relay that verifies will refuse this anyway; better to say so here than
+    // to be evicted a moment later with a less useful message.
+    if (mustProve) return undefined;
     const name = os.userInfo().username || "you";
     return { member: { handle: name, displayName: name } };
   }
@@ -835,10 +837,16 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     if (activeRelayUrl === solo.address) {
-      void vscode.window.showWarningMessage(
-        "This room is running on your machine, so a link to it would not reach anyone else. " +
-          "Set mpa.relayUrl to a relay you both can reach, then share the link."
+      // A notification truncates, and the half worth reading is what to do next
+      // — so it goes on a button rather than at the end of a sentence nobody
+      // sees. The first clause has to carry the whole meaning on its own.
+      const choice = await vscode.window.showWarningMessage(
+        "This room is on your machine — a link to it would not reach anyone else.",
+        "Set a relay URL"
       );
+      if (choice) {
+        await vscode.commands.executeCommand("workbench.action.openSettings", "mpa.relayUrl");
+      }
       return;
     }
 
@@ -849,7 +857,7 @@ export function activate(context: vscode.ExtensionContext): void {
     await vscode.env.clipboard.writeText(link);
     void vscode.window.showInformationMessage(
       roomToken()
-        ? "Invite link copied. It contains this room's access token — share it the way you would a password."
+        ? "Invite link copied — it contains this room's token, so share it like a password."
         : "Invite link copied."
     );
   }
@@ -859,21 +867,24 @@ export function activate(context: vscode.ExtensionContext): void {
     const url = await ensureRelayUrl();
     await loadRoomToken();
 
-    // Only ask to sign in when the answer matters to somebody else.
+    // Only ask to sign in where the answer is actually checked.
     //
-    // Sharing a room needs a real identity — other people have to know who is
-    // speaking. A room of one has nobody to convince, so a sign-in prompt there
-    // is a barrier for no benefit, and it lands before anything has happened,
-    // which reads as the extension demanding an account to start. Resolving
-    // silently still picks up an existing session, so someone already signed in
-    // keeps their real name without being asked.
-    const alone = url === solo.address;
-    const identity = (await resolveIdentityWithToken(alone)) ?? localIdentity(url);
+    // The relay says whether it verifies identity, so the prompt appears there
+    // and nowhere else. Anywhere else — solo, or a relay that does not verify —
+    // we take whatever is already to hand: an existing GitHub session if there
+    // is one, a local name otherwise. Prompting on a relay that will not look at
+    // the answer buys attribution by convention and costs a dialog before
+    // anything has happened.
+    const mustProve = url !== solo.address && (await relayRequiresIdentity(url));
+    const identity = (await resolveIdentityWithToken(!mustProve)) ?? localIdentity(mustProve);
     if (!identity) {
-      vscode.window.showErrorMessage(
-        "Multiplayer Agent: signing in to GitHub is required to join a shared room, " +
-          "so other people can see who is speaking."
+      // Sharing a room needs a real identity so other people know who is
+      // speaking. Offer the sign-in rather than describing it.
+      const choice = await vscode.window.showErrorMessage(
+        "Sign in to GitHub to join a shared room.",
+        "Sign in"
       );
+      if (choice === "Sign in") await signIn();
       return;
     }
     const member = identity.member;
@@ -898,12 +909,21 @@ export function activate(context: vscode.ExtensionContext): void {
       onEvicted: (reason) => {
         // Two machines resolving to one handle is the usual cause, and it is
         // invisible otherwise — the room just churns.
+        // The reason comes first: it is the only part that varies, and anything
+        // after it is what gets cut off. The advice moved onto a button.
         void vscode.window.showErrorMessage(
-          `Multiplayer Agent: disconnected — ${reason}. ` +
-            "If another machine is signed in as the same person, give one of them a different " +
-            "mpa.devIdentityOverride and rejoin.",
-          "Rejoin"
+          `Disconnected — ${reason}`,
+          "Rejoin",
+          "Why?"
         ).then((choice) => {
+          if (choice === "Why?") {
+            void vscode.window.showInformationMessage(
+              "Two machines signed in as the same person evict each other in turn. " +
+                "Give one of them a different mpa.devIdentityOverride and rejoin.",
+              { modal: true }
+            );
+            return;
+          }
           if (choice === "Rejoin") void joinRoom();
         });
       },
