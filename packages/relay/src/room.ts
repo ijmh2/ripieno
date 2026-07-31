@@ -232,7 +232,7 @@ export class Room {
     });
     this.system(`${label} joined the room.`);
     this.broadcastRoster();
-    await this.driver.sendRoster(this.roster);
+    await this.tellDriver();
   }
 
   /**
@@ -277,7 +277,28 @@ export class Room {
     this.broadcastRoster();
     // A shared agent must stop addressing tools to them, or the room stalls
     // waiting on a machine that is no longer there.
-    await this.driver.sendRoster(this.roster);
+    await this.tellDriver();
+  }
+
+  /**
+   * Tell the driver who is in the room, without letting it break membership.
+   *
+   * In hosted mode this is a live API call that can 429 or 404. It used to be
+   * awaited as the last statement of join() and leave(), so a throw propagated
+   * out: the caller never recorded the connection, the close handler became a
+   * no-op, and the member was reported present forever — in a room that could
+   * then never be reaped, with the agent addressing tools to a socket that would
+   * never answer. Failing to tell the agent about a roster change is a
+   * degradation; losing track of who is connected is a corruption.
+   */
+  private async tellDriver(): Promise<void> {
+    try {
+      await this.driver.sendRoster(this.roster);
+    } catch (err) {
+      this.system(
+        `The agent could not be told who is in the room (${err instanceof Error ? err.message : String(err)}). It may address the wrong person until this recovers.`
+      );
+    }
   }
 
   get workspaceHost(): string | undefined {

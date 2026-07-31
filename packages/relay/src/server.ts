@@ -319,6 +319,12 @@ export function startServer(config: ServerConfig): Relay {
             break;
           case "toolProgress":
             if (!joined) return send(socket, "join a room before reporting tool progress");
+            // Progress extends the deadline on a call, so it must come from the
+            // connection executing it — not from an agent, which cannot be
+            // running anything on anyone's disk.
+            if (joined.role === "agent") {
+              return send(socket, "an agent does not execute tool calls");
+            }
             joined.room.toolProgress(joined.handle, msg.callId, msg.state);
             break;
           case "toolResult":

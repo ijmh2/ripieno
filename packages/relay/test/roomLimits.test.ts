@@ -121,6 +121,40 @@ describe("a room that never empties does not grow without limit", () => {
   });
 });
 
+describe("a failing driver degrades the room rather than corrupting it", () => {
+  test("a member who joins is still tracked when the driver throws", async () => {
+    // In hosted mode this is a live API call that can 429. It used to be the
+    // last statement of join(), so the throw propagated out: the caller never
+    // recorded the connection, the close handler became a no-op, and the member
+    // was present forever in a room that could never be reaped.
+    class Failing implements RoomDriver {
+      async sendRoster(): Promise<void> {
+        throw new Error("429 rate limited");
+      }
+      async say(): Promise<void> {}
+      async resolveToolCall(): Promise<void> {}
+    }
+
+    const room = new Room("r", new Failing());
+    const socket = new Socket();
+    await room.join(mira, socket);
+
+    assert.equal(entryFor(room.roster, "ijmh2")?.present, true);
+    assert.equal(room.isEmpty, false);
+
+    // And the room says so, rather than looking healthy.
+    const said = socket.sent
+      .filter((m): m is Extract<ServerMsg, { t: "entry" }> => m.t === "entry")
+      .map((m) => m.entry.text)
+      .join(" ");
+    assert.match(said, /could not be told who is in the room/);
+
+    // Leaving still works, so the room can be reaped.
+    await room.leave("ijmh2", "human", socket);
+    assert.equal(room.isEmpty, true);
+  });
+});
+
 function entryFor(roster: RosterEntry[], handle: string): RosterEntry | undefined {
   return roster.find((r) => r.handle === handle);
 }

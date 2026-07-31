@@ -40,6 +40,15 @@ interface CachedFile {
 
 /** Short enough that a change made outside the room is noticed reasonably soon. */
 const TTL_MS = 30_000;
+/**
+ * How many files' bytes to keep.
+ *
+ * The TTL only made a read *miss*; nothing ever removed an entry, so browsing a
+ * large repository retained every file's contents for the life of the session.
+ * Oldest-read first, which for a filesystem view is close enough to least-used.
+ */
+const MAX_CACHED_FILES = 200;
+const MAX_CACHED_DIRS = 400;
 
 /**
  * The host's workspace, addressed as `mpa-workspace:/<path>`.
@@ -136,6 +145,7 @@ export class WorkspaceFileSystem implements vscode.FileSystemProvider {
       });
 
     this.dirs.set(rel, { entries, at: Date.now() });
+    evictOldest(this.dirs, MAX_CACHED_DIRS);
     return entries;
   }
 
@@ -149,6 +159,7 @@ export class WorkspaceFileSystem implements vscode.FileSystemProvider {
     const result = await this.remote("read_file", { path: rel, offset: 1, limit: 1_000_000 });
     const bytes = new TextEncoder().encode(stripReadFileHeader(result));
     this.files.set(rel, { bytes, at: Date.now() });
+    evictOldest(this.files, MAX_CACHED_FILES);
     return bytes;
   }
 
@@ -234,4 +245,11 @@ export function stripReadFileHeader(result: string): string {
     .filter((line) => !/^\[\d+ more lines/.test(line))
     .map((line) => line.replace(/^\s*\d+\t/, ""))
     .join("\n");
+}
+
+/** Drop the least recently read entries until the cache fits. */
+function evictOldest<T extends { at: number }>(cache: Map<string, T>, limit: number): void {
+  if (cache.size <= limit) return;
+  const byAge = [...cache.entries()].sort((a, b) => a[1].at - b[1].at);
+  for (const [key] of byAge.slice(0, cache.size - limit)) cache.delete(key);
 }
