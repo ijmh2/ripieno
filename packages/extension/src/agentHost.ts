@@ -15,7 +15,12 @@ import * as vscode from "vscode";
 import { randomBytes } from "crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { Member, RosterEntry, TranscriptEntry } from "@mpa/protocol";
-import { shouldAnswer, type AgentIdentity } from "./addressing";
+import {
+  shouldAnswer,
+  nextUnanswered,
+  type AgentIdentity,
+  type SelfIdentity,
+} from "./addressing";
 import { RelayClient } from "@mpa/relay-client";
 import type { ApprovalBridge } from "./approvals";
 import {
@@ -195,7 +200,14 @@ export class AgentHost implements vscode.Disposable {
 
   dispose(): void {
     this.clearPending();
-    for (const { timer } of this.remoteCalls.values()) clearTimeout(timer);
+    // Settle, do not merely forget. These promises back an open editor tab and
+    // "propose change"; abandoning them left the tab spinning forever with no
+    // error, and the timer that would eventually have failed them was cleared
+    // on the way out.
+    for (const { timer, resolve } of this.remoteCalls.values()) {
+      clearTimeout(timer);
+      resolve({ content: "This agent was detached before the workspace answered.", isError: true });
+    }
     this.remoteCalls.clear();
     for (const client of this.workspaceBridge?.clients ?? []) client.terminate();
     this.workspaceBridge?.close();
@@ -303,22 +315,28 @@ export class AgentHost implements vscode.Disposable {
   }
 
   private shouldAnswer(entry: TranscriptEntry): boolean {
-    return shouldAnswer(
-      entry.text,
-      {
-        label: this.opts.label,
-        handle: this.opts.member.handle,
-        primary: this.opts.primary !== false,
-      },
-      // Fall back to configured siblings until the first roster arrives, so a
-      // message in the first moments after attaching is still routed sanely.
-      this.others.length > 0
-        ? this.others
-        : (this.opts.siblingLabels ?? []).map((label) => ({
-            label,
-            handle: this.opts.member.handle,
-          }))
-    );
+    return shouldAnswer(entry.text, this.me(), this.siblings());
+  }
+
+  private me(): SelfIdentity {
+    return {
+      label: this.opts.label,
+      handle: this.opts.member.handle,
+      primary: this.opts.primary !== false,
+    };
+  }
+
+  /**
+   * Fall back to configured siblings until the first roster arrives, so a
+   * message in the first moments after attaching is still routed sanely.
+   */
+  private siblings(): AgentIdentity[] {
+    return this.others.length > 0
+      ? this.others
+      : (this.opts.siblingLabels ?? []).map((label) => ({
+          label,
+          handle: this.opts.member.handle,
+        }));
   }
 
   private async respond(): Promise<void> {
@@ -360,9 +378,13 @@ export class AgentHost implements vscode.Disposable {
       this.busy = false;
       this.setState("idle");
       // Anything said while we were thinking still needs an answer.
-      if (this.transcript.length > this.fed) {
-        this.consider(this.transcript[this.transcript.length - 1]);
-      }
+      //
+      // Re-arming on the *last* entry silently dropped it: consider() ignores
+      // anything that is not a human message, so a join or another agent's
+      // reply arriving after the question meant nobody ever answered — and in a
+      // room with several agents that is the common case, not the edge one.
+      const waiting = nextUnanswered(this.transcript.slice(this.fed), this.me(), this.siblings());
+      if (waiting) this.consider(waiting);
     }
   }
 

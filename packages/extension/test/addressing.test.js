@@ -93,3 +93,39 @@ describe("mention matching is generous but not reckless", () => {
     assert.equal(shouldAnswer("does this build?", mirasReviewer, [mirasAgent, samsAgent]), false);
   });
 });
+
+describe("a question asked while the agent is thinking still gets answered", () => {
+  const { nextUnanswered } = require("../dist/addressing.js");
+  const human = (text) => ({ kind: "human", text });
+  const system = (text) => ({ kind: "system", text });
+  const agent = (text) => ({ kind: "agent", text });
+
+  test("a question followed by somebody joining is not lost", () => {
+    // The recovery used to look only at the *last* entry and skip it unless it
+    // was human, so a join notice arriving after the question meant nobody ever
+    // answered — and the agent just looked like it was ignoring you.
+    const queued = [human("does this build?"), system("Sam joined the room.")];
+    assert.equal(nextUnanswered(queued, mirasAgent, [samsAgent])?.text, "does this build?");
+  });
+
+  test("a question followed by another agent's reply is not lost", () => {
+    // In a room with several agents this is the ordinary case, not the edge one.
+    const queued = [human("does this build?"), agent("I had a look and it does.")];
+    assert.equal(nextUnanswered(queued, mirasAgent, [samsAgent])?.text, "does this build?");
+  });
+
+  test("the oldest unanswered question is the one picked up", () => {
+    const queued = [human("first?"), human("second?")];
+    assert.equal(nextUnanswered(queued, mirasAgent, [samsAgent])?.text, "first?");
+  });
+
+  test("a question addressed to somebody else is not picked up", () => {
+    const queued = [human("@swhitfield can you check this?"), system("noise")];
+    assert.equal(nextUnanswered(queued, mirasAgent, [samsAgent]), undefined);
+  });
+
+  test("nothing queued means nothing to do", () => {
+    assert.equal(nextUnanswered([], mirasAgent, [samsAgent]), undefined);
+    assert.equal(nextUnanswered([system("x"), agent("y")], mirasAgent, [samsAgent]), undefined);
+  });
+});

@@ -67,6 +67,24 @@ export function mentions(text: string, agent: AgentIdentity): boolean {
   return false;
 }
 
+/**
+ * The oldest message this agent still owes an answer to.
+ *
+ * A turn takes time, and anything said during it has to be picked up afterwards.
+ * That recovery used to look only at the *last* transcript entry, and skip it
+ * unless it was a human message — so a question followed by somebody joining, or
+ * by another agent replying, was silently never answered. In a room with several
+ * agents that is the ordinary case rather than an edge one, and it presents as
+ * the agent simply ignoring you.
+ */
+export function nextUnanswered<T extends { kind: string; text: string }>(
+  entries: T[],
+  me: SelfIdentity,
+  others: AgentIdentity[]
+): T | undefined {
+  return entries.find((e) => e.kind === "human" && shouldAnswer(e.text, me, others));
+}
+
 /** Whole-word, allowing a leading @ and ordinary punctuation around it. */
 function containsToken(haystack: string, token: string): boolean {
   if (!token) return false;

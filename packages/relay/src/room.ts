@@ -19,6 +19,7 @@ import type {
   ToolProgressState,
   TranscriptEntry,
 } from "@mpa/protocol";
+import { WORKSPACE_HANDLE } from "@mpa/protocol";
 import { toRosterEntry } from "./roomCore.js";
 import type { RoomDriver } from "./driver.js";
 import type { RoomSnapshot } from "./roomStore.js";
@@ -62,6 +63,16 @@ export class Room {
   /** Everyone who has ever joined, so the roster keeps offline members visible. */
   private readonly known = new Map<string, Member>();
   private readonly transcript: TranscriptEntry[] = [];
+  /**
+   * How much a room keeps in memory.
+   *
+   * Only the *persisted* copy was capped, so a room that never empties grew
+   * without limit: after 5,000 messages a joiner was sent every one of them in
+   * a single frame, and it kept getting bigger. The same numbers as the store,
+   * so what a joiner sees matches what a restart brings back.
+   */
+  private static readonly MAX_TRANSCRIPT = 500;
+  private static readonly MAX_ACTIONS = 200;
   /** Agent entries already flushed, so a late delta cannot resurrect one. */
   private readonly completed = new Set<string>();
   private status: RoomStatus = "idle";
@@ -75,11 +86,15 @@ export class Room {
    */
   private host?: string;
   /**
-   * Handles connected as the room's shared workspace rather than as people.
+   * Handles *currently connected* as the room's shared workspace.
    *
-   * Kept separate from presence because the difference is load-bearing: a
-   * container's claim on the workspace outranks a laptop's, and it must never be
-   * rendered — or described to an agent — as a member of the room.
+   * Only ever consulted for claim precedence, which is a question about who is
+   * here now. Whether something *is* a workspace is answered by its handle —
+   * see isContainer — because that handle is reserved and survives the socket
+   * dropping. Deriving it from this set meant that the moment the container
+   * reconnected, or the relay restarted, the roster lost `kind` and the agent's
+   * system prompt described `@workspace` as an offline *person* it should stop
+   * addressing tools to.
    */
   private readonly containers = new Set<string>();
   /** What agents have done, distinct from what people have said. */
@@ -125,8 +140,8 @@ export class Room {
     for (const member of snapshot.members) {
       if (!this.known.has(member.handle)) this.known.set(member.handle, member);
     }
-    this.transcript.push(...snapshot.transcript);
-    this.actions.push(...snapshot.actions);
+    this.transcript.push(...snapshot.transcript.slice(-Room.MAX_TRANSCRIPT));
+    this.actions.push(...snapshot.actions.slice(-Room.MAX_ACTIONS));
     // Agent messages restored from disk are already final; without this a
     // late delta could resurrect one that finished before the restart.
     for (const entry of snapshot.transcript) {
@@ -151,7 +166,7 @@ export class Room {
         m,
         this.connections.has(m.handle),
         this.agentsOf(m.handle),
-        this.containers.has(m.handle) ? "workspace" : undefined
+        isContainer(m.handle) ? "workspace" : undefined
       )
     );
   }
@@ -210,7 +225,7 @@ export class Room {
         member,
         true,
         this.agentsOf(member.handle),
-        this.containers.has(member.handle) ? "workspace" : undefined
+        isContainer(member.handle) ? "workspace" : undefined
       ),
       roster: this.roster,
       transcript: this.transcript,
@@ -244,7 +259,7 @@ export class Room {
       const conn = this.connections.get(handle);
       if (!conn) return;
       if (socket && conn.socket !== socket) return;
-      label = this.containers.has(handle) ? "The shared workspace" : conn.member.displayName;
+      label = isContainer(handle) ? "The shared workspace" : conn.member.displayName;
       this.connections.delete(handle);
       this.containers.delete(handle);
       // Anything dispatched to them will never be answered now. Say so at once
@@ -283,8 +298,8 @@ export class Room {
       // closing their editor, which is the whole reason it exists. A member
       // trying to claim over it is told why rather than silently ignored.
       if (this.host && this.host !== handle) {
-        if (!this.containers.has(handle)) {
-          if (this.containers.has(this.host)) {
+        if (!isContainer(handle)) {
+          if (isContainer(this.host)) {
             this.system(
               `@${handle} cannot host: this room's workspace is a shared container, which stays hosted when everyone disconnects.`
             );
@@ -417,6 +432,9 @@ export class Room {
   recordAction(entry: Omit<ActionEntry, "id" | "ts">): void {
     const full: ActionEntry = { ...entry, id: randomUUID(), ts: Date.now() };
     this.actions.push(full);
+    if (this.actions.length > Room.MAX_ACTIONS) {
+      this.actions.splice(0, this.actions.length - Room.MAX_ACTIONS);
+    }
     this.broadcast({ t: "action", entry: full });
     this.onChanged?.();
   }
@@ -574,6 +592,9 @@ export class Room {
 
   private append(entry: TranscriptEntry): void {
     this.transcript.push(entry);
+    if (this.transcript.length > Room.MAX_TRANSCRIPT) {
+      this.transcript.splice(0, this.transcript.length - Room.MAX_TRANSCRIPT);
+    }
     this.broadcast({ t: "entry", entry });
     this.onChanged?.();
   }
@@ -670,4 +691,15 @@ function summariseResult(content: string, isError: boolean): string {
   }
   const lines = content.split("\n").length;
   return lines > 1 ? `${lines} lines` : firstLine.slice(0, 60);
+}
+
+/**
+ * Is this handle the room's shared workspace?
+ *
+ * The handle is reserved by the relay and refused to everyone else, so it is a
+ * reliable answer even when nothing is connected under it — which is exactly
+ * when the question used to be got wrong.
+ */
+function isContainer(handle: string): boolean {
+  return handle === WORKSPACE_HANDLE;
 }
