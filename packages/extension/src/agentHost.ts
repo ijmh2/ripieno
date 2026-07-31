@@ -327,6 +327,17 @@ export class AgentHost implements vscode.Disposable {
     return shouldAnswer(entry.text, this.me(), this.siblings());
   }
 
+  /** Tell the room what that turn cost, if the provider said. */
+  private reportUsage(): void {
+    const usage = this.runner?.lastUsage?.();
+    if (!usage) return;
+    this.relay?.send({
+      t: "agentUsage",
+      provider: this.opts.providerId ?? "claude-code",
+      usage,
+    });
+  }
+
   private me(): SelfIdentity {
     return {
       label: this.opts.label,
@@ -370,6 +381,11 @@ export class AgentHost implements vscode.Disposable {
         },
         (line) => this.log(line)
       );
+
+      // Report before posting: a turn that produced no reply still cost money,
+      // and reporting only successful answers would understate every agent that
+      // is having a bad day.
+      this.reportUsage();
 
       if (text) {
         this.relay?.send({ t: "say", text });

@@ -22,7 +22,7 @@ import type {
 import { WORKSPACE_HANDLE } from "@mpa/protocol";
 import { toRosterEntry } from "./roomCore.js";
 import type { RoomDriver } from "./driver.js";
-import type { RoomRole } from "@mpa/protocol";
+import type { AgentUsage, RoomRole, TurnUsage } from "@mpa/protocol";
 import type { RoomSnapshot } from "./roomStore.js";
 
 /**
@@ -106,6 +106,14 @@ export class Room {
    * after that is a member until the owner says otherwise.
    */
   private readonly roles = new Map<string, RoomRole>();
+  /**
+   * What each agent has spent, keyed by agent id.
+   *
+   * Kept per agent rather than per member because "which of my agents is
+   * expensive" is the question people actually have, and a member running a
+   * coder and a reviewer cannot answer it from one number.
+   */
+  private readonly usage = new Map<string, AgentUsage>();
   /** What agents have done, distinct from what people have said. */
   private readonly actions: ActionEntry[] = [];
   /** Outstanding remote tool requests, so a reply can find who asked. */
@@ -152,6 +160,7 @@ export class Room {
     for (const [handle, role] of Object.entries(snapshot.roles ?? {})) {
       this.roles.set(handle, role);
     }
+    for (const entry of snapshot.usage ?? []) this.usage.set(entry.agentId, entry);
     this.transcript.push(...snapshot.transcript.slice(-Room.MAX_TRANSCRIPT));
     this.actions.push(...snapshot.actions.slice(-Room.MAX_ACTIONS));
     // Agent messages restored from disk are already final; without this a
@@ -167,6 +176,7 @@ export class Room {
       actions: this.actions,
       members: [...this.known.values()],
       roles: Object.fromEntries(this.roles),
+      usage: this.usageReport,
     };
   }
 
@@ -183,6 +193,55 @@ export class Room {
         isContainer(m.handle) ? undefined : this.roleOf(m.handle)
       )
     );
+  }
+
+  get usageReport(): AgentUsage[] {
+    return [...this.usage.values()];
+  }
+
+  /**
+   * Record what an agent's turn cost.
+   *
+   * Providers report different things — Claude Code gives dollars and tokens, an
+   * OpenAI-compatible endpoint gives tokens and leaves pricing to whoever pays,
+   * a wrapped CLI gives nothing. Absent stays absent: a zero here would read as
+   * "this agent was free", which is a confident claim about the one thing we
+   * were not told.
+   */
+  recordUsage(agentId: string, provider: string, turn: TurnUsage): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+
+    const running = this.usage.get(agentId) ?? {
+      agentId,
+      agentLabel: agent.label,
+      owner: agent.member.handle,
+      provider,
+      turns: 0,
+    };
+    running.agentLabel = agent.label;
+    running.turns += 1;
+    running.costUsd = add(running.costUsd, turn.costUsd);
+    running.inputTokens = add(running.inputTokens, turn.inputTokens);
+    running.outputTokens = add(running.outputTokens, turn.outputTokens);
+    running.cacheReadTokens = add(running.cacheReadTokens, turn.cacheReadTokens);
+    // Reported once ⇒ reported. A provider that answers intermittently should
+    // not be described as silent because of one empty turn. The flag is deleted
+    // rather than set false, so "we were told nothing" is an absence in the data
+    // as well as in the meaning.
+    if (
+      running.costUsd === undefined &&
+      running.inputTokens === undefined &&
+      running.outputTokens === undefined
+    ) {
+      running.unreported = true;
+    } else {
+      delete running.unreported;
+    }
+
+    this.usage.set(agentId, running);
+    this.broadcast({ t: "usage", agents: this.usageReport });
+    this.onChanged?.();
   }
 
   /** Everyone is a member until told otherwise; the container holds no role. */
@@ -273,6 +332,7 @@ export class Room {
       mode: this.mode,
       workspaceHost: this.host,
       actions: this.actions,
+      usage: this.usageReport,
       you: toRosterEntry(
         member,
         true,
@@ -802,4 +862,16 @@ function summariseResult(content: string, isError: boolean): string {
  */
 function isContainer(handle: string): boolean {
   return handle === WORKSPACE_HANDLE;
+}
+
+/**
+ * Add two possibly-absent numbers, keeping absence.
+ *
+ * `undefined + 5` must be 5, but `undefined + undefined` must stay undefined —
+ * otherwise a provider that never reports anything accumulates a confident zero.
+ */
+function add(a: number | undefined, b: number | undefined): number | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  return a + b;
 }

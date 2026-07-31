@@ -7,7 +7,7 @@
 // so nothing here is drag-only.
 
 import * as vscode from "vscode";
-import type { AttachedAgent, RoomMode, RosterEntry } from "@mpa/protocol";
+import type { AgentUsage, AttachedAgent, RoomMode, RosterEntry } from "@mpa/protocol";
 import type { AgentState } from "./agentHost";
 
 const MIME = "application/vnd.code.tree.mpa.rooms";
@@ -82,6 +82,13 @@ export class RoomsTreeProvider
     this.host = workspaceHost;
     this.refresh();
   }
+
+  /** Running spend per agent, so the tree can say what each one has cost. */
+  setUsage(usage: AgentUsage[]): void {
+    this.usage = new Map(usage.map((u) => [u.agentId, u]));
+    this.changed.fire(undefined);
+  }
+  private usage = new Map<string, AgentUsage>();
 
   setMyAgents(agents: MyAgent[]): void {
     this.myAgents = agents;
@@ -189,7 +196,9 @@ export class RoomsTreeProvider
         // Naming the folder matters once agents can work in different projects:
         // otherwise two identically-named agents look interchangeable.
         const suffix = mine ? detailSuffix(mine) : "";
-        item.description = `${mine ? describeAgent(mine.state) : "attached"}${suffix}`;
+        item.description = `${mine ? describeAgent(mine.state) : "attached"}${suffix}${describeUsage(
+          this.usage.get(node.agent.id)
+        )}`;
         item.iconPath = new vscode.ThemeIcon(
           mine?.state === "thinking" ? "loading~spin" : "robot"
         );
@@ -286,4 +295,28 @@ function describeAgent(state: AgentState): string {
     default:
       return "watching the room";
   }
+}
+
+/**
+ * What an agent has cost, in a form that fits beside its name.
+ *
+ * Says nothing at all when the provider reports nothing. A "$0.00" against a
+ * wrapped CLI would be the most confident number in the tree and the least true
+ * one — and the cheapest-looking agent is exactly the one people would then
+ * reach for.
+ */
+function describeUsage(usage: AgentUsage | undefined): string {
+  if (!usage || usage.turns === 0) return "";
+  const bits: string[] = [`${usage.turns} turn${usage.turns === 1 ? "" : "s"}`];
+  if (usage.costUsd !== undefined) {
+    bits.push(`$${usage.costUsd.toFixed(2)}`);
+  } else if (usage.outputTokens !== undefined) {
+    // Tokens without a price: an OpenAI-compatible endpoint leaves pricing to
+    // whoever is paying, and inventing a figure would mean shipping a price list.
+    const total = (usage.inputTokens ?? 0) + usage.outputTokens;
+    bits.push(`${Math.round(total / 1000)}k tokens`);
+  } else if (usage.unreported) {
+    bits.push("cost not reported");
+  }
+  return ` · ${bits.join(" · ")}`;
 }

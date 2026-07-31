@@ -222,6 +222,61 @@ export interface WorkspaceChangedMsg {
 }
 
 /** A member offering their workspace as the room's shared one. */
+/**
+ * What one turn cost.
+ *
+ * Every field is optional because providers differ in what they will tell you,
+ * and an absent number must stay absent rather than becoming a zero — "this
+ * agent cost nothing" and "this provider does not say" are very different
+ * claims to put in front of someone.
+ */
+export interface TurnUsage {
+  /** US dollars, when the provider reports a figure. */
+  costUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Cached reads, which is where the shared-context saving actually shows up. */
+  cacheReadTokens?: number;
+  /** Model turns inside this one room turn — an agent may loop several times. */
+  modelTurns?: number;
+  durationMs?: number;
+}
+
+/** Everything one agent has spent in this room. */
+export interface AgentUsage {
+  agentId: string;
+  agentLabel: string;
+  owner: string;
+  /**
+   * Which provider produced these numbers.
+   *
+   * Kept so nothing ever sums dollars from one provider against tokens from
+   * another and presents the result as a total.
+   */
+  provider: string;
+  /** Room turns counted, whether or not the provider reported anything. */
+  turns: number;
+  costUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  /** This provider reports no usage at all. Say so rather than showing zero. */
+  unreported?: boolean;
+}
+
+/** An agent reporting what its last turn cost. */
+export interface AgentUsageMsg {
+  t: "agentUsage";
+  provider: string;
+  usage: TurnUsage;
+}
+
+/** The room's running totals, per agent. */
+export interface UsageMsg {
+  t: "usage";
+  agents: AgentUsage[];
+}
+
 /** The owner changing what somebody may do. */
 export interface SetRoleMsg {
   t: "setRole";
@@ -244,6 +299,7 @@ export type ClientMsg =
   | RemoteToolResultMsg
   | ClaimWorkspaceMsg
   | SetRoleMsg
+  | AgentUsageMsg
   | WorkspaceChangedMsg
   | PingMsg;
 
@@ -268,6 +324,8 @@ export interface JoinedMsg {
   workspaceHost?: string;
   /** Work already done in this room, so a joiner is not starting blind. */
   actions?: ActionEntry[];
+  /** Per-agent spend so far, so a joiner sees the room's cost immediately. */
+  usage?: AgentUsage[];
   you: RosterEntry;
   roster: RosterEntry[];
   /** Replayed so a joiner sees the conversation so far. */
@@ -398,6 +456,7 @@ export type ServerMsg =
   | RemoteToolReplyMsg
   | ActionMsg
   | WorkspaceInvalidatedMsg
+  | UsageMsg
   | StatusMsg
   | ErrorMsg;
 

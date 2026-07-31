@@ -372,6 +372,11 @@ export function startServer(config: ServerConfig): Relay {
               msg.isError === true
             );
             break;
+          case "agentUsage":
+            if (!joined?.agentId) return;
+            joined.room.recordUsage(joined.agentId, msg.provider, msg.usage);
+            break;
+
           case "setRole":
             if (!joined) return send(socket, "join a room before changing roles");
             joined.room.setRole(joined.handle, msg.handle, msg.role);

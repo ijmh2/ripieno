@@ -15,7 +15,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import type { ActionEntry, Member, RoomRole, TranscriptEntry } from "@mpa/protocol";
+import type { ActionEntry, AgentUsage, Member, RoomRole, TranscriptEntry } from "@mpa/protocol";
 
 export interface RoomSnapshot {
   transcript: TranscriptEntry[];
@@ -27,6 +27,8 @@ export interface RoomSnapshot {
    * existed still loads — everyone in it is simply a member again.
    */
   roles?: Record<string, RoomRole>;
+  /** Per-agent totals, so a restart does not reset everyone's spend to zero. */
+  usage?: AgentUsage[];
 }
 
 export interface RoomStore {
@@ -113,6 +115,7 @@ export class FileRoomStore implements RoomStore {
         actions: parsed.actions ?? [],
         members: parsed.members ?? [],
         roles: parsed.roles ?? {},
+        usage: parsed.usage ?? [],
       };
     } catch {
       // A missing file is the normal case for a new room; a corrupt one should
@@ -138,6 +141,7 @@ export class FileRoomStore implements RoomStore {
       actions: snapshot.actions.slice(-MAX_PERSISTED_ACTIONS),
       members: snapshot.members,
       roles: snapshot.roles,
+      usage: snapshot.usage,
     };
 
     // Write then rename: a relay killed mid-write would otherwise leave a

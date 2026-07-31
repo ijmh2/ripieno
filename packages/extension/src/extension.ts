@@ -803,6 +803,8 @@ export function activate(context: vscode.ExtensionContext): void {
         hostingWorkspace = msg.workspaceHost === msg.you.handle;
         applyWorkspaceHost(msg.workspaceHost);
         roomsTree.setRoster(msg.roster);
+        // A joiner should see what the room has already cost, not start at zero.
+        roomsTree.setUsage(msg.usage ?? []);
         break;
       case "roster":
         roomView.setRoster(msg.roster);
@@ -832,6 +834,9 @@ export function activate(context: vscode.ExtensionContext): void {
         // own local write, or a human saving a file. Drop those paths.
         for (const changed of msg.paths) workspaceFs.invalidatePath(changed);
         workspaceTree.refresh();
+        break;
+      case "usage":
+        roomsTree.setUsage(msg.agents);
         break;
       case "action":
         roomView.addAction(msg.entry);

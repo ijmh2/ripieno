@@ -13,6 +13,7 @@
 // interface and gets surfaced in the UI.
 
 import { spawn, type ChildProcess } from "child_process";
+import type { TurnUsage } from "@mpa/protocol";
 
 /** What an agent can actually do, which the room shows rather than implies. */
 export type RunnerCapability = "workspace" | "conversation";
@@ -34,6 +35,14 @@ export interface ModelRunner {
   readonly description: string;
   run(ctx: RunContext, log: (line: string) => void): Promise<string>;
   cancel(): void;
+  /**
+   * What the last turn cost, if this provider says.
+   *
+   * Undefined means "it does not report", which is deliberately different from
+   * a zero — showing £0.00 for a CLI that simply never told us would be a
+   * confident lie about the cheapest agent in the room.
+   */
+  lastUsage?(): TurnUsage | undefined;
 }
 
 /* ------------------------------------------------------------------ */
@@ -50,6 +59,7 @@ export interface ClaudeRunnerOptions {
 export class ClaudeCodeRunner implements ModelRunner {
   readonly capability = "workspace" as const;
   private child: ChildProcess | undefined;
+  private usage: TurnUsage | undefined;
   /** Session id, so successive turns share context rather than starting cold. */
   private sessionId: string | undefined;
 
@@ -63,6 +73,10 @@ export class ClaudeCodeRunner implements ModelRunner {
     this.child?.kill();
     this.child = undefined;
     // A cancelled turn leaves the session usable; only a fresh attach resets it.
+  }
+
+  lastUsage(): TurnUsage | undefined {
+    return this.usage;
   }
 
   run(ctx: RunContext, log: (line: string) => void): Promise<string> {
@@ -104,11 +118,32 @@ export class ClaudeCodeRunner implements ModelRunner {
         this.child = undefined;
         let text = out.trim();
         try {
-          const parsed = JSON.parse(text) as { session_id?: string; result?: string };
+          const parsed = JSON.parse(text) as {
+            session_id?: string;
+            result?: string;
+            total_cost_usd?: number;
+            num_turns?: number;
+            duration_ms?: number;
+            usage?: {
+              input_tokens?: number;
+              output_tokens?: number;
+              cache_read_input_tokens?: number;
+            };
+          };
           if (parsed.session_id) this.sessionId = parsed.session_id;
+          // Already in the payload we were parsing, and previously discarded.
+          this.usage = {
+            costUsd: parsed.total_cost_usd,
+            modelTurns: parsed.num_turns,
+            durationMs: parsed.duration_ms,
+            inputTokens: parsed.usage?.input_tokens,
+            outputTokens: parsed.usage?.output_tokens,
+            cacheReadTokens: parsed.usage?.cache_read_input_tokens,
+          };
           text = String(parsed.result ?? "").trim();
         } catch {
           // Not JSON — fall back to raw output rather than losing the reply.
+          this.usage = undefined;
         }
         if (code !== 0 && !text) {
           reject(new Error(`claude exited ${code}`));
@@ -147,6 +182,7 @@ interface ChatMessage {
  */
 export class OpenAiCompatRunner implements ModelRunner {
   readonly capability = "conversation" as const;
+  private usage: TurnUsage | undefined;
   /** The conversation so far. A stateless HTTP API has no session to resume. */
   private readonly history: ChatMessage[] = [];
   private controller: AbortController | undefined;
@@ -160,6 +196,10 @@ export class OpenAiCompatRunner implements ModelRunner {
   cancel(): void {
     this.controller?.abort();
     this.controller = undefined;
+  }
+
+  lastUsage(): TurnUsage | undefined {
+    return this.usage;
   }
 
   async run(ctx: RunContext, log: (line: string) => void): Promise<string> {
@@ -206,7 +246,14 @@ export class OpenAiCompatRunner implements ModelRunner {
 
     const payload = (await response.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
+    // No cost: an OpenAI-compatible endpoint reports tokens and leaves pricing
+    // to whoever is paying. Reporting tokens with no dollars is honest; making
+    // a figure up from a price list we would have to keep current is not.
+    this.usage = payload.usage
+      ? { inputTokens: payload.usage.prompt_tokens, outputTokens: payload.usage.completion_tokens }
+      : undefined;
     const text = payload.choices?.[0]?.message?.content?.trim() ?? "";
     if (text) this.history.push({ role: "assistant", content: text });
     return text;
