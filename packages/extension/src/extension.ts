@@ -858,7 +858,17 @@ export function activate(context: vscode.ExtensionContext): void {
   async function connect(room: string): Promise<void> {
     const url = await ensureRelayUrl();
     await loadRoomToken();
-    const identity = (await resolveIdentityWithToken(false)) ?? localIdentity(url);
+
+    // Only ask to sign in when the answer matters to somebody else.
+    //
+    // Sharing a room needs a real identity — other people have to know who is
+    // speaking. A room of one has nobody to convince, so a sign-in prompt there
+    // is a barrier for no benefit, and it lands before anything has happened,
+    // which reads as the extension demanding an account to start. Resolving
+    // silently still picks up an existing session, so someone already signed in
+    // keeps their real name without being asked.
+    const alone = url === solo.address;
+    const identity = (await resolveIdentityWithToken(alone)) ?? localIdentity(url);
     if (!identity) {
       vscode.window.showErrorMessage(
         "Multiplayer Agent: signing in to GitHub is required to join a shared room, " +
