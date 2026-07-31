@@ -64,6 +64,7 @@ export class WorkspaceHost {
 
     this.core = new WorkspaceCore({
       resolveRoot: () => ({ ok: true, abs: this.rootPath }),
+      unattended: true,
       gate: new ContainerGate({
         policy: opts.policy,
         commit: (p) => {

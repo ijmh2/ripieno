@@ -144,14 +144,50 @@ check by hand.
 ## Security boundaries
 
 - The API key lives only in the relay. No editor client ever sees it.
-- Workspace tools execute in the member's own VS Code, under their permissions.
-  `read_file` confines its path syntactically and then re-checks it with
-  `realpath`, so a symlink cannot escape the workspace. `search` and
-  `list_files` go through `findFiles`, which follows symlinks, so their results
-  are filtered through the same `realpath` check before anything is read.
-  Shell commands are gated behind a modal confirmation showing the exact command.
+- Workspace tools execute either in the member's own VS Code, under their
+  permissions, or in the shared-workspace container. Both go through
+  `@mpa/workspace-core`, so there is exactly one implementation of the path
+  checks — `resolveSafePath` resolves the deepest existing ancestor before
+  deciding, so a symlinked parent cannot be used to create a file outside the
+  workspace, and `confineToWorkspace` resolves each result individually rather
+  than trusting its parent directory. Both of those started out subtly wrong and
+  are now covered by tests written from the exploit.
+- In the editor, shell commands are gated behind a modal showing the exact
+  command. In the container there is nobody to ask, so an allowlist decides.
 - Only the member a tool call was addressed to may answer it. Without that, an
   authenticated member could still forge the contents of someone else's private
   workspace into the shared context — which is exactly the provenance this sells.
 - The webview runs under `default-src 'none'` with a nonced script and renders
   all agent text escape-first.
+
+### The container's command allowlist is a trust decision, not a sandbox
+
+`MPA_ALLOWED_COMMANDS` is empty by default and a container with no allowlist
+runs nothing. If you set one, understand what you are choosing.
+
+An agent can write files, including project files. So allowlisting `npm test`
+means an agent can write a `package.json` whose test script is anything at all,
+and then legitimately ask for `npm test`. The same is true of every build tool
+worth allowlisting. No amount of blocking shell metacharacters changes this —
+the escape is through the allowed program's own configuration, not through the
+command string.
+
+**Allowlisting a build tool means trusting everyone in the room with code
+execution in that container.** That is often a perfectly reasonable thing to
+choose. It should not be chosen by accident.
+
+What the container does instead is make the prize small:
+
+- `MPA_*` variables are stripped from every command's environment, in both
+  hosts. Holding `MPA_WORKSPACE_TOKEN` would let someone impersonate the shared
+  workspace and feed every agent in the room a different codebase.
+- In the container specifically, provider API keys and anything ending in
+  `TOKEN`, `SECRET` or `PASSWORD` are stripped too, because nobody is watching
+  and the room could simply ask an agent to run `env`. On a member's own machine
+  they are kept: a human approved that command, and stripping their environment
+  would break ordinary work to prevent something they were present for.
+- The container is disposable and everything in it is either committed and
+  pushed or reproducible from the repository.
+
+`MPA_ALLOW_ALL_COMMANDS=1` additionally requires `MPA_I_UNDERSTAND_THE_RISK=1`,
+because "the room can run anything here" should take two deliberate actions.

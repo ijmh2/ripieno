@@ -14,6 +14,7 @@
 
 import { writeFile, mkdir } from "node:fs/promises";
 import * as path from "node:path";
+import { matchesAllowlist } from "@mpa/workspace-core";
 import type { ApprovalGate, Requester, ToolResult, WriteProposal } from "@mpa/workspace-core";
 
 export interface CommandPolicy {
@@ -96,18 +97,21 @@ export class ContainerGate implements ApprovalGate {
 }
 
 /**
- * Prefix matching, deliberately identical in spirit to the editor's allowlist:
- * "npm test" allows "npm test -- --watch" but never "npm test; rm -rf /",
- * because anything that chains commands is judged as a whole.
+ * Does the policy permit this command?
+ *
+ * The matching itself lives in @mpa/workspace-core so the editor and the
+ * container cannot drift apart; only allowAll is specific to a container, where
+ * there is no human to ask.
+ *
+ * An allowlist here is a *trust decision*, not a sandbox. `npm test` runs
+ * whatever the package.json says, and an agent can write package.json — so
+ * allowlisting a build tool means trusting everyone in the room with code
+ * execution in this container. That is a reasonable thing to choose; it is not
+ * a reasonable thing to choose by accident. What the container does about it is
+ * keep its own credentials out of reach: see withoutSecrets.
  */
 export function isAllowed(command: string, policy: CommandPolicy): boolean {
-  const trimmed = command.trim();
-  if (trimmed === "") return false;
+  if (command.trim() === "") return false;
   if (policy.allowAll) return true;
-  if (/[;&|`$(){}<>\n]/.test(trimmed)) return false;
-
-  return policy.allow.some((prefix) => {
-    const p = prefix.trim();
-    return p.length > 0 && (trimmed === p || trimmed.startsWith(`${p} `));
-  });
+  return matchesAllowlist(command, policy.allow);
 }

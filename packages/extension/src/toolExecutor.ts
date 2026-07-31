@@ -19,6 +19,7 @@ import type { ToolCallMsg } from "@mpa/protocol";
 import {
   WorkspaceCore,
   capResult,
+  matchesAllowlist,
   errText,
   isInside,
   type ApprovalGate,
@@ -259,24 +260,18 @@ export function registerProposedDocuments(): vscode.Disposable {
  *
  * The old all-or-nothing `confirmCommands` is why the tool description had to
  * tell the agent to prefer one big command over several small ones — a prompt
- * working around a missing feature. Prefix matching keeps it predictable:
- * "npm test" allows "npm test -- --watch" but never "npm test; rm -rf /",
- * because a shell separator ends the comparable prefix.
+ * working around a missing feature.
+ *
+ * The matching itself is `matchesAllowlist` in @mpa/workspace-core. This file
+ * used to carry its own copy, identical down to the regex, which is precisely
+ * the duplication the path checks are kept in one place to avoid.
  */
 function isAllowedCommand(command: string): boolean {
   const config = vscode.workspace.getConfiguration("mpa");
   const mode = config.get<string>("commandApproval", "always");
   if (mode === "never") return true;
   if (mode !== "allowlist") return false;
-
-  const trimmed = command.trim();
-  // Anything chaining commands is judged as a whole, never by its first clause.
-  if (/[;&|`$(){}<>\n]/.test(trimmed)) return false;
-
-  return config.get<string[]>("allowedCommands", []).some((prefix) => {
-    const p = prefix.trim();
-    return p.length > 0 && (trimmed === p || trimmed.startsWith(`${p} `));
-  });
+  return matchesAllowlist(command, config.get<string[]>("allowedCommands", []));
 }
 
 /** Persist an "always allow" choice to workspace settings, not globally. */

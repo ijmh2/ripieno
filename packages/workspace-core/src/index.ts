@@ -118,6 +118,13 @@ export interface WorkspaceCoreOptions {
   /** Where the workspace is. A function because an editor's root can change. */
   resolveRoot: () => SafePath;
   gate: ApprovalGate;
+  /**
+   * No human sees what runs here — a container rather than somebody's editor.
+   *
+   * Commands then get a stripped environment, because the room can have an agent
+   * run anything the allowlist permits and nobody is present to notice.
+   */
+  unattended?: boolean;
 }
 
 /** Tool names this core answers. Anything else belongs to the host. */
@@ -442,7 +449,7 @@ export class WorkspaceCore {
         cwd: root.abs,
         timeout: COMMAND_TIMEOUT_MS,
         maxBuffer: MAX_RESULT_BYTES * 4,
-        env: commandEnv(requester),
+        env: commandEnv(requester, this.options.unattended === true),
       });
       const combined = [stdout, stderr].filter(Boolean).join("\n");
       return capResult(combined.length > 0 ? combined : "(command produced no output)");
@@ -541,13 +548,48 @@ export class WorkspaceCore {
  * this, provenance quietly collapses into the host's identity the moment work is
  * shared — the exact failure the shared workspace exists to avoid.
  */
-export function commandEnv(requester?: Requester): NodeJS.ProcessEnv {
-  if (!requester) return process.env;
+export function commandEnv(requester?: Requester, unattended = false): NodeJS.ProcessEnv {
+  const env = withoutSecrets(process.env, unattended);
+  if (!requester) return env;
   return {
-    ...process.env,
+    ...env,
     GIT_AUTHOR_NAME: requester.label,
     GIT_AUTHOR_EMAIL: `${requester.handle}+agent@users.noreply.github.com`,
   };
+}
+
+/**
+ * The environment a tool-invoked command should see.
+ *
+ * A command runs because an allowlist permitted it, and an allowlist is a trust
+ * decision rather than a sandbox: `npm test` runs whatever the package.json the
+ * agent just wrote tells it to, and no blocklist of shell metacharacters changes
+ * that. What *can* be changed is what is lying around when it happens.
+ *
+ * `MPA_*` always goes. Those are the relay and workspace credentials, no command
+ * has any use for them, and they were sitting in the environment of every one —
+ * which is what made the gate worth defeating in the first place. Holding the
+ * workspace token lets a member impersonate the shared workspace and feed the
+ * whole room a different codebase.
+ *
+ * Broader secrets — provider keys, anything ending in TOKEN or SECRET — go only
+ * when `unattended`. In a container nobody is watching, so the room could have
+ * an agent run `env` and post the output into the transcript. On a member's own
+ * machine a human approved this specific command and their environment is
+ * theirs; stripping it there would break ordinary work (a test suite that needs
+ * a key) to prevent something they were present for.
+ */
+export function withoutSecrets(env: NodeJS.ProcessEnv, unattended: boolean): NodeJS.ProcessEnv {
+  const safe: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (/^MPA_/i.test(key)) continue;
+    if (unattended && /^(ANTHROPIC|OPENAI|XAI|GROQ|GOOGLE|GEMINI|AWS|GITHUB|GH)_/i.test(key)) continue;
+    if (unattended && /(TOKEN|SECRET|PASSWORD|API_KEY|APIKEY|CREDENTIAL|PRIVATE_KEY)$/i.test(key)) {
+      continue;
+    }
+    safe[key] = value;
+  }
+  return safe;
 }
 
 export function capResult(content: string): ToolResult {
@@ -559,6 +601,30 @@ export function capResult(content: string): ToolResult {
   return {
     content: `${truncated}\n\n[truncated — output exceeds ${MAX_RESULT_BYTES / 1024}KB]`,
   };
+}
+
+/**
+ * Is this command covered by an allowlist of prefixes?
+ *
+ * One implementation, deliberately. The editor and the container each had their
+ * own copy, identical down to the regex — the exact duplication `paths.ts` warns
+ * about, where a fix lands on one copy and the other keeps the bug.
+ *
+ * Prefix matching keeps it predictable: "npm test" allows "npm test -- --watch"
+ * but never "npm test; rm -rf /", because anything that chains commands is
+ * judged as a whole rather than by its first clause.
+ *
+ * Note what this is not. It is a trust decision, not a sandbox: an allowlisted
+ * build tool runs whatever the project files say, and the agent can write those.
+ */
+export function matchesAllowlist(command: string, allowed: readonly string[]): boolean {
+  const trimmed = command.trim();
+  if (trimmed === "") return false;
+  if (/[;&|`$(){}<>\n]/.test(trimmed)) return false;
+  return allowed.some((prefix) => {
+    const p = prefix.trim();
+    return p.length > 0 && (trimmed === p || trimmed.startsWith(`${p} `));
+  });
 }
 
 export function requireString(input: Record<string, unknown>, key: string): string {
