@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Member, RosterEntry } from "@mpa/protocol";
+import type { Member, RosterEntry, TranscriptEntry } from "@mpa/protocol";
 import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
 import { FileRoomStore } from "../src/roomStore.js";
@@ -162,6 +162,41 @@ describe("room history survives a restart", () => {
     const store = new FileRoomStore(dir);
     await writeFile(path.join(dir, "broken.json"), "{ not json", "utf8");
     assert.equal(await store.load("broken"), undefined);
+  });
+
+  test("codes that sanitise to the same name keep separate histories", async () => {
+    // "a/b", "a b" and "a_b" all flattened to a_b.json, so three distinct rooms
+    // shared one file — reading each other's transcript on restore and
+    // overwriting it on save.
+    const store = new FileRoomStore(dir);
+    const entry = (text: string): TranscriptEntry => ({
+      id: text,
+      kind: "human",
+      authorHandle: "ijmh2",
+      authorName: "Mira",
+      text,
+      ts: 0,
+    });
+
+    for (const code of ["a/b", "a b", "a_b"]) {
+      await store.save(code, { transcript: [entry(`from ${code}`)], actions: [], members: [] });
+    }
+    for (const code of ["a/b", "a b", "a_b"]) {
+      const loaded = await store.load(code);
+      assert.equal(
+        (loaded?.transcript[0] as { text: string } | undefined)?.text,
+        `from ${code}`,
+        `room "${code}" was reading another room's history`
+      );
+    }
+  });
+
+  test("an ordinary code keeps its plain filename", async () => {
+    // Existing history must not be orphaned by the collision fix.
+    const store = new FileRoomStore(dir);
+    await store.save("standup", { transcript: [], actions: [], members: [] });
+    const { access } = await import("node:fs/promises");
+    await access(path.join(dir, "standup.json"));
   });
 
   test("a room code cannot escape the data directory", async () => {

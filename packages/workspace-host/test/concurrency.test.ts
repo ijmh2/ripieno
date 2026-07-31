@@ -70,6 +70,8 @@ describe("concurrent agents do not lose work", () => {
       policy: { allow: [], allowAll: false },
       commit: (p) => git.commit(path.relative(root, p.abs), p.requester, `Add ${path.relative(root, p.abs)}`),
       onChanged: () => {},
+      rootFor: () => root,
+      commitCommandOutput: (requester) => git.commitAll(requester, "command output"),
       serialise: (fn) => git.exclusive(fn),
     });
   });
@@ -173,6 +175,8 @@ describe("concurrent agents do not lose work", () => {
         throw new Error("index.lock");
       },
       onChanged: () => {},
+      rootFor: () => root,
+      commitCommandOutput: (requester) => git.commitAll(requester, "command output"),
       serialise: (fn) => fn(),
     });
     const res = await broken.applyWrite(propose("doomed.txt", "x", "Agent"));

@@ -168,6 +168,52 @@ describe("the workspace as a repository", () => {
     await scratch.commit("anything.txt", MIRA, "nope");
   });
 
+  test("an interrupted clone is not mistaken for a healthy checkout", async () => {
+    // git clone creates the target and .git before the fetch finishes, and
+    // cannot tidy up after a SIGKILL. A container killed mid-clone restarted,
+    // saw .git, reported "already checked out" and served agents an empty tree —
+    // the guard protecting uncommitted work was also blocking recovery.
+    const halfDone = path.join(base, `half-${process.hrtime.bigint()}`);
+    await mkdir(path.join(halfDone, ".git"), { recursive: true });
+    const wounded = new GitWorkspace({
+      root: halfDone,
+      keyDir: path.join(base, "keys"),
+      repo: { owner: "test", name: "seed", branch: "main", url: origin },
+      announce: (m) => announced.push(m),
+    });
+
+    const result = await wounded.ensureClone();
+    assert.equal(result.ok, true, `should have recovered: ${result.message}`);
+    assert.ok(!/already checked out/.test(result.message), result.message);
+    assert.equal(await readFile(path.join(halfDone, "README.md"), "utf8"), "# seed\n");
+  });
+
+  test("a command that changes files is committed and reported", async () => {
+    // Writes go through applyWrite, which commits and announces. A command does
+    // not: `prettier --write` left the workspace dirty, uncommitted and
+    // invisible, so members' caches served stale bytes and the work vanished
+    // with the container.
+    await git.ensureClone();
+    await writeFile(path.join(root, "generated.ts"), "export const x = 1;\n", "utf8");
+
+    const changed = await git.commitAll(MIRA, "Mira's coder ran a command that changed files");
+    assert.deepEqual(changed, ["generated.ts"]);
+
+    const { stdout } = await execAsync(`git log -1 --format='%an|%s'`, { cwd: root });
+    const [author, subject] = stdout.trim().split("|");
+    assert.equal(author, "Mira's coder", "the agent that ran it owns the change");
+    assert.match(subject!, /ran a command/);
+    assert.equal((await execAsync("git status --porcelain", { cwd: root })).stdout.trim(), "");
+  });
+
+  test("a command that changes nothing produces no commit", async () => {
+    await git.ensureClone();
+    const before = (await execAsync("git rev-list --count HEAD", { cwd: root })).stdout.trim();
+    assert.deepEqual(await git.commitAll(MIRA, "nothing happened"), []);
+    const after = (await execAsync("git rev-list --count HEAD", { cwd: root })).stdout.trim();
+    assert.equal(after, before);
+  });
+
   test("the deploy key is generated once and reused", async () => {
     const first = await git.ensureDeployKey();
     assert.match(first, /^ssh-ed25519 /);

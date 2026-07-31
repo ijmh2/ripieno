@@ -72,8 +72,14 @@ export class WorkspaceHost {
           return this.git.commit(rel, p.requester, `${p.existed ? "Update" : "Add"} ${rel}`);
         },
         onChanged: (abs) => this.noteChanged(this.relative(abs)),
+        rootFor: () => this.rootPath,
         // The repository owns its own concurrency; the write belongs inside it.
         serialise: (fn) => this.git.exclusive(fn),
+        commitCommandOutput: (requester) =>
+          this.git.commitAll(
+            requester,
+            `${requester?.label ?? "The workspace"} ran a command that changed files`
+          ),
       }),
     });
 
@@ -114,7 +120,16 @@ export class WorkspaceHost {
   }
 
   async stop(): Promise<void> {
-    if (this.changeTimer) clearTimeout(this.changeTimer);
+    if (this.changeTimer) {
+      clearTimeout(this.changeTimer);
+      this.changeTimer = undefined;
+    }
+    // Send what the debounce is still holding. Dropping it left every member's
+    // cache serving content that had already changed, for the full TTL.
+    if (this.pendingChanges.size > 0) {
+      this.relay.send({ t: "workspaceChanged", paths: [...this.pendingChanges] });
+      this.pendingChanges.clear();
+    }
     await this.git.flush();
     this.relay.dispose();
   }

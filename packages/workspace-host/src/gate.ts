@@ -40,6 +40,8 @@ export interface ContainerGateOptions {
    * moment any ancestor was a link.
    */
   onChanged(absPath: string): void;
+  /** Where the checkout is, for turning git's relative paths back into absolutes. */
+  rootFor(): string;
   /**
    * Run write-then-commit with exclusive access to the working tree.
    *
@@ -53,6 +55,12 @@ export interface ContainerGateOptions {
    * A gate with no repository behind it passes an identity function, and says so.
    */
   serialise<T>(fn: () => Promise<T>): Promise<T>;
+  /**
+   * Commit and announce whatever a command changed.
+   *
+   * Returns the paths it touched, so the room hears about them.
+   */
+  commitCommandOutput(requester: Requester | undefined): Promise<string[]>;
 }
 
 export class ContainerGate implements ApprovalGate {
@@ -64,6 +72,17 @@ export class ContainerGate implements ApprovalGate {
    */
   async approveCommand(command: string, _requester: Requester | undefined): Promise<boolean> {
     return isAllowed(command, this.opts.policy);
+  }
+
+  /**
+   * A command may have written files, and nothing else would notice.
+   *
+   * Serialised with writes for the same reason they are serialised with each
+   * other: `git add -A` here must not run inside another agent's commit.
+   */
+  async afterCommand(requester: Requester | undefined): Promise<void> {
+    const changed = await this.opts.serialise(() => this.opts.commitCommandOutput(requester));
+    for (const rel of changed) this.opts.onChanged(path.resolve(this.opts.rootFor(), rel));
   }
 
   async applyWrite(p: WriteProposal): Promise<ToolResult> {

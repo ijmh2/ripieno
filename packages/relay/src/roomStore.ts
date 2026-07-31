@@ -13,6 +13,7 @@
  */
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import type { ActionEntry, Member, TranscriptEntry } from "@mpa/protocol";
 
@@ -141,10 +142,21 @@ export class FileRoomStore implements RoomStore {
     await rename(temp, target);
   }
 
+  /**
+   * Room codes come from clients and end up as filenames.
+   *
+   * Sanitising alone was not enough: "a/b", "a b" and "a_b" all flattened to the
+   * same name, so three distinct rooms shared one history file — reading each
+   * other's transcript on restore and overwriting it on save. A code that is
+   * already a safe filename is used as-is, so existing history keeps its name;
+   * anything that had to be changed carries a hash of the original, which cannot
+   * collide.
+   */
   private pathFor(code: string): string {
-    // Room codes come from clients and end up as filenames.
     const safe = code.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 100) || "room";
-    return path.join(this.dir, `${safe}.json`);
+    if (safe === code) return path.join(this.dir, `${safe}.json`);
+    const digest = createHash("sha256").update(code).digest("hex").slice(0, 12);
+    return path.join(this.dir, `${safe}-${digest}.json`);
   }
 }
 

@@ -15,9 +15,9 @@
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { access, chmod, mkdir, readFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import type { Requester } from "@mpa/workspace-core";
+import { commandEnv, type Requester } from "@mpa/workspace-core";
 
 const execAsync = promisify(exec);
 
@@ -76,7 +76,9 @@ export class GitWorkspace {
   private get sshEnv(): NodeJS.ProcessEnv {
     return {
       ...process.env,
-      GIT_SSH_COMMAND: `ssh -i ${this.keyPath} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`,
+      // Quoted: MPA_KEY_DIR is operator-supplied, and a directory with a space
+      // in it would otherwise silently authenticate as nobody.
+      GIT_SSH_COMMAND: `ssh -i ${shellQuote(this.keyPath)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`,
     };
   }
 
@@ -88,7 +90,7 @@ export class GitWorkspace {
       await access(pub);
     } catch {
       await execAsync(
-        `ssh-keygen -t ed25519 -N "" -C "multiplayer-agent room workspace" -f ${this.keyPath}`
+        `ssh-keygen -t ed25519 -N "" -C "multiplayer-agent room workspace" -f ${shellQuote(this.keyPath)}`
       );
     }
     // ssh refuses to use a key others can read, and a fresh volume does not
@@ -111,8 +113,16 @@ export class GitWorkspace {
       return { ok: true, message: "No repository bound; the workspace is a scratch directory." };
     }
 
-    if (await this.isRepo()) {
+    if (await this.isComplete()) {
       return { ok: true, message: `Workspace already checked out at ${repo.owner}/${repo.name}.` };
+    }
+
+    // Only ever removed when .git exists and the clone never finished — there is
+    // nothing committed in that state, so there is nothing to lose. A directory
+    // with files and no .git is left alone and the clone reports the conflict.
+    if (await this.isRepo()) {
+      this.opts.announce("The previous checkout was incomplete; starting it again.");
+      await rm(this.opts.root, { recursive: true, force: true });
     }
 
     await mkdir(path.dirname(this.opts.root), { recursive: true });
@@ -123,6 +133,7 @@ export class GitWorkspace {
         { env: this.sshEnv, timeout: 300_000, maxBuffer: 8 * 1024 * 1024 }
       );
       await this.configureIdentity();
+      await writeFile(this.marker, "", "utf8").catch(() => undefined);
       return { ok: true, message: `Cloned ${repo.owner}/${repo.name} (${repo.branch}).` };
     } catch (err) {
       const detail = detailOf(err);
@@ -140,9 +151,49 @@ export class GitWorkspace {
     }
   }
 
+  /** Written once a clone has finished, so an interrupted one is recognisable. */
+  private get marker(): string {
+    return path.join(this.opts.root, ".git", "mpa-clone-complete");
+  }
+
   private async isRepo(): Promise<boolean> {
     try {
       await access(path.join(this.opts.root, ".git"));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Is this checkout finished, or the wreckage of one that was killed?
+   *
+   * `git clone` creates the target and .git before the fetch completes and
+   * cannot tidy up after a SIGKILL, so a container killed mid-clone — a deploy
+   * timeout, an OOM on a large repository — restarted, saw .git, reported
+   * "already checked out" and served agents an empty tree. The guard that
+   * protects uncommitted work was also blocking recovery.
+   *
+   * Deciding on HEAD alone would be wrong: a room bound to a brand new empty
+   * repository has no HEAD either, and clearing *that* would destroy whatever an
+   * agent had written before the first commit. Hence a marker. A checkout with
+   * no marker but a resolvable HEAD predates this and is adopted rather than
+   * thrown away.
+   */
+  private async isComplete(): Promise<boolean> {
+    if (!(await this.isRepo())) return false;
+    try {
+      await access(this.marker);
+      return true;
+    } catch {
+      // No marker: adopt anything that already has commits.
+    }
+    try {
+      await execAsync("git rev-parse --verify HEAD", {
+        cwd: this.opts.root,
+        env: commandEnv(undefined, true),
+      });
+      await writeFile(this.marker, "", "utf8").catch(() => undefined);
       return true;
     } catch {
       return false;
@@ -195,11 +246,14 @@ export class GitWorkspace {
       : "Shared workspace <workspace@users.noreply.github.com>";
 
     await this.run(`git add -- ${shellQuote(relPath)}`);
-    // Nothing staged means the write was a no-op against HEAD — not an error.
-    const { stdout } = await execAsync("git diff --cached --name-only", {
-      cwd: this.opts.root,
-      env: process.env,
-    });
+    // Scoped to this path. Asking whether *anything* is staged meant that once
+    // something unrelated was left in the index — which an earlier concurrency
+    // bug did routinely — the check never fired again and genuine no-ops fell
+    // through to a `git commit` that errored.
+    const { stdout } = await execAsync(
+      `git diff --cached --name-only -- ${shellQuote(relPath)}`,
+      { cwd: this.opts.root, env: commandEnv() }
+    );
     if (stdout.trim() === "") return;
 
     await this.run(
@@ -298,7 +352,46 @@ export class GitWorkspace {
   }
 
   private async run(command: string): Promise<void> {
-    await execAsync(command, { cwd: this.opts.root, env: process.env, maxBuffer: 8 * 1024 * 1024 });
+    await execAsync(command, {
+      cwd: this.opts.root,
+      // Even git has no use for the relay's credentials, and a hook in a cloned
+      // repository is somebody else's code running in this container.
+      env: commandEnv(undefined, true),
+      maxBuffer: 8 * 1024 * 1024,
+    });
+  }
+
+  /** Everything the working tree has that HEAD does not. */
+  async dirtyPaths(): Promise<string[]> {
+    if (!(await this.isRepo())) return [];
+    try {
+      const { stdout } = await execAsync("git status --porcelain -z", {
+        cwd: this.opts.root,
+        env: commandEnv(undefined, true),
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      // -z so paths with spaces or non-ASCII come back raw rather than quoted.
+      return stdout
+        .split("\0")
+        .filter(Boolean)
+        .map((row) => row.slice(3))
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Stage and commit everything currently changed, as one agent's work. */
+  async commitAll(requester: Requester | undefined, summary: string): Promise<string[]> {
+    const paths = await this.dirtyPaths();
+    if (paths.length === 0) return [];
+    const author = requester
+      ? `${requester.label} <${requester.handle}+agent@users.noreply.github.com>`
+      : "Shared workspace <workspace@users.noreply.github.com>";
+    await this.run("git add -A");
+    await this.run(`git commit --author=${shellQuote(author)} -m ${shellQuote(summary)}`);
+    this.schedulePush();
+    return paths;
   }
 }
 

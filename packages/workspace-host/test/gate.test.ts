@@ -83,6 +83,8 @@ describe("the gate applies writes and tells the room", () => {
       // the host's job, because only it knows the real root.
       onChanged: (abs) => changed.push(path.relative(root, abs)),
       // No repository behind this gate, so nothing to serialise against.
+      rootFor: () => root,
+      commitCommandOutput: async () => [],
       serialise: (fn) => fn(),
     });
   });

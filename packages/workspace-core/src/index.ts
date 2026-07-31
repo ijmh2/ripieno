@@ -112,6 +112,18 @@ export interface ApprovalGate {
 
   /** Land the change, however this host lands changes. */
   applyWrite(proposal: WriteProposal): Promise<ToolResult>;
+
+  /**
+   * A command has finished and may have changed files.
+   *
+   * Writes go through applyWrite, which commits and announces them — but a
+   * command does not. `prettier --write` or a codegen step left the workspace
+   * dirty, uncommitted and invisible: nothing told the room, so every member's
+   * cache kept serving the old bytes, and the changes vanished with the
+   * container. An editor host needs none of this; its own filesystem watcher
+   * already sees it.
+   */
+  afterCommand?(requester: Requester | undefined): Promise<void>;
 }
 
 export interface WorkspaceCoreOptions {
@@ -452,9 +464,12 @@ export class WorkspaceCore {
         env: commandEnv(requester, this.options.unattended === true),
       });
       const combined = [stdout, stderr].filter(Boolean).join("\n");
+      await this.options.gate.afterCommand?.(requester);
       return capResult(combined.length > 0 ? combined : "(command produced no output)");
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string; message?: string };
+      // A failing command can still have written files before it failed.
+      await this.options.gate.afterCommand?.(requester).catch(() => undefined);
       const combined = [e.stdout, e.stderr, e.message].filter(Boolean).join("\n");
       return { ...capResult(combined || "Command failed."), isError: true };
     }
