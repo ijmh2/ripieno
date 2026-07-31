@@ -2,6 +2,12 @@ import * as vscode from "vscode";
 import { spawn } from "child_process";
 import type { Member, ServerMsg } from "@mpa/protocol";
 import { resolveIdentity, resolveIdentityWithToken } from "./identity";
+import { SoloRelay } from "./soloRelay";
+import { buildInvite, describeInvite, parseInvite } from "./invite";
+
+/** Where the room token lives, when it did not come from settings. */
+const ROOM_TOKEN_SECRET = "mpa.roomToken";
+import * as os from "node:os";
 import { RelayClient, type ConnectionState } from "@mpa/relay-client";
 import { ToolExecutor, registerProposedDocuments } from "./toolExecutor";
 import { RoomViewProvider } from "./roomView";
@@ -16,6 +22,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const toolExecutor = new ToolExecutor();
   // Backs the right-hand side of the diff shown before any write is applied.
   context.subscriptions.push(registerProposedDocuments());
+  context.subscriptions.push(
+    vscode.window.registerUriHandler({
+      handleUri: (uri) => void handleInvite(uri),
+    })
+  );
+  // Flush the solo room's history before the window goes, and free the port.
+  context.subscriptions.push({ dispose: () => void solo.stop() });
   let relay: RelayClient | undefined;
   let currentRoom: string | undefined;
   let hostingWorkspace = false;
@@ -32,6 +45,10 @@ export function activate(context: vscode.ExtensionContext): void {
    * every client in the room.
    */
   let githubToken: string | undefined;
+  /** Resolved on join: either the configured relay, or the one we run ourselves. */
+  let activeRelayUrl: string | undefined;
+  let cachedRoomToken: string | undefined;
+  const solo = new SoloRelay();
 
   // A member may run several agents at once — a coder and a reviewer, say —
   // each with its own process, session and label in the transcript.
@@ -101,6 +118,7 @@ export function activate(context: vscode.ExtensionContext): void {
       dragAndDropController: roomsTree,
     }),
     vscode.commands.registerCommand("mpa.joinRoom", () => joinRoom()),
+    vscode.commands.registerCommand("mpa.copyInvite", () => copyInvite()),
     vscode.commands.registerCommand("mpa.leaveRoom", () => leaveRoom()),
     vscode.commands.registerCommand("mpa.signIn", () => signIn()),
     vscode.commands.registerCommand("mpa.addAgent", () => addAgent()),
@@ -699,15 +717,96 @@ export function activate(context: vscode.ExtensionContext): void {
     roomsTree.setMyAgents(myAgentsForTree());
   }
 
-  function roomToken(): string | undefined {
-    const token = vscode.workspace.getConfiguration("mpa").get<string>("roomToken", "").trim();
-    return token || undefined;
+  /**
+   * The room's shared secret.
+   *
+   * SecretStorage first, settings second. An invite link puts it in the former —
+   * a token in settings.json is one `git add .` from being published, which is
+   * how shared secrets usually escape — but the setting stays supported so
+   * anyone already using it is not broken by this.
+   */
+  async function loadRoomToken(): Promise<void> {
+    const stored = await context.secrets.get(ROOM_TOKEN_SECRET);
+    const configured = vscode.workspace.getConfiguration("mpa").get<string>("roomToken", "").trim();
+    cachedRoomToken = stored ?? configured ?? undefined;
+    if (cachedRoomToken === "") cachedRoomToken = undefined;
   }
 
-  function relayUrl(): string {
-    return vscode.workspace
+  function roomToken(): string | undefined {
+    return cachedRoomToken;
+  }
+
+  /**
+   * Where the room lives.
+   *
+   * Empty configuration means solo: the extension runs a relay on loopback and
+   * uses that. It is the same relay a team shares, so nothing about how the room
+   * behaves changes when a second person arrives — only the URL does.
+   */
+  async function ensureRelayUrl(): Promise<string> {
+    const configured = vscode.workspace
       .getConfiguration("mpa")
-      .get<string>("relayUrl", "ws://localhost:8787");
+      .get<string>("relayUrl", "")
+      .trim();
+    if (configured) {
+      activeRelayUrl = configured;
+      return configured;
+    }
+    activeRelayUrl = await solo.start(context.globalStorageUri.fsPath);
+    return activeRelayUrl;
+  }
+
+  /**
+   * Somebody clicked a link to join a room.
+   *
+   * Confirmed first, always. The link carries a server address and usually a
+   * shared secret, and clicking it should not be the first time you learn where
+   * you are connecting — links get forwarded, and this one is arriving from a
+   * browser rather than from anyone we trust.
+   */
+  async function handleInvite(uri: vscode.Uri): Promise<void> {
+    if (uri.path !== "/join") return;
+    const parsed = parseInvite(uri.query);
+    if (!parsed.ok) {
+      void vscode.window.showErrorMessage(`Multiplayer Agent: ${parsed.reason}.`);
+      return;
+    }
+
+    const choice = await vscode.window.showInformationMessage(
+      describeInvite(parsed.invite),
+      { modal: true },
+      "Join"
+    );
+    if (choice !== "Join") return;
+
+    const config = vscode.workspace.getConfiguration("mpa");
+    await config.update("relayUrl", parsed.invite.relayUrl, vscode.ConfigurationTarget.Global);
+    // Into SecretStorage rather than settings: a token in settings.json is one
+    // `git add .` away from being published, which is how shared secrets usually
+    // escape.
+    if (parsed.invite.token) {
+      await context.secrets.store(ROOM_TOKEN_SECRET, parsed.invite.token);
+    }
+    await connect(parsed.invite.room);
+  }
+
+  /**
+   * Who you are when working alone and not signed in.
+   *
+   * Only ever used against a relay we started ourselves. Sharing a room needs a
+   * real identity — other people have to know who is speaking, and the whole
+   * provenance argument rests on it — but a room of one has nobody to convince,
+   * and demanding a sign-in there is a barrier for no benefit.
+   */
+  function localIdentity(url: string): { member: Member; githubToken?: string } | undefined {
+    if (url !== solo.address) return undefined;
+    const name = os.userInfo().username || "you";
+    return { member: { handle: name, displayName: name } };
+  }
+
+  /** The URL actually in use, once a room has been joined. */
+  function relayUrl(): string {
+    return activeRelayUrl ?? "ws://127.0.0.1:8787";
   }
 
   async function joinRoom(): Promise<void> {
@@ -720,11 +819,50 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!room) {
       return;
     }
+    await connect(room);
+  }
 
-    const identity = await resolveIdentityWithToken(false);
+  /**
+   * A link that puts somebody else in this room.
+   *
+   * Refused for a solo room: the URL is loopback, so the link would work only on
+   * this machine and would look broken to whoever received it. Saying that is
+   * more useful than handing over something that cannot work.
+   */
+  async function copyInvite(): Promise<void> {
+    if (!currentRoom || !activeRelayUrl) {
+      void vscode.window.showWarningMessage("Multiplayer Agent: join a room first.");
+      return;
+    }
+    if (activeRelayUrl === solo.address) {
+      void vscode.window.showWarningMessage(
+        "This room is running on your machine, so a link to it would not reach anyone else. " +
+          "Set mpa.relayUrl to a relay you both can reach, then share the link."
+      );
+      return;
+    }
+
+    const link = buildInvite(
+      { relayUrl: activeRelayUrl, room: currentRoom, token: roomToken() },
+      context.extension.id
+    );
+    await vscode.env.clipboard.writeText(link);
+    void vscode.window.showInformationMessage(
+      roomToken()
+        ? "Invite link copied. It contains this room's access token — share it the way you would a password."
+        : "Invite link copied."
+    );
+  }
+
+  /** Everything joining a room does, however the room code arrived. */
+  async function connect(room: string): Promise<void> {
+    const url = await ensureRelayUrl();
+    await loadRoomToken();
+    const identity = (await resolveIdentityWithToken(false)) ?? localIdentity(url);
     if (!identity) {
       vscode.window.showErrorMessage(
-        "Multiplayer Agent: sign in to GitHub is required to join a room."
+        "Multiplayer Agent: signing in to GitHub is required to join a shared room, " +
+          "so other people can see who is speaking."
       );
       return;
     }
@@ -742,7 +880,7 @@ export function activate(context: vscode.ExtensionContext): void {
     roomsTree.setMyAgents(myAgentsForTree());
 
     relay = new RelayClient({
-      url: relayUrl(),
+      url: await ensureRelayUrl(),
       room,
       member,
       token: roomToken(),

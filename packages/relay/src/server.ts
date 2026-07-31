@@ -5,7 +5,7 @@
  * maps to one shared agent session.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientMsg, ConnectionRole, Member } from "@mpa/protocol";
@@ -68,13 +68,41 @@ export interface ServerConfig {
  * turn as the close listeners, so a flush started there never gets to await a
  * single write.
  */
-export type Relay = WebSocketServer & { flush(): Promise<void> };
+export type Relay = WebSocketServer & {
+  flush(): Promise<void>;
+  /**
+   * The port actually bound, once listening.
+   *
+   * Needed because a relay can be started on port 0 — "anything free" — which is
+   * what the extension does when it runs one in-process for solo use, so that
+   * two windows on one machine do not collide.
+   */
+  whenListening(): Promise<number>;
+};
 
 export function startServer(config: ServerConfig): Relay {
-  // Only constructed in hosted mode, so BYO never needs a credential. Where it
-  // is used, credentials resolve from the environment (ANTHROPIC_API_KEY, or an
-  // `ant auth login` profile) — never hardcoded, never accepted from a client.
-  const client = config.mode === "hosted" ? new Anthropic() : undefined;
+  /**
+   * Built on first use, and only in hosted mode.
+   *
+   * A static import would pull the whole SDK into anything that bundles this —
+   * and the extension now does, to run a relay in-process for solo use. BYO mode
+   * never touches it, so loading it eagerly was several megabytes spent on a
+   * code path most deployments never reach.
+   *
+   * Credentials resolve from the environment (ANTHROPIC_API_KEY, or an
+   * `ant auth login` profile) — never hardcoded, never accepted from a client.
+   */
+  let client: Anthropic | undefined;
+  async function anthropic(): Promise<Anthropic> {
+    if (client) return client;
+    const { default: Ctor } = await import("@anthropic-ai/sdk");
+    // The cast bridges dual-package type identities: the static import resolves
+    // the CommonJS declaration and the dynamic one the ESM declaration, which
+    // differ only by a private field. Same class either way.
+    const made = new Ctor() as unknown as Anthropic;
+    client = made;
+    return made;
+  }
   const rooms = new Map<string, Room>();
   const store = createRoomStore(config.dataDir);
   const verifier = config.verifier ?? new GithubVerifier();
@@ -168,7 +196,7 @@ export function startServer(config: ServerConfig): Relay {
     // it is about to be handed to.
     let room: Room;
     const driver = new HostedDriver(
-      client!,
+      await anthropic(),
       { agentId: config.agentId!, environmentId: config.environmentId!, roomCode: code },
       {
         onAgentMessage: (id, text) => room.onAgentMessage(id, text),
@@ -450,6 +478,19 @@ export function startServer(config: ServerConfig): Relay {
   }
   const relay = wss as Relay;
   relay.flush = flushSaves;
+  relay.whenListening = () =>
+    new Promise<number>((resolve, reject) => {
+      const settle = (): void => {
+        const address = http.address();
+        if (address && typeof address === "object") resolve(address.port);
+        else reject(new Error("the relay is listening without a port"));
+      };
+      if (http.listening) settle();
+      else {
+        http.once("listening", settle);
+        http.once("error", reject);
+      }
+    });
   return relay;
 }
 

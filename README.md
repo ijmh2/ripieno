@@ -38,6 +38,33 @@ org API key. The core never assumes it owns the agent loop, so a later BYO drive
 between them is a driver swap ([driver.ts](packages/relay/src/driver.ts)); the
 room core, protocol and UI are identical.
 
+## Try it in one minute (solo)
+
+Install the extension and run **Multiplayer Agent: Join Room**. Leave
+`mpa.relayUrl` empty and the extension runs a relay on this machine — no server,
+no token, no second person, no sign-in. Attach an agent and use it.
+
+It is the same relay a team shares, not a cut-down version: same rooms, same
+attributed transcript, same tool routing, same action log, and history that
+survives a reload. Adding somebody else later is a change of one setting.
+
+Build an installable package with:
+
+    npm run package -w multiplayer-agent    # → dist/multiplayer-agent-0.0.1.vsix
+
+Then **Extensions → … → Install from VSIX**.
+
+## Inviting somebody
+
+Once you are on a relay you both can reach, **Multiplayer Agent: Copy Invite
+Link** produces a `vscode://` link carrying the relay address, the room and the
+token. Clicking it confirms what is being joined, stores the token in
+SecretStorage rather than settings — a token in `settings.json` is one
+`git add .` from being published — and joins.
+
+The command refuses on a solo room, because a loopback link would work only on
+the machine that made it.
+
 ## Running in BYO mode (no credentials)
 
 ```sh

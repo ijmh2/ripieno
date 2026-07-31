@@ -1,7 +1,7 @@
 {
   "name": "multiplayer-agent",
   "displayName": "Multiplayer Agent",
-  "description": "A shared AI agent room in your editor — one conversation, multiple people, one agent that knows who said what.",
+  "description": "A shared AI agent room — one conversation, several people, several agents, each attributable.",
   "version": "0.0.1",
   "publisher": "ijmh2",
   "license": "MIT",
@@ -9,6 +9,7 @@
     "vscode": "^1.85.0"
   },
   "categories": [
+    "AI",
     "Other"
   ],
   "extensionKind": [
@@ -86,6 +87,11 @@
         "command": "mpa.proposeChange",
         "title": "Multiplayer Agent: Propose Change to Host",
         "icon": "$(git-pull-request)"
+      },
+      {
+        "command": "mpa.copyInvite",
+        "title": "Copy Invite Link",
+        "category": "Multiplayer Agent"
       }
     ],
     "menus": {
@@ -131,8 +137,8 @@
       "properties": {
         "mpa.relayUrl": {
           "type": "string",
-          "default": "ws://localhost:8787",
-          "description": "WebSocket URL of the relay server hosting the room."
+          "default": "",
+          "markdownDescription": "WebSocket URL of the relay hosting the room.\n\n**Leave empty to work solo** — the extension runs a relay on this machine, so a room needs no server, no token and no second person. Set a URL when you want other people in the room with you."
         },
         "mpa.commandApproval": {
           "type": "string",
@@ -197,14 +203,16 @@
     "build": "node esbuild.js --production",
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node esbuild.js && node --test test/*.test.js"
+    "test": "node esbuild.js && node --test test/*.test.js",
+    "package": "npm run build && vsce package --no-dependencies --out ../../dist/"
   },
   "dependencies": {
     "ws": "^8.18.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.23.0",
     "@mpa/workspace-core": "*",
-    "@mpa/relay-client": "*"
+    "@mpa/relay-client": "*",
+    "@mpa/relay": "*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
@@ -216,5 +224,12 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/ijmh2/multiplayer-agent.git"
-  }
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "collaboration",
+    "multiplayer",
+    "claude"
+  ]
 }

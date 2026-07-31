@@ -1,0 +1,16 @@
+# Everything the editor does not need at runtime. The bundle is self-contained,
+# so sources, tests and the whole dependency tree stay out.
+#
+# Order matters here: a later `!` re-includes, so there are no negations — an
+# earlier attempt ended with `!dist/**` after `**/*.map` and shipped every
+# source map, which is most of the package by weight.
+.vscode/**
+src/**
+test/**
+node_modules/**
+preview/**
+tsconfig.json
+esbuild.js
+**/*.map
+**/*.ts
+**/tsconfig.json

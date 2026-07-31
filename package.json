@@ -19,7 +19,8 @@
     "build:relay": "npm run build -w @mpa/protocol && npm run build -w @mpa/relay",
     "start": "node packages/relay/dist/src/index.js",
     "build:workspace": "npm run build -w @mpa/protocol && npm run build -w @mpa/relay-client && npm run build -w @mpa/workspace-core && npm run build -w @mpa/workspace-host",
-    "start:workspace": "node packages/workspace-host/dist/src/index.js"
+    "start:workspace": "node packages/workspace-host/dist/src/index.js",
+    "package": "npm run build && npm run package -w multiplayer-agent"
   },
   "engines": {
     "node": ">=20"

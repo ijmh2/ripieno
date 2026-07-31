@@ -9,13 +9,17 @@ async function main() {
     // needs its own bundle rather than being part of the extension.
     // workspaceFs is also emitted on its own so its cache and parsing logic can
     // be unit-tested outside the editor; the bundle imports it either way.
-    entryPoints: ["src/extension.ts", "src/permissionServer.ts", "src/workspaceFs.ts", "src/workspaceServer.ts", "src/addressing.ts"],
+    entryPoints: ["src/extension.ts", "src/permissionServer.ts", "src/workspaceFs.ts", "src/workspaceServer.ts", "src/addressing.ts", "src/soloRelay.ts", "src/invite.ts"],
     bundle: true,
     format: "cjs",
     platform: "node",
     target: "node18",
     outdir: "dist",
-    external: ["vscode"],
+    // vscode is provided by the host. The Anthropic SDK is only reachable from
+    // the relay's hosted mode, which an in-extension relay never uses — leaving
+    // it external keeps several megabytes of unused SDK out of the .vsix, and
+    // the import that would load it is dynamic and never taken.
+    external: ["vscode", "@anthropic-ai/sdk"],
     sourcemap: !production,
     minify: production,
     logLevel: "info",
