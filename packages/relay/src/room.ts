@@ -22,6 +22,7 @@ import type {
 import { WORKSPACE_HANDLE } from "@mpa/protocol";
 import { toRosterEntry } from "./roomCore.js";
 import type { RoomDriver } from "./driver.js";
+import type { RoomRole } from "@mpa/protocol";
 import type { RoomSnapshot } from "./roomStore.js";
 
 /**
@@ -97,6 +98,14 @@ export class Room {
    * addressing tools to.
    */
   private readonly containers = new Set<string>();
+  /**
+   * What each member may do.
+   *
+   * The first person in an empty room owns it — there is nobody else to ask, and
+   * a room whose owner must be granted by an owner can never start. Everyone
+   * after that is a member until the owner says otherwise.
+   */
+  private readonly roles = new Map<string, RoomRole>();
   /** What agents have done, distinct from what people have said. */
   private readonly actions: ActionEntry[] = [];
   /** Outstanding remote tool requests, so a reply can find who asked. */
@@ -140,6 +149,9 @@ export class Room {
     for (const member of snapshot.members) {
       if (!this.known.has(member.handle)) this.known.set(member.handle, member);
     }
+    for (const [handle, role] of Object.entries(snapshot.roles ?? {})) {
+      this.roles.set(handle, role);
+    }
     this.transcript.push(...snapshot.transcript.slice(-Room.MAX_TRANSCRIPT));
     this.actions.push(...snapshot.actions.slice(-Room.MAX_ACTIONS));
     // Agent messages restored from disk are already final; without this a
@@ -154,6 +166,7 @@ export class Room {
       transcript: this.transcript,
       actions: this.actions,
       members: [...this.known.values()],
+      roles: Object.fromEntries(this.roles),
     };
   }
 
@@ -166,9 +179,45 @@ export class Room {
         m,
         this.connections.has(m.handle),
         this.agentsOf(m.handle),
-        isContainer(m.handle) ? "workspace" : undefined
+        isContainer(m.handle) ? "workspace" : undefined,
+        isContainer(m.handle) ? undefined : this.roleOf(m.handle)
       )
     );
+  }
+
+  /** Everyone is a member until told otherwise; the container holds no role. */
+  roleOf(handle: string): RoomRole {
+    return this.roles.get(handle) ?? "member";
+  }
+
+  /** May they speak, attach agents and act on the workspace? */
+  canAct(handle: string): boolean {
+    return this.roleOf(handle) !== "viewer";
+  }
+
+  /**
+   * Change what somebody may do.
+   *
+   * Only the owner, and never on themselves: a room whose owner demotes
+   * themselves by accident has nobody who can undo it.
+   */
+  setRole(actor: string, handle: string, role: RoomRole): void {
+    if (this.roleOf(actor) !== "owner") {
+      this.systemTo(actor, "Only the room's owner can change what someone may do.");
+      return;
+    }
+    if (actor === handle) {
+      this.systemTo(actor, "You cannot change your own role; the room would have no owner.");
+      return;
+    }
+    if (isContainer(handle)) {
+      this.systemTo(actor, "The shared workspace is not a person and holds no role.");
+      return;
+    }
+    this.roles.set(handle, role);
+    this.system(`${this.known.get(handle)?.displayName ?? handle} is now a ${role}.`);
+    this.broadcastRoster();
+    this.onChanged?.();
   }
 
   private agentsOf(handle: string): AttachedAgent[] {
@@ -196,6 +245,9 @@ export class Room {
     if (role === "workspace") {
       this.known.set(member.handle, member);
       this.containers.add(member.handle);
+    } else if (this.roles.size === 0 && !isContainer(member.handle)) {
+      // Somebody has to own it, and in an empty room there is nobody to ask.
+      this.roles.set(member.handle, "owner");
     }
 
     let label: string;
@@ -225,7 +277,8 @@ export class Room {
         member,
         true,
         this.agentsOf(member.handle),
-        isContainer(member.handle) ? "workspace" : undefined
+        isContainer(member.handle) ? "workspace" : undefined,
+        isContainer(member.handle) ? undefined : this.roleOf(member.handle)
       ),
       roster: this.roster,
       transcript: this.transcript,
@@ -315,6 +368,10 @@ export class Room {
   claimWorkspace(handle: string, claim: boolean): void {
     if (claim) {
       if (!this.connections.has(handle)) return;
+      if (!this.canAct(handle)) {
+        this.systemTo(handle, "Viewers cannot host the room's workspace.");
+        return;
+      }
       // A container outranks a laptop: it is the host that survives everyone
       // closing their editor, which is the whole reason it exists. A member
       // trying to claim over it is told why rather than silently ignored.
@@ -416,6 +473,28 @@ export class Room {
         ok: !isError,
       });
     }
+  }
+
+  /**
+   * Tell one member something, rather than the whole room.
+   *
+   * A refusal is between the relay and whoever asked; broadcasting "you cannot
+   * do that" to everyone would make ordinary mistakes into public ones.
+   */
+  private systemTo(handle: string, text: string): void {
+    const conn = this.connections.get(handle);
+    if (!conn) return;
+    this.sendTo(conn.socket, {
+      t: "entry",
+      entry: {
+        id: randomUUID(),
+        kind: "system",
+        authorHandle: "system",
+        authorName: "Room",
+        text,
+        ts: Date.now(),
+      },
+    });
   }
 
   /** Fail every outstanding call aimed at a member who is no longer here. */

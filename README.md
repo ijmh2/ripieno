@@ -179,6 +179,33 @@ tokens are cached for ten minutes so reconnects do not spend the rate limit.
 
 `mpa.devIdentityOverride` stops working against such a relay, by design.
 
+### Roles
+
+`owner`, `member`, `viewer`, persisted with the room and enforced in the relay
+rather than the UI — hiding a button is presentation; anyone can send the message
+the button would have sent.
+
+| | owner | member | viewer |
+|---|---|---|---|
+| Change what others may do | yes | | |
+| Post, attach agents, host the workspace | yes | yes | |
+| Read the transcript, browse files | yes | yes | yes |
+
+The first person in an empty room owns it: nobody can be granted ownership by an
+owner in a room with no owner, so a room could otherwise never start. The owner
+cannot change their own role, because a room whose owner demoted themselves by
+accident has nobody who can undo it. The shared workspace holds no role at all —
+it is infrastructure, not a person.
+
+A viewer is refused at the *connection* when attaching an agent rather than per
+message: an agent that spawns and then discovers it is mute has already cost
+tokens and looks broken.
+
+Roles only *mean* something on a relay that verifies identity. Without
+`MPA_REQUIRE_GITHUB` a handle is self-asserted, so a viewer can simply rejoin as
+somebody else. They are enforced regardless, because the alternative is a
+permission system that exists only in the interface.
+
 ### The container's command allowlist is a trust decision, not a sandbox
 
 `MPA_ALLOWED_COMMANDS` is empty by default and a container with no allowlist

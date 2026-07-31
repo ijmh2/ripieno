@@ -6,7 +6,7 @@
  * functions, so nothing in this file may assume it owns the agent loop.
  */
 
-import type { AttachedAgent, Member, RosterEntry } from "@mpa/protocol";
+import type { AttachedAgent, Member, RoomRole, RosterEntry } from "@mpa/protocol";
 import { colorIndexFor } from "@mpa/protocol";
 
 /* ------------------------------------------------------------------ */
@@ -47,9 +47,10 @@ export function toRosterEntry(
   member: Member,
   present: boolean,
   agents: AttachedAgent[] = [],
-  kind?: "workspace"
+  kind?: "workspace",
+  role?: RoomRole
 ): RosterEntry {
-  return { ...member, kind, present, color: colorIndexFor(member.handle), agents };
+  return { ...member, kind, role, present, color: colorIndexFor(member.handle), agents };
 }
 
 /**

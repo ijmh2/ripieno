@@ -27,6 +27,16 @@ export interface AttachedAgent {
   label: string;
 }
 
+/**
+ * What a member may do in a room.
+ *
+ * Only meaningful on a relay that verifies identity (MPA_REQUIRE_GITHUB) —
+ * without it a handle is self-asserted, so a role attached to one is a
+ * suggestion. Enforced regardless, because the alternative is a permission
+ * system that only exists in the UI.
+ */
+export type RoomRole = "owner" | "member" | "viewer";
+
 /** A member plus live connection state. */
 export interface RosterEntry extends Member {
   /**
@@ -34,6 +44,8 @@ export interface RosterEntry extends Member {
    * workspace instead of giving a container a colour and a seat at the table.
    */
   kind?: "workspace";
+  /** Absent for the shared workspace, which is not a person and holds no role. */
+  role?: RoomRole;
   present: boolean;
   /** Palette index 0-7, assigned deterministically. See colorIndexFor(). */
   color: number;
@@ -210,6 +222,13 @@ export interface WorkspaceChangedMsg {
 }
 
 /** A member offering their workspace as the room's shared one. */
+/** The owner changing what somebody may do. */
+export interface SetRoleMsg {
+  t: "setRole";
+  handle: string;
+  role: RoomRole;
+}
+
 export interface ClaimWorkspaceMsg {
   t: "claimWorkspace";
   /** False releases it. */
@@ -224,6 +243,7 @@ export type ClientMsg =
   | RemoteToolMsg
   | RemoteToolResultMsg
   | ClaimWorkspaceMsg
+  | SetRoleMsg
   | WorkspaceChangedMsg
   | PingMsg;
 

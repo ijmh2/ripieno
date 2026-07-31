@@ -328,6 +328,14 @@ export function startServer(config: ServerConfig): Relay {
                         : `${member.displayName}'s agent`,
                   }
                 : undefined;
+            // A viewer may watch, but an agent acts — and acting is what they
+            // are not allowed to do. Refused at the connection rather than at
+            // each message, so nothing spawns and then discovers it is mute.
+            if (role === "agent" && !room.canAct(member.handle)) {
+              send(socket, "viewers cannot attach agents to this room");
+              socket.close(4003, "viewer");
+              return;
+            }
             await room.join(member, socket, role, agent);
             joined = {
               room,
@@ -340,6 +348,9 @@ export function startServer(config: ServerConfig): Relay {
           }
           case "say":
             if (!joined) return send(socket, "join a room before sending messages");
+            if (!joined.room.canAct(joined.handle)) {
+              return send(socket, "viewers can read this room but not post to it");
+            }
             await joined.room.say(joined.handle, msg.text, joined.role, joined.agentId);
             break;
           case "toolProgress":
@@ -361,6 +372,11 @@ export function startServer(config: ServerConfig): Relay {
               msg.isError === true
             );
             break;
+          case "setRole":
+            if (!joined) return send(socket, "join a room before changing roles");
+            joined.room.setRole(joined.handle, msg.handle, msg.role);
+            break;
+
           case "claimWorkspace":
             if (!joined) return send(socket, "join a room before claiming the workspace");
             if (joined.role === "agent") return send(socket, "only a member may host a workspace");

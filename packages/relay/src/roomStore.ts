@@ -15,13 +15,18 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import type { ActionEntry, Member, TranscriptEntry } from "@mpa/protocol";
+import type { ActionEntry, Member, RoomRole, TranscriptEntry } from "@mpa/protocol";
 
 export interface RoomSnapshot {
   transcript: TranscriptEntry[];
   actions: ActionEntry[];
   /** Everyone who has been in the room, so the roster survives a restart. */
   members: Member[];
+  /**
+   * What each member may do. Optional so a snapshot written before roles
+   * existed still loads — everyone in it is simply a member again.
+   */
+  roles?: Record<string, RoomRole>;
 }
 
 export interface RoomStore {
@@ -107,6 +112,7 @@ export class FileRoomStore implements RoomStore {
         transcript: parsed.transcript ?? [],
         actions: parsed.actions ?? [],
         members: parsed.members ?? [],
+        roles: parsed.roles ?? {},
       };
     } catch {
       // A missing file is the normal case for a new room; a corrupt one should
@@ -131,6 +137,7 @@ export class FileRoomStore implements RoomStore {
       transcript: fitToBudget(snapshot.transcript.slice(-MAX_PERSISTED_TRANSCRIPT), MAX_PERSISTED_BYTES),
       actions: snapshot.actions.slice(-MAX_PERSISTED_ACTIONS),
       members: snapshot.members,
+      roles: snapshot.roles,
     };
 
     // Write then rename: a relay killed mid-write would otherwise leave a
