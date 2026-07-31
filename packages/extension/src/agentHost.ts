@@ -85,6 +85,14 @@ export interface AgentHostOptions extends AgentSpec {
   member: Member;
   approvals: ApprovalBridge;
   token?: string;
+  /**
+   * Proves the owner's handle.
+   *
+   * An agent connection claims its owner's identity, so it has to prove it for
+   * the same reason they do — otherwise verification would be one `role: "agent"`
+   * away from being bypassed entirely.
+   */
+  githubToken?: string;
   permissionServerPath: string;
   workspaceServerPath: string;
   onStateChange: (id: string, state: AgentState) => void;
@@ -172,6 +180,7 @@ export class AgentHost implements vscode.Disposable {
       agentId: this.opts.id,
       agentLabel: this.opts.label,
       token: this.opts.token,
+      githubToken: this.opts.githubToken,
       onStateChange: (s) => this.setState(s === "online" ? "idle" : "attaching"),
       onMessage: (msg) => {
         if (msg.t === "joined") {

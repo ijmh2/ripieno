@@ -10,6 +10,9 @@ const token = process.env.MPA_TOKEN;
 // Held only by the shared-workspace container. Without it, the workspace role
 // is simply unavailable and rooms fall back to a member hosting from a laptop.
 const workspaceToken = process.env.MPA_WORKSPACE_TOKEN;
+// Verify who members are, rather than believing the handle they send. Off by
+// default so an existing deployment keeps working until it is turned on.
+const requireGithub = process.env.MPA_REQUIRE_GITHUB === "1";
 // Point this at a mounted volume and room history survives redeploys too.
 const dataDir = process.env.MPA_DATA_DIR;
 // A deployed relay must listen on all interfaces; a local one need not.
@@ -58,6 +61,7 @@ const wss = startServer({
   environmentId,
   token,
   workspaceToken,
+  requireGithub,
   host,
   dataDir,
 });

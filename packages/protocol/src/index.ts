@@ -122,6 +122,14 @@ export interface JoinMsg {
    * serving the shared workspace is trusted to say what every file contains.
    */
   workspaceToken?: string;
+  /**
+   * A GitHub token proving who this is, when the relay requires one.
+   *
+   * `read:user` scope — enough for the relay to ask GitHub for a login, and
+   * nothing more. Without it the handle is whatever the client claims, which
+   * makes every attribution in the room a claim rather than a fact.
+   */
+  githubToken?: string;
 }
 
 export interface SayMsg {

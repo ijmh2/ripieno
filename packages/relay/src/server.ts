@@ -14,6 +14,7 @@ import { ByoDriver } from "./byoDriver.js";
 import { HostedDriver } from "./hostedDriver.js";
 import { Room } from "./room.js";
 import { createRoomStore } from "./roomStore.js";
+import { GithubVerifier } from "./identity.js";
 
 /**
  * How often to ping clients, and therefore how long a vanished member can look
@@ -45,6 +46,15 @@ export interface ServerConfig {
    * different codebase than the real one.
    */
   workspaceToken?: string;
+  /**
+   * Refuse joins that cannot prove who they are.
+   *
+   * Off by default so an existing deployment and local two-window testing keep
+   * working; turning it on is what makes roles and attribution mean anything.
+   */
+  requireGithub?: boolean;
+  /** Injectable so tests can stand in for GitHub. Production builds its own. */
+  verifier?: GithubVerifier;
   /** Where room history is kept. Undefined means rooms vanish on restart. */
   dataDir?: string;
   /** Required in hosted mode only; BYO needs no Anthropic resources at all. */
@@ -67,6 +77,7 @@ export function startServer(config: ServerConfig): Relay {
   const client = config.mode === "hosted" ? new Anthropic() : undefined;
   const rooms = new Map<string, Room>();
   const store = createRoomStore(config.dataDir);
+  const verifier = config.verifier ?? new GithubVerifier();
   /** Pending saves, so a busy room writes once rather than once per message. */
   const saveTimers = new Map<string, NodeJS.Timeout>();
 
@@ -262,6 +273,20 @@ export function startServer(config: ServerConfig): Relay {
             }
             const member = sanitise(msg.member);
             if (!member) return send(socket, "invalid member identity");
+
+            // Identity before anything else touches room state. The handle is
+            // taken from GitHub's answer, never from what the client sent.
+            if (config.requireGithub && msg.role !== "workspace") {
+              const verified = await verifier.verify(msg.githubToken);
+              if (!verified.ok) {
+                send(socket, `identity refused: ${verified.reason}`);
+                socket.close(4003, "unverified identity");
+                return;
+              }
+              member.handle = verified.identity.handle;
+              member.displayName = verified.identity.displayName;
+              if (verified.identity.avatarUrl) member.avatarUrl = verified.identity.avatarUrl;
+            }
 
             const wantsWorkspace = msg.role === "workspace";
             if (wantsWorkspace) {

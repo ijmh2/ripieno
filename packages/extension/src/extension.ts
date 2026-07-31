@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { spawn } from "child_process";
 import type { Member, ServerMsg } from "@mpa/protocol";
-import { resolveIdentity } from "./identity";
+import { resolveIdentity, resolveIdentityWithToken } from "./identity";
 import { RelayClient, type ConnectionState } from "@mpa/relay-client";
 import { ToolExecutor, registerProposedDocuments } from "./toolExecutor";
 import { RoomViewProvider } from "./roomView";
@@ -25,6 +25,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const changedPaths = new Set<string>();
   let publishTimer: NodeJS.Timeout | undefined;
   let me: Member | undefined;
+  /**
+   * Proves who `me` is to the relay, when it asks.
+   *
+   * Session-scoped and deliberately not on Member: that type is broadcast to
+   * every client in the room.
+   */
+  let githubToken: string | undefined;
 
   // A member may run several agents at once — a coder and a reviewer, say —
   // each with its own process, session and label in the transcript.
@@ -601,6 +608,7 @@ export function activate(context: vscode.ExtensionContext): void {
       url: relayUrl(),
       room: currentRoom,
       member: me,
+      githubToken,
       id: spec.id,
       label: labelFor(spec.label),
       brief: spec.brief,
@@ -713,13 +721,17 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const member = await resolveIdentity(false);
-    if (!member) {
+    const identity = await resolveIdentityWithToken(false);
+    if (!identity) {
       vscode.window.showErrorMessage(
         "Multiplayer Agent: sign in to GitHub is required to join a room."
       );
       return;
     }
+    const member = identity.member;
+    // Held for the session so agent connections can prove the same identity.
+    // Never written to settings and never put in a Member, which is broadcast.
+    githubToken = identity.githubToken;
 
     relay?.dispose();
 
@@ -734,6 +746,7 @@ export function activate(context: vscode.ExtensionContext): void {
       room,
       member,
       token: roomToken(),
+      githubToken,
       onEvicted: (reason) => {
         // Two machines resolving to one handle is the usual cause, and it is
         // invisible otherwise — the room just churns.

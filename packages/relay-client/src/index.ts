@@ -38,6 +38,8 @@ export interface RelayClientOptions {
    * the repository contains.
    */
   workspaceToken?: string;
+  /** Proves this connection's handle, when the relay verifies identities. */
+  githubToken?: string;
   onMessage: (msg: ServerMsg) => void;
   onStateChange: (state: ConnectionState) => void;
   /**
@@ -87,6 +89,7 @@ export class RelayClient {
         agentLabel: this.opts.agentLabel,
         token: this.opts.token,
         workspaceToken: this.opts.workspaceToken,
+        githubToken: this.opts.githubToken,
       };
       this.sendRaw(join);
       this.flushQueue();

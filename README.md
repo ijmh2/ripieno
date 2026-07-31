@@ -160,6 +160,25 @@ check by hand.
 - The webview runs under `default-src 'none'` with a nonced script and renders
   all agent text escape-first.
 
+### Verified identity (`MPA_REQUIRE_GITHUB=1`)
+
+Off by default. With it on, a join must carry a `read:user`-scoped GitHub token
+and the relay takes the handle from GitHub's answer — never from what the client
+sent. Without it the room token is a gate, not an identity: anyone holding it can
+join as anyone, which makes the action log, the colours and the author lines in
+`git log` claims rather than facts.
+
+The trade is worth stating: the relay sees a `read:user` token. That is the
+minimum scope — a public profile, nothing else, no repository access — but it is
+not nothing, and it is the price of verified identity without running an account
+system. A relay you would not give the room token to should not be given one.
+
+Failure is closed. If GitHub cannot be reached, joins are refused rather than
+trusted, because "cannot check" is the state this exists to replace. Verified
+tokens are cached for ten minutes so reconnects do not spend the rate limit.
+
+`mpa.devIdentityOverride` stops working against such a relay, by design.
+
 ### The container's command allowlist is a trust decision, not a sandbox
 
 `MPA_ALLOWED_COMMANDS` is empty by default and a container with no allowlist

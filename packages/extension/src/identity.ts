@@ -21,10 +21,10 @@ interface GhUser {
  * Development-only identity override, so a second Extension Development Host
  * can join a room as somebody else without a second GitHub account.
  *
- * This is a testing affordance, not a feature. It is safe only because the
- * relay does not authenticate members at all yet — a client can already claim
- * any handle. Closing that hole (signed identity, verified at the relay) is
- * Phase 3 work, and this override must not outlive it.
+ * A testing affordance, not a feature. A relay running with MPA_REQUIRE_GITHUB
+ * refuses whatever this produces, because it takes the handle from GitHub's
+ * answer rather than from the client — which is the point. It survives only for
+ * local relays that have not turned verification on.
  */
 function resolveOverride(): Member | undefined {
   const handle = vscode.workspace
@@ -48,9 +48,23 @@ function resolveOverride(): Member | undefined {
  * session and none was requested (or the user declined the prompt).
  */
 export async function resolveIdentity(silent = true): Promise<Member | undefined> {
+  return (await resolveIdentityWithToken(silent))?.member;
+}
+
+/**
+ * The member, plus the GitHub token that proves it.
+ *
+ * The token goes to the relay so it can ask GitHub who this is rather than
+ * believing the handle we send. Scope is `read:user`: enough for a login, not
+ * enough to touch a repository. Kept out of `Member` deliberately — that type
+ * is broadcast to every client in the room.
+ */
+export async function resolveIdentityWithToken(
+  silent = true
+): Promise<{ member: Member; githubToken?: string } | undefined> {
   const override = resolveOverride();
   if (override) {
-    return override;
+    return { member: override };
   }
 
   const session = await vscode.authentication.getSession(GITHUB_PROVIDER, SCOPES, {
@@ -65,10 +79,13 @@ export async function resolveIdentity(silent = true): Promise<Member | undefined
   const repo = await resolveRepo();
 
   return {
-    handle: profile.handle,
-    displayName: profile.displayName,
-    avatarUrl: profile.avatarUrl,
-    repo,
+    member: {
+      handle: profile.handle,
+      displayName: profile.displayName,
+      avatarUrl: profile.avatarUrl,
+      repo,
+    },
+    githubToken: session.accessToken,
   };
 }
 
