@@ -129,3 +129,37 @@ describe("a question asked while the agent is thinking still gets answered", () 
     assert.equal(nextUnanswered([system("x"), agent("y")], mirasAgent, [samsAgent]), undefined);
   });
 });
+
+describe("people drop apostrophes, and it must still route", () => {
+  // From a real room: "Where is miras agents final summary?" matched nobody, so
+  // no agent counted as named and *both* answered — the wrong one first. The
+  // failure is silent and costs a turn every time.
+  test("an apostrophe-less possessive still names the agent", () => {
+    assert.equal(mentions("Where is miras agents final summary?", mirasAgent), true);
+    assert.equal(mentions("miras agent, do it", mirasAgent), true);
+  });
+
+  test("and it stops the other agent answering", () => {
+    assert.equal(shouldAnswer("Where is miras agents final summary?", samsAgent, [mirasAgent]), false);
+    assert.equal(shouldAnswer("Where is miras agents final summary?", mirasAgent, [samsAgent]), true);
+  });
+
+  test("asking sams agent does not wake miras", () => {
+    assert.equal(shouldAnswer("sams agent can you check", mirasAgent, [samsAgent]), false);
+    assert.equal(shouldAnswer("sams agent can you check", samsAgent, [mirasAgent]), true);
+  });
+
+  test("the apostrophe form still works, both kinds", () => {
+    assert.equal(mentions("mira's agent, do it", mirasAgent), true);
+    assert.equal(mentions("mira’s agent, do it", mirasAgent), true);
+  });
+
+  test("a plural is not a possessive", () => {
+    // "the reviewers meeting" must still not wake the reviewer.
+    assert.equal(mentions("the reviewers meeting is at 4", mirasReviewer), false);
+  });
+
+  test("a longer name starting the same way is still not a match", () => {
+    assert.equal(mentions("miraka wants a look", mirasAgent), false);
+  });
+});
