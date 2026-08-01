@@ -89,3 +89,26 @@ describe("people are told what they are joining", () => {
     assert.ok(!plain.includes("token"), plain);
   });
 });
+
+describe("the link uses the editor's own scheme", () => {
+  test("a non-VS Code editor gets its own scheme", () => {
+    // The extension runs in Antigravity and Cursor too, and each registers its
+    // own. A hardcoded vscode: link silently did nothing for those users.
+    const link = buildInvite(
+      { relayUrl: "wss://r.example", room: "demo" },
+      "ijmh2.multiplayer-agent",
+      "antigravity"
+    );
+    assert.match(link, /^antigravity:\/\/ijmh2\.multiplayer-agent\/join\?/);
+  });
+
+  test("it still round-trips whatever the scheme", () => {
+    const invite = { relayUrl: "wss://r.example", room: "demo", token: "t" };
+    for (const scheme of ["vscode", "antigravity", "cursor", "vscode-insiders"]) {
+      const link = buildInvite(invite, "ijmh2.multiplayer-agent", scheme);
+      const back = parseInvite(link.slice(link.indexOf("?") + 1));
+      assert.equal(back.ok, true, scheme);
+      assert.deepEqual(back.invite, invite);
+    }
+  });
+});

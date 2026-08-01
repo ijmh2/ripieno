@@ -204,7 +204,8 @@
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node esbuild.js && node --test test/*.test.js",
-    "package": "npm run build && vsce package --no-dependencies --out ../../dist/"
+    "package": "vsce package --no-dependencies --out ../../dist/",
+    "vscode:prepublish": "node esbuild.js --production"
   },
   "dependencies": {
     "ws": "^8.18.0",

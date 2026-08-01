@@ -852,7 +852,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const link = buildInvite(
       { relayUrl: activeRelayUrl, room: currentRoom, token: roomToken() },
-      context.extension.id
+      context.extension.id,
+      // Whatever this editor actually registers — vscode, cursor, antigravity…
+      vscode.env.uriScheme
     );
     await vscode.env.clipboard.writeText(link);
     void vscode.window.showInformationMessage(

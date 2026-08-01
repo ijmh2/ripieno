@@ -61,14 +61,19 @@ export function parseInvite(query: string): { ok: true; invite: Invite } | { ok:
 /**
  * Build a link to share.
  *
+ * The scheme is the *product's*, not `vscode:` — this extension also runs in
+ * Antigravity, Cursor and anything else built on the same base, and each
+ * registers its own. Hardcoding `vscode:` produced links that silently did
+ * nothing, or opened a different editor entirely, for everyone not using VS Code.
+ *
  * Kept next to the parser so the two cannot drift: a generator that produces
  * something its own parser rejects is a bug nobody notices until somebody else
  * clicks the link.
  */
-export function buildInvite(invite: Invite, extensionId: string): string {
+export function buildInvite(invite: Invite, extensionId: string, uriScheme = "vscode"): string {
   const params = new URLSearchParams({ relay: invite.relayUrl, room: invite.room });
   if (invite.token) params.set("token", invite.token);
-  return `vscode://${extensionId}/join?${params.toString()}`;
+  return `${uriScheme}://${extensionId}/join?${params.toString()}`;
 }
 
 /**
