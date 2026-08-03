@@ -522,12 +522,169 @@
     updateComposerState();
   }
 
+  /* ---------------------------------------------------------------- */
+  /* @-mentions                                                        */
+  /* ---------------------------------------------------------------- */
+
+  /*
+   * Picking from a list beats guessing at what someone typed.
+   *
+   * Addressing used to rest on matching free text against labels, and it failed
+   * the way free text does — "miras agent" named nobody, so every agent answered
+   * and the wrong one replied. A chosen suggestion inserts a canonical token, so
+   * the ambiguity never arises. The matcher still exists for people who type it
+   * out; this makes not doing so the easy path.
+   */
+  const mentionsEl = document.getElementById("mentions");
+  let candidates = [];
+  let highlighted = 0;
+  let mentionStart = -1;
+
+  /** Everyone and everything addressable, people first. */
+  function addressable() {
+    const out = [];
+    for (const member of roster) {
+      if (member.kind === "workspace") continue;
+      out.push({
+        insert: "@" + member.handle,
+        label: member.displayName || member.handle,
+        detail: "@" + member.handle + (member.present ? "" : " · away"),
+        kind: "person",
+        color: member.color,
+      });
+      for (const agent of member.agents || []) {
+        out.push({
+          insert: agent.label,
+          label: agent.label,
+          detail: "agent · " + (member.displayName || member.handle),
+          kind: "agent",
+          color: member.color,
+        });
+      }
+    }
+    return out;
+  }
+
+  /** The @word the caret is sitting in, or null. */
+  function activeMention() {
+    if (composerEl.selectionStart !== composerEl.selectionEnd) return null;
+    const upto = composerEl.value.slice(0, composerEl.selectionStart);
+    const at = upto.lastIndexOf("@");
+    if (at === -1) return null;
+    // Only immediately after whitespace or at the very start, so an email
+    // address does not open a member picker.
+    if (at > 0 && !/\s/.test(upto[at - 1])) return null;
+    const query = upto.slice(at + 1);
+    if (/\s/.test(query)) return null;
+    return { at, query: query.toLowerCase() };
+  }
+
+  function closeMentions() {
+    mentionsEl.hidden = true;
+    mentionsEl.innerHTML = "";
+    candidates = [];
+    mentionStart = -1;
+  }
+
+  function refreshMentions() {
+    const active = activeMention();
+    if (!active) {
+      closeMentions();
+      return;
+    }
+    candidates = addressable().filter(
+      (c) =>
+        active.query === "" ||
+        c.label.toLowerCase().includes(active.query) ||
+        c.insert.toLowerCase().includes(active.query)
+    );
+    if (candidates.length === 0) {
+      closeMentions();
+      return;
+    }
+    mentionStart = active.at;
+    highlighted = 0;
+    renderMentions();
+  }
+
+  function renderMentions() {
+    mentionsEl.innerHTML = "";
+    candidates.forEach((c, i) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "mention" + (i === highlighted ? " active" : "");
+
+      const swatch = document.createElement("span");
+      swatch.className = "mention-swatch";
+      swatch.style.background = `hsl(var(--mpa-hue-${c.color}) 70% 42%)`;
+      swatch.textContent = c.kind === "agent" ? "\u2699" : initials(c.label);
+      row.appendChild(swatch);
+
+      const name = document.createElement("span");
+      name.className = "mention-name";
+      name.textContent = c.label;
+      row.appendChild(name);
+
+      const detail = document.createElement("span");
+      detail.className = "mention-detail";
+      detail.textContent = c.detail;
+      row.appendChild(detail);
+
+      // mousedown, not click: the textarea must not lose focus first.
+      row.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        accept(i);
+      });
+      mentionsEl.appendChild(row);
+    });
+    mentionsEl.hidden = false;
+  }
+
+  function accept(index) {
+    const chosen = candidates[index];
+    if (!chosen || mentionStart < 0) return;
+    const before = composerEl.value.slice(0, mentionStart);
+    const after = composerEl.value.slice(composerEl.selectionStart);
+    const insert = chosen.insert + " ";
+    composerEl.value = before + insert + after;
+    const caret = before.length + insert.length;
+    composerEl.setSelectionRange(caret, caret);
+    closeMentions();
+    composerEl.focus();
+    autoGrow();
+    updateComposerState();
+  }
+
   composerEl.addEventListener("input", () => {
     autoGrow();
     updateComposerState();
+    refreshMentions();
   });
 
+  composerEl.addEventListener("blur", closeMentions);
+
   composerEl.addEventListener("keydown", (e) => {
+    if (!mentionsEl.hidden && candidates.length > 0) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const step = e.key === "ArrowDown" ? 1 : -1;
+        highlighted = (highlighted + step + candidates.length) % candidates.length;
+        renderMentions();
+        return;
+      }
+      // Enter accepts the suggestion rather than sending — sending a half-typed
+      // name to the room is the mistake this exists to prevent.
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        accept(highlighted);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeMentions();
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       trySend();

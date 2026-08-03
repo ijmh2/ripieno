@@ -163,3 +163,26 @@ describe("people drop apostrophes, and it must still route", () => {
     assert.equal(mentions("miraka wants a look", mirasAgent), false);
   });
 });
+
+describe("naming one of somebody's agents does not wake the others", () => {
+  // Seen in a live room: "Mira Ellery's agent you should be thinking now" woke the
+  // reviewer as well, because the text contains "mira" and the word "agent".
+  // Only the first name was left to go on by that point, and it cannot tell one
+  // of a person's agents from another.
+  test("the generic agent is the one a first name reaches", () => {
+    const text = "Mira Ellery's agent you should be thinking now";
+    assert.equal(shouldAnswer(text, mirasAgent, [mirasReviewer, samsAgent]), true);
+    assert.equal(shouldAnswer(text, mirasReviewer, [mirasAgent, samsAgent]), false);
+  });
+
+  test("the reviewer still answers when actually named", () => {
+    assert.equal(mentions("Mira Ellery's reviewer take a look", mirasReviewer), true);
+    assert.equal(mentions("reviewer, is this sound?", mirasReviewer), true);
+    assert.equal(mentions("miras reviewer, is this sound?", mirasReviewer), true);
+  });
+
+  test("and a bare first name still reaches the generic agent", () => {
+    assert.equal(mentions("get mira's agent to run the tests", mirasAgent), true);
+    assert.equal(mentions("get miras agent to run the tests", mirasAgent), true);
+  });
+});

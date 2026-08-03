@@ -276,7 +276,8 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   <div id="actionsList" class="actions-list"></div>
 </details>
 <div id="composerBar" class="composer-bar">
-  <textarea id="composer" class="composer" rows="1" placeholder="Message the room…"></textarea>
+  <div id="mentions" class="mentions" hidden></div>
+  <textarea id="composer" class="composer" rows="1" placeholder="Message the room… (@ to address someone)"></textarea>
   <button id="sendButton" class="send-button" type="button">Send</button>
 </div>
 <script nonce="${csp}" src="${scriptUri}"></script>

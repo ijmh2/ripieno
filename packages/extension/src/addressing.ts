@@ -56,6 +56,14 @@ export function mentions(text: string, agent: AgentIdentity): boolean {
   // "agent" matches every agent in the room and so names nobody.
   if (role && role !== "agent" && containsToken(haystack, role)) return true;
 
+  // Past this point only the owner's first name is left to go on, which cannot
+  // distinguish one of their agents from another. So it names the *generic* one
+  // and nobody else: "Mira's agent" woke Mira's reviewer too, because the text
+  // contains "mira" and the word "agent" — a turn spent every time, by an agent
+  // that was not asked. A distinctively named agent must be named
+  // distinctively, and its role word above is how.
+  if (role && role !== "agent") return false;
+
   // An owner's *first* name is how people usually address someone's agent —
   // but only alongside a word implying the agent, or "mira" in ordinary prose
   // would silently route every message to Mira's agent.
