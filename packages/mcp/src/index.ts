@@ -31,6 +31,8 @@ const client = new RoomClient({
   displayName: process.env.MPA_NAME ?? required("MPA_HANDLE"),
   repo: process.env.MPA_REPO,
   token: process.env.MPA_TOKEN,
+  // Needed only by a relay running MPA_REQUIRE_GITHUB=1; harmless otherwise.
+  githubToken: process.env.MPA_GITHUB_TOKEN,
 });
 
 /** Render entries the way the agent should read them: authored, never anonymous. */

@@ -73,6 +73,14 @@ export class Room {
    * so what a joiner sees matches what a restart brings back.
    */
   private static readonly MAX_TRANSCRIPT = 500;
+  /**
+   * Longest single message.
+   *
+   * Long enough for an agent to paste a file or a stack trace, short enough that
+   * 500 of them cannot exhaust a room. The frame cap in the server is the outer
+   * bound; this is the one that keeps a *room* sane.
+   */
+  private static readonly MAX_MESSAGE_CHARS = 32_000;
   private static readonly MAX_ACTIONS = 200;
   /** Agent entries already flushed, so a late delta cannot resurrect one. */
   private readonly completed = new Set<string>();
@@ -622,6 +630,10 @@ export class Room {
     role: ConnectionRole = "human",
     agentId?: string
   ): Promise<void> {
+    // Bounded before anything else touches it. The transcript lives in memory
+    // and is rebroadcast to everyone, so an unbounded message is everyone's
+    // problem rather than the sender's.
+    text = text.slice(0, Room.MAX_MESSAGE_CHARS);
     if (role === "agent") {
       const conn = this.agents.get(agentId ?? `${handle}:default`);
       if (!conn || text.trim() === "") return;

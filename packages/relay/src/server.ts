@@ -22,6 +22,8 @@ import { GithubVerifier } from "./identity.js";
  * a close frame, so without this they stay in the roster indefinitely — and the
  * agent keeps addressing workspace tools to a machine that is not there.
  */
+/** Largest frame accepted. Generous for a tool result, absurd for a message. */
+const MAX_FRAME_BYTES = 1 << 20;
 const HEARTBEAT_MS = 15_000;
 
 export type RelayMode = "hosted" | "byo";
@@ -165,7 +167,15 @@ export function startServer(config: ServerConfig): Relay {
     res.writeHead(404).end();
   });
 
-  const wss = new WebSocketServer({ server: http });
+  /**
+   * A frame nobody has any business sending.
+   *
+   * `ws` defaults to 100MB, and a room's transcript is held in memory and
+   * broadcast to every member and agent — so one token-holder could push 100MB
+   * into everyone's process. The persisted copy was carefully capped at 1MB;
+   * the concern was handled on the disk path and missed on the wire.
+   */
+  const wss = new WebSocketServer({ server: http, maxPayload: MAX_FRAME_BYTES });
   http.listen(config.port, config.host);
 
   function roomFor(code: string): Promise<Room> {

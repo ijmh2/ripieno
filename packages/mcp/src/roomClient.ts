@@ -23,6 +23,15 @@ export interface RoomClientConfig {
   repo?: string;
   /** Required by any deployed relay; absent is fine for a local one. */
   token?: string;
+  /**
+   * Proves this handle, on a relay that verifies identity.
+   *
+   * Without it, MPA_REQUIRE_GITHUB=1 refuses this route at the door — so the
+   * documented `.mcp.json` path broke the moment identity verification was
+   * turned on, which is the same moment attribution starts meaning anything.
+   * `read:user` scope; the same token the editor already holds.
+   */
+  githubToken?: string;
 }
 
 export class RoomClient {
@@ -55,6 +64,7 @@ export class RoomClient {
           room: this.config.room,
           role: "agent",
           token: this.config.token,
+          githubToken: this.config.githubToken,
           member: {
             handle: this.config.handle,
             displayName: this.config.displayName,

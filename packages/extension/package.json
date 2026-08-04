@@ -1,7 +1,7 @@
 {
   "name": "multiplayer-agent",
   "displayName": "Multiplayer Agent",
-  "description": "A shared AI agent room — one conversation, several people, several agents, each attributable.",
+  "description": "A shared AI agent room \u2014 one conversation, several people, several agents, each attributable.",
   "version": "0.0.1",
   "publisher": "ijmh2",
   "license": "MIT",
@@ -92,6 +92,11 @@
         "command": "mpa.copyInvite",
         "title": "Copy Invite Link",
         "category": "Multiplayer Agent"
+      },
+      {
+        "command": "mpa.setRole",
+        "title": "Change Role\u2026",
+        "category": "Multiplayer Agent"
       }
     ],
     "menus": {
@@ -122,6 +127,11 @@
           "command": "mpa.detachAgent",
           "when": "view == mpa.rooms && viewItem == mpaAgentAttached",
           "group": "inline"
+        },
+        {
+          "command": "mpa.setRole",
+          "when": "view == mpaRooms && viewItem == mpaMemberManageable",
+          "group": "inline"
         }
       ],
       "editor/title": [
@@ -138,7 +148,7 @@
         "mpa.relayUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "WebSocket URL of the relay hosting the room.\n\n**Leave empty to work solo** — the extension runs a relay on this machine, so a room needs no server, no token and no second person. Set a URL when you want other people in the room with you."
+          "markdownDescription": "WebSocket URL of the relay hosting the room.\n\n**Leave empty to work solo** \u2014 the extension runs a relay on this machine, so a room needs no server, no token and no second person. Set a URL when you want other people in the room with you."
         },
         "mpa.commandApproval": {
           "type": "string",
@@ -175,7 +185,7 @@
             "bypassPermissions"
           ],
           "enumDescriptions": [
-            "Your agent asks you before anything with side effects — running code, launching apps, git writes. The prompt appears in your editor, so it is a real decision rather than a stalled request.",
+            "Your agent asks you before anything with side effects \u2014 running code, launching apps, git writes. The prompt appears in your editor, so it is a real decision rather than a stalled request.",
             "Your agent runs everything without asking, like an ordinary Claude Code session. Remember the room steers it: anyone in the room can talk your agent into running things on your machine."
           ],
           "default": "ask",
@@ -194,7 +204,7 @@
         "mpa.roomToken": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Shared secret required by a deployed relay. Leave empty for a local relay. This is a gate, not a login — a holder can still claim any handle, so treat it as the key to the whole room."
+          "markdownDescription": "Shared secret required by a deployed relay. Leave empty for a local relay. This is a gate, not a login \u2014 a holder can still claim any handle, so treat it as the key to the whole room."
         }
       }
     }

@@ -121,6 +121,39 @@ describe("a room that never empties does not grow without limit", () => {
   });
 });
 
+describe("one member cannot fill everyone else's memory", () => {
+  test("an enormous message is capped, not broadcast whole", async () => {
+    // The transcript lives in memory and is rebroadcast to every member and
+    // agent, so an unbounded message is everyone's problem rather than the
+    // sender's. The persisted copy was capped at 1MB from the start; the wire
+    // and the in-memory copy were not.
+    const room = new Room("r", new Driver());
+    const socket = new Socket();
+    await room.join(mira, socket);
+    await room.say("ijmh2", "x".repeat(500_000));
+
+    const entry = socket.sent
+      .filter((m): m is Extract<ServerMsg, { t: "entry" }> => m.t === "entry")
+      .map((m) => m.entry)
+      .at(-1);
+    assert.ok(entry, "it should still be delivered");
+    assert.ok(entry!.text.length <= 32_000, `broadcast ${entry!.text.length} chars`);
+  });
+
+  test("an ordinary message is untouched", async () => {
+    const room = new Room("r", new Driver());
+    const socket = new Socket();
+    await room.join(mira, socket);
+    const text = "here is a stack trace\n".repeat(50);
+    await room.say("ijmh2", text);
+    const entry = socket.sent
+      .filter((m): m is Extract<ServerMsg, { t: "entry" }> => m.t === "entry")
+      .map((m) => m.entry)
+      .at(-1);
+    assert.equal(entry?.text, text, "a cap that trims normal messages is a bug");
+  });
+});
+
 describe("a failing driver degrades the room rather than corrupting it", () => {
   test("a member who joins is still tracked when the driver throws", async () => {
     // In hosted mode this is a live API call that can 429. It used to be the

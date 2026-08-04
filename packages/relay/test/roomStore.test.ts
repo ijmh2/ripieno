@@ -138,11 +138,25 @@ describe("room history survives a restart", () => {
   });
 
   test("one message bigger than the whole budget is truncated, not dropped", async () => {
+    // Built directly rather than through say(), which now caps a message at
+    // 32k chars. The store still has to cope: a snapshot written before that cap
+    // existed can contain an entry this large, and refusing to load it would
+    // lose the room's whole history rather than one message.
     const store = new FileRoomStore(dir);
-    const room = new Room("huge", new Driver());
-    await room.join(mira, new Socket());
-    await room.say("ijmh2", "y".repeat(3_000_000));
-    await store.save("huge", room.snapshot());
+    await store.save("huge", {
+      transcript: [
+        {
+          id: "big",
+          kind: "human",
+          authorHandle: "ijmh2",
+          authorName: "Mira",
+          text: "y".repeat(3_000_000),
+          ts: 0,
+        },
+      ],
+      actions: [],
+      members: [mira],
+    });
 
     const loaded = await store.load("huge");
     assert.equal(loaded!.transcript.length, 1, "the room should not restore empty");

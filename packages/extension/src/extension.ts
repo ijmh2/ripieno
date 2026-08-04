@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { spawn } from "child_process";
-import type { Member, ServerMsg } from "@mpa/protocol";
+import type { Member, RosterEntry, ServerMsg } from "@mpa/protocol";
 import { resolveIdentity, resolveIdentityWithToken, relayRequiresIdentity } from "./identity";
 import { SoloRelay } from "./soloRelay";
 import { buildInvite, describeInvite, parseInvite } from "./invite";
@@ -155,6 +155,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("mpa.joinRoom", () => joinRoom()),
     vscode.commands.registerCommand("mpa.copyInvite", () => copyInvite()),
+    vscode.commands.registerCommand("mpa.setRole", (node?: unknown) => setRole(node)),
     vscode.commands.registerCommand("mpa.leaveRoom", () => leaveRoom()),
     vscode.commands.registerCommand("mpa.signIn", () => signIn()),
     vscode.commands.registerCommand("mpa.addAgent", () => addAgent()),
@@ -929,6 +930,29 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   }
 
+  /**
+   * Change what somebody may do in this room.
+   *
+   * The rule lived in the relay with tests covering it and no way for anyone to
+   * exercise it — `viewer` was a role the product could enforce and nobody could
+   * assign. The relay still decides: this only asks.
+   */
+  async function setRole(node?: unknown): Promise<void> {
+    const entry = (node as { entry?: RosterEntry } | undefined)?.entry;
+    if (!entry) return;
+
+    const choice = await vscode.window.showQuickPick(
+      [
+        { label: "Member", value: "member" as const, description: "Post, attach agents, host the workspace" },
+        { label: "Viewer", value: "viewer" as const, description: "Read the room and browse files only" },
+        { label: "Owner", value: "owner" as const, description: "Everything, including changing roles" },
+      ],
+      { title: `Role for ${entry.displayName}`, placeHolder: `Currently ${entry.role ?? "member"}` }
+    );
+    if (!choice) return;
+    relay?.send({ t: "setRole", handle: entry.handle, role: choice.value });
+  }
+
   /** Everything joining a room does, however the room code arrived. */
   async function connect(room: string): Promise<void> {
     const url = await ensureRelayUrl();
@@ -1038,7 +1062,9 @@ export function activate(context: vscode.ExtensionContext): void {
         roomsTree.setRoster(msg.roster, msg.workspaceHost);
         hostingWorkspace = msg.workspaceHost === msg.you.handle;
         applyWorkspaceHost(msg.workspaceHost);
-        roomsTree.setRoster(msg.roster);
+        // No second setRoster here: it takes the host as an argument, so calling
+        // it without one immediately after assigns undefined and the tree shows
+        // nobody hosting until the next roster broadcast.
         // A joiner should see what the room has already cost, not start at zero.
         roomsTree.setUsage(msg.usage ?? []);
         break;

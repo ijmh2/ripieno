@@ -78,6 +78,7 @@ export class RoomsTreeProvider
   }
 
   setRoster(roster: RosterEntry[], workspaceHost?: string): void {
+    this.iAmOwner = roster.some((r) => r.handle === this.myHandle && r.role === "owner");
     this.roster = roster;
     this.host = workspaceHost;
     this.refresh();
@@ -89,6 +90,7 @@ export class RoomsTreeProvider
     this.changed.fire(undefined);
   }
   private usage = new Map<string, AgentUsage>();
+  private iAmOwner = false;
 
   setMyAgents(agents: MyAgent[]): void {
     this.myAgents = agents;
@@ -184,9 +186,15 @@ export class RoomsTreeProvider
         // Hosting is worth showing on the member, not buried in a tooltip:
         // it is the machine other people's agents are acting on.
         if (this.host === entry.handle) bits.push("hosts the workspace");
+        // Owner is worth showing; member is the default and would be noise.
+        // Viewer must be visible — it is a restriction, and a restriction
+        // nobody can see is indistinguishable from the room being broken.
+        if (entry.role && entry.role !== "member") bits.push(entry.role);
         item.description = bits.join(" · ");
         item.iconPath = new vscode.ThemeIcon(entry.present ? "account" : "circle-outline");
-        item.contextValue = "mpaMember";
+        // Only an owner can change roles, and only somebody else's — the tree
+        // shows the action accordingly rather than offering it and refusing.
+        item.contextValue = this.iAmOwner && !isYou ? "mpaMemberManageable" : "mpaMember";
         return item;
       }
 
