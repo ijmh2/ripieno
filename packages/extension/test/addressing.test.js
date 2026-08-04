@@ -250,3 +250,21 @@ describe("agents may address each other, twice, and only by name", () => {
     assert.equal(nextUnanswered(queued, mirasReviewer, [mirasAgent, samsAgent]), undefined);
   });
 });
+
+describe("an older relay does not silently remove the bound", () => {
+  // A new extension against a relay that has not been redeployed: it stamps no
+  // depth, so there is nothing to stop a chain. The safe reading of "no count"
+  // is the behaviour from before there was one — agents ignore each other —
+  // rather than treating a missing number as zero and running unbounded.
+  const { answersEntry } = require("../dist/addressing.js");
+
+  test("an agent entry with no depth wakes nobody, even when named", () => {
+    const entry = { kind: "agent", text: "miras reviewer, take a look", agentId: "sam:1" };
+    assert.equal(answersEntry(entry, mirasReviewer, [mirasAgent, samsAgent]), false);
+  });
+
+  test("and humans are unaffected, since a human message never carries one", () => {
+    const entry = { kind: "human", text: "does this build?" };
+    assert.equal(answersEntry(entry, mirasAgent, [samsAgent]), true);
+  });
+});

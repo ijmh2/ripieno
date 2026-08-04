@@ -109,10 +109,17 @@ export function answersEntry(
 ): boolean {
   if (entry.kind === "human") return shouldAnswer(entry.text, me, others);
   if (entry.kind !== "agent") return false;
+  // A relay that counts always stamps an agent entry — the shallowest possible
+  // is 1, a reply to a human. So an agent entry with no depth came from a relay
+  // that predates the count, and there is no bound to obey. Fall back to the
+  // behaviour that had one: agents ignore each other. This is the ordinary
+  // state of things while a relay is waiting to be redeployed, and the failure
+  // it avoids is unbounded rather than cosmetic.
+  if (entry.hops === undefined) return false;
   // Answering your own message is the shortest possible loop, and a label an
   // agent tends to repeat — it signs off with its own name and wakes itself.
   if (myAgentId !== undefined && entry.agentId === myAgentId) return false;
-  if ((entry.hops ?? 0) >= MAX_AGENT_HOPS) return false;
+  if (entry.hops >= MAX_AGENT_HOPS) return false;
   return mentions(entry.text, me);
 }
 
