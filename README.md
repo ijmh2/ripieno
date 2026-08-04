@@ -12,7 +12,24 @@ receives carries its author as structure the relay maintains, and every workspac
 action runs on the asking member's own machine under their own permissions.
 
 Two agents belonging to two different people can write to the same repository
-concurrently, and `git log` names each of them correctly.
+concurrently, and `git log` names each of them correctly:
+
+```
+$ npm run demo:provenance
+
+$ git log --pretty='%<(16)%an  %s' -5
+
+  Alex's agent      Mention the limits in the README
+  Sam's reviewer    Write down both limits
+  Mira's coder      Bound the transcript
+  Sam's reviewer    Cover the rate limit
+  Mira's coder      Add rate limit to relay
+```
+
+That column normally holds one name — whoever's machine ran the commit. It is
+real output: the demo runs the container's own code against a real repository,
+writing concurrently rather than in turn, because git serialises on
+`.git/index.lock` and losing that race is how five writes in six once vanished.
 
 ## Status: what's real
 
