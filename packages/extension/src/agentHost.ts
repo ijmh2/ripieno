@@ -96,6 +96,10 @@ export interface AgentHostOptions extends AgentSpec {
   permissionServerPath: string;
   workspaceServerPath: string;
   onStateChange: (id: string, state: AgentState) => void;
+  /** A session to resume, so a reloaded window does not start this agent cold. */
+  resumeSessionId?: string;
+  /** Report a new session id, so it outlives this process. */
+  onSession?: (agentId: string, sessionId: string) => void;
   /** Other agents this member runs. Superseded at runtime by the live roster. */
   siblingLabels?: string[];
 }
@@ -463,6 +467,8 @@ export class AgentHost implements vscode.Disposable {
         permissionMode: permissionMode(),
         mcpConfig,
         permissionPromptTool: "mcp__approvals__approve",
+        resumeSessionId: this.opts.resumeSessionId,
+        onSession: (id) => this.opts.onSession?.(this.opts.id, id),
       });
       return this.runner;
     }

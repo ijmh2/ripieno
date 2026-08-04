@@ -66,6 +66,42 @@ export function activate(context: vscode.ExtensionContext): void {
     args?: string[];
   }
   const specs = new Map<string, AgentSpecRecord>();
+
+  /**
+   * What survives a window reload.
+   *
+   * Nothing did. Reloading lost the room you were in, every agent you had added
+   * — their models, briefs, working folders and providers — and each agent's
+   * session, so every one of them started cold on a conversation the *room*
+   * still remembered. The relay was persisting faithfully to a client that
+   * threw its own state away on every reload.
+   *
+   * Session ids live here too rather than in the runner: the runner is
+   * constructed per attach, so an id held there cannot outlive the thing that
+   * loses it.
+   */
+  const STATE_KEY = "mpa.session";
+  interface PersistedState {
+    room?: string;
+    relayUrl?: string;
+    agents: AgentSpecRecord[];
+    /** Claude Code session per agent id, so a reload resumes rather than restarts. */
+    sessions: Record<string, string>;
+  }
+
+  function loadState(): PersistedState {
+    const saved = context.globalState.get<PersistedState>(STATE_KEY);
+    return { agents: [], sessions: {}, ...saved };
+  }
+
+  function saveState(patch: Partial<PersistedState>): void {
+    const next: PersistedState = {
+      ...loadState(),
+      agents: [...specs.values()],
+      ...patch,
+    };
+    void context.globalState.update(STATE_KEY, next);
+  }
   const approvals = new ApprovalBridge();
   const permissionServerPath = vscode.Uri.joinPath(
     context.extensionUri,
@@ -143,7 +179,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   function ensureSpec(suffix: string, label: string): string {
     const id = `local:${suffix}`;
-    if (!specs.has(id)) specs.set(id, { id, label, providerId: "claude-code" });
+    if (!specs.has(id)) {
+      specs.set(id, { id, label, providerId: "claude-code" });
+      saveState({});
+    }
     return id;
   }
 
@@ -269,6 +308,7 @@ export function activate(context: vscode.ExtensionContext): void {
       command,
       args,
     });
+    saveState({});
     roomsTree.setMyAgents(myAgentsForTree());
     // Attaching straight away is almost always what was meant.
     if (currentRoom) void attachAgent(id);
@@ -637,6 +677,9 @@ export function activate(context: vscode.ExtensionContext): void {
       command: spec.command,
       args: spec.args,
       apiKey,
+      resumeSessionId: loadState().sessions[spec.id],
+      onSession: (agentId, sessionId) =>
+        saveState({ sessions: { ...loadState().sessions, [agentId]: sessionId } }),
       primary: isPrimary,
       siblingLabels: [...specs.values()]
         .filter((other) => other.id !== spec.id)
@@ -754,6 +797,28 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     activeRelayUrl = await solo.start(context.globalStorageUri.fsPath);
     return activeRelayUrl;
+  }
+
+  /**
+   * Bring back the room and the agents this window had before it reloaded.
+   *
+   * Offered rather than done: rejoining posts "X joined the room" to everyone,
+   * and doing that unasked every time an extension host restarts — which VS Code
+   * does on its own schedule — would fill a shared room with noise nobody
+   * caused.
+   */
+  async function restoreSession(): Promise<void> {
+    const saved = loadState();
+    for (const spec of saved.agents) specs.set(spec.id, spec);
+    roomsTree.setMyAgents(myAgentsForTree());
+    if (!saved.room) return;
+
+    const choice = await vscode.window.showInformationMessage(
+      `Rejoin "${saved.room}"?`,
+      "Rejoin",
+      "Not now"
+    );
+    if (choice === "Rejoin") await connect(saved.room);
   }
 
   /**
@@ -900,6 +965,7 @@ export function activate(context: vscode.ExtensionContext): void {
     detachAll();
     currentRoom = room;
     me = member;
+    saveState({ room, relayUrl: activeRelayUrl });
     roomsTree.setMyAgents(myAgentsForTree());
 
     relay = new RelayClient({
@@ -1062,6 +1128,9 @@ export function activate(context: vscode.ExtensionContext): void {
       isError: result.isError,
     });
   }
+
+  // Last, so everything it touches is already constructed.
+  void restoreSession();
 }
 
 export function deactivate(): void {

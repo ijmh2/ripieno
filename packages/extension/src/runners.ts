@@ -54,6 +54,17 @@ export interface ClaudeRunnerOptions {
   permissionMode: string;
   mcpConfig: string;
   permissionPromptTool: string;
+  /**
+   * A session to resume, from a previous window.
+   *
+   * Held outside the runner because the runner is constructed per attach — an id
+   * kept only in here cannot outlive the thing that loses it, which is why every
+   * reload used to start every agent cold on a conversation the room still
+   * remembered.
+   */
+  resumeSessionId?: string;
+  /** Called when the session id changes, so it can be stored. */
+  onSession?: (sessionId: string) => void;
 }
 
 export class ClaudeCodeRunner implements ModelRunner {
@@ -63,7 +74,9 @@ export class ClaudeCodeRunner implements ModelRunner {
   /** Session id, so successive turns share context rather than starting cold. */
   private sessionId: string | undefined;
 
-  constructor(private readonly opts: ClaudeRunnerOptions) {}
+  constructor(private readonly opts: ClaudeRunnerOptions) {
+    this.sessionId = opts.resumeSessionId;
+  }
 
   get description(): string {
     return this.opts.model ?? "claude code";
@@ -130,7 +143,10 @@ export class ClaudeCodeRunner implements ModelRunner {
               cache_read_input_tokens?: number;
             };
           };
-          if (parsed.session_id) this.sessionId = parsed.session_id;
+          if (parsed.session_id && parsed.session_id !== this.sessionId) {
+            this.sessionId = parsed.session_id;
+            this.opts.onSession?.(parsed.session_id);
+          }
           // Already in the payload we were parsing, and previously discarded.
           this.usage = {
             costUsd: parsed.total_cost_usd,
