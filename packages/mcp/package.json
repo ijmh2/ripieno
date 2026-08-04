@@ -3,10 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "commonjs",
-  "bin": { "mpa-mcp": "dist/index.js" },
+  "bin": {
+    "mpa-mcp": "dist/index.js"
+  },
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

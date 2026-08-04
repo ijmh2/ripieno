@@ -5,13 +5,11 @@
  * maps to one shared agent session.
  */
 
-import type Anthropic from "@anthropic-ai/sdk";
 import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientMsg, ConnectionRole, Member } from "@mpa/protocol";
 import { WORKSPACE_HANDLE } from "@mpa/protocol";
 import { ByoDriver } from "./byoDriver.js";
-import { HostedDriver } from "./hostedDriver.js";
 import { Room } from "./room.js";
 import { createRoomStore } from "./roomStore.js";
 import { GithubVerifier } from "./identity.js";
@@ -83,28 +81,6 @@ export type Relay = WebSocketServer & {
 };
 
 export function startServer(config: ServerConfig): Relay {
-  /**
-   * Built on first use, and only in hosted mode.
-   *
-   * A static import would pull the whole SDK into anything that bundles this —
-   * and the extension now does, to run a relay in-process for solo use. BYO mode
-   * never touches it, so loading it eagerly was several megabytes spent on a
-   * code path most deployments never reach.
-   *
-   * Credentials resolve from the environment (ANTHROPIC_API_KEY, or an
-   * `ant auth login` profile) — never hardcoded, never accepted from a client.
-   */
-  let client: Anthropic | undefined;
-  async function anthropic(): Promise<Anthropic> {
-    if (client) return client;
-    const { default: Ctor } = await import("@anthropic-ai/sdk");
-    // The cast bridges dual-package type identities: the static import resolves
-    // the CommonJS declaration and the dynamic one the ESM declaration, which
-    // differ only by a private field. Same class either way.
-    const made = new Ctor() as unknown as Anthropic;
-    client = made;
-    return made;
-  }
   const rooms = new Map<string, Room>();
   const store = createRoomStore(config.dataDir);
   const verifier = config.verifier ?? new GithubVerifier();
@@ -207,28 +183,17 @@ export function startServer(config: ServerConfig): Relay {
       return room;
     }
 
-    // Bound the forward reference so the driver's callbacks can reach the room
-    // it is about to be handed to.
-    let room: Room;
-    const driver = new HostedDriver(
-      await anthropic(),
-      { agentId: config.agentId!, environmentId: config.environmentId!, roomCode: code },
-      {
-        onAgentMessage: (id, text) => room.onAgentMessage(id, text),
-        onAgentDelta: (id, text) => room.onAgentDelta(id, text),
-        onAgentDeltaCancel: (id) => room.onAgentDeltaCancel(id),
-        onToolCall: (handle, callId, name, input) => room.onToolCall(handle, callId, name, input),
-        onStatus: (status, waitingOn) => room.onStatus(status, waitingOn),
-        onUsage: (usage) => log(`room ${code} usage`, JSON.stringify(usage)),
-        onError: (message) => room.onError(message),
-      }
+    // Hosted mode is not on this branch.
+    //
+    // It was built against the driver interface above, compiles, and its unit
+    // tests pass — but it has never run against a live Managed Agents session,
+    // so shipping it as one of two headline modes would be describing something
+    // unrun. The code is on the `hosted` branch; the seam it was built against
+    // is right here, which is the part worth keeping either way.
+    throw new Error(
+      "hosted mode is not available on this branch — see the `hosted` branch. " +
+        "Unset MPA_MODE to run in BYO mode, which is what this relay is for."
     );
-    room = new Room(code, driver, "hosted");
-    await restore(code, room);
-    await driver.start(room.roster);
-    log(`room ${code} session ${driver.id}`);
-    if (driver.traceUrl) log(`  trace: ${driver.traceUrl}`);
-    return room;
   }
 
   /** Bring back whatever this room had before the last restart. */

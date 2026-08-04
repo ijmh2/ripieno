@@ -1,0 +1,28 @@
+# The suite is the main claim this repository makes about itself, and a reader
+# has no reason to take it on trust. Node 20 because that is what VS Code ships,
+# so the extension is built against the runtime it will actually load in.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      # Several suites drive real git repositories, so git needs an identity.
+      - name: Give git an identity for the integration tests
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name CI
+      - run: npm test
