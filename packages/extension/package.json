@@ -214,7 +214,7 @@
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node esbuild.js && node --test test/*.test.js",
-    "package": "vsce package --no-dependencies --out ../../dist/",
+    "package": "mkdir -p ../../dist && vsce package --no-dependencies --out ../../dist/",
     "vscode:prepublish": "node esbuild.js --production"
   },
   "dependencies": {
