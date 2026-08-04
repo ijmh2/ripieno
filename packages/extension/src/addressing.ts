@@ -9,6 +9,8 @@
 // fiddly, they decide whether anyone answers at all, and both failure modes are
 // bad: a pile-on wastes money, and silence looks like the product is broken.
 
+import { MAX_AGENT_HOPS } from "@mpa/protocol";
+
 export interface AgentIdentity {
   /** Transcript label, e.g. "Mira Ellery's reviewer". */
   label: string;
@@ -75,6 +77,45 @@ export function mentions(text: string, agent: AgentIdentity): boolean {
   return false;
 }
 
+/** The parts of a transcript entry the addressing rules read. */
+export interface AddressableEntry {
+  kind: string;
+  text: string;
+  /** Depth in a chain of agents, counted by the relay. Humans are 0. */
+  hops?: number;
+  /** Which agent said it, so this one does not answer itself. */
+  agentId?: string;
+}
+
+/**
+ * Should this agent answer this entry?
+ *
+ * Humans get the ordinary rules, including the primary fallback: a plain
+ * question with no name in it still deserves exactly one reply.
+ *
+ * Another agent's message is different, and deliberately much stricter. It has
+ * to *name* this agent — no primary fallback, because a fallback is precisely
+ * what turns two agents into a conversation nobody asked for and nobody is
+ * paying attention to. And it stops at MAX_AGENT_HOPS regardless: naming is
+ * what an agent decides, so naming alone bounds nothing. One agent reporting
+ * and another checking it is worth having; the third reply is where it becomes
+ * a bill.
+ */
+export function answersEntry(
+  entry: AddressableEntry,
+  me: SelfIdentity,
+  others: AgentIdentity[],
+  myAgentId?: string
+): boolean {
+  if (entry.kind === "human") return shouldAnswer(entry.text, me, others);
+  if (entry.kind !== "agent") return false;
+  // Answering your own message is the shortest possible loop, and a label an
+  // agent tends to repeat — it signs off with its own name and wakes itself.
+  if (myAgentId !== undefined && entry.agentId === myAgentId) return false;
+  if ((entry.hops ?? 0) >= MAX_AGENT_HOPS) return false;
+  return mentions(entry.text, me);
+}
+
 /**
  * The oldest message this agent still owes an answer to.
  *
@@ -85,12 +126,13 @@ export function mentions(text: string, agent: AgentIdentity): boolean {
  * agents that is the ordinary case rather than an edge one, and it presents as
  * the agent simply ignoring you.
  */
-export function nextUnanswered<T extends { kind: string; text: string }>(
+export function nextUnanswered<T extends AddressableEntry>(
   entries: T[],
   me: SelfIdentity,
-  others: AgentIdentity[]
+  others: AgentIdentity[],
+  myAgentId?: string
 ): T | undefined {
-  return entries.find((e) => e.kind === "human" && shouldAnswer(e.text, me, others));
+  return entries.find((e) => answersEntry(e, me, others, myAgentId));
 }
 
 /** Whole-word, allowing a leading @ and ordinary punctuation around it. */

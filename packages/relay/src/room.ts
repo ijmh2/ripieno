@@ -9,6 +9,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   ActionEntry,
+  AgentActivity,
   AttachedAgent,
   ConnectionRole,
   Member,
@@ -45,6 +46,8 @@ interface Connection {
 interface AgentConnection extends Connection {
   id: string;
   label: string;
+  /** Last reported activity. Absent until its host says — see AgentActivity. */
+  state?: AgentActivity;
 }
 
 /** Identifies an agent connection; humans are identified by handle alone. */
@@ -290,7 +293,23 @@ export class Room {
   private agentsOf(handle: string): AttachedAgent[] {
     return [...this.agents.values()]
       .filter((a) => a.member.handle === handle)
-      .map((a) => ({ id: a.id, owner: handle, label: a.label }));
+      .map((a) => ({ id: a.id, owner: handle, label: a.label, state: a.state }));
+  }
+
+  /**
+   * An agent's host reporting what it is doing.
+   *
+   * Broadcast so the room can see it and so other agents are told: an agent
+   * that knows another is still thinking can say so, instead of answering half
+   * a question as though the other half were never asked. Unchanged states are
+   * dropped — a busy room would otherwise broadcast a full roster twice a turn
+   * per agent.
+   */
+  setAgentState(agentId: string, state: AgentActivity): void {
+    const agent = this.agents.get(agentId);
+    if (!agent || agent.state === state) return;
+    agent.state = state;
+    this.broadcastRoster();
   }
 
   /* ---------------------------------------------------------------- */
@@ -318,8 +337,9 @@ export class Room {
     }
 
     let label: string;
+    let myAgentId: string | undefined;
     if (role === "agent") {
-      const id = agent?.id ?? `${member.handle}:default`;
+      const id = (myAgentId = agent?.id ?? `${member.handle}:default`);
       label = agent?.label ?? `${member.displayName}'s agent`;
       // Replacing by *agent id* — not by handle — is what lets one person run
       // several agents at once without them evicting each other.
@@ -348,6 +368,12 @@ export class Room {
         isContainer(member.handle) ? "workspace" : undefined,
         isContainer(member.handle) ? undefined : this.roleOf(member.handle)
       ),
+      // The relay mints the agent id — it namespaces it by owner so two clients
+      // defaulting to the same one cannot evict each other — so the relay is
+      // also the only thing that can say what it ended up as. Without this an
+      // agent cannot recognise its own messages in the transcript, and an agent
+      // that signs off with its own name would wake itself.
+      youAgentId: myAgentId,
       roster: this.roster,
       transcript: this.transcript,
     });
@@ -628,7 +654,8 @@ export class Room {
     handle: string,
     text: string,
     role: ConnectionRole = "human",
-    agentId?: string
+    agentId?: string,
+    inReplyTo?: string
   ): Promise<void> {
     // Bounded before anything else touches it. The transcript lives in memory
     // and is rebroadcast to everyone, so an unbounded message is everyone's
@@ -647,6 +674,7 @@ export class Room {
         agentId: conn.id,
         text,
         ts: Date.now(),
+        hops: this.hopsFor(inReplyTo),
       });
       return;
     }
@@ -662,6 +690,27 @@ export class Room {
       ts: Date.now(),
     });
     await this.driver.say(conn.member, text);
+  }
+
+  /**
+   * How deep into a chain of agents an answer is.
+   *
+   * The client names the entry it is answering; the depth is derived here from
+   * what the transcript actually says. A client that could send the number
+   * itself could send 0 forever, and the cap it is subject to (MAX_AGENT_HOPS,
+   * applied by each agent's host when deciding whether to wake) would be a
+   * suggestion. An unknown or missing id means a fresh chain — a reply to a
+   * human is depth 1, which is every ordinary turn.
+   *
+   * Counting here rather than enforcing here is deliberate: the bound is on
+   * which agent *wakes*, not on what may be posted. Refusing to broadcast a
+   * message an agent has already spent a turn producing would hide work that
+   * was done, which is worse than a chain one reply too long.
+   */
+  private hopsFor(inReplyTo: string | undefined): number {
+    if (!inReplyTo) return 1;
+    const parent = this.transcript.find((e) => e.id === inReplyTo);
+    return (parent?.hops ?? 0) + 1;
   }
 
   /** Extend an outstanding call's deadline as its addressee makes progress. */

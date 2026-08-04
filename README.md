@@ -24,10 +24,14 @@ Honest, because an unknown repository has no other way to earn it.
 | **Built and tested, never deployed** | The shared-workspace container (`packages/workspace-host`) — 43 tests including real git integration, and it has never run anywhere but a test |
 | **Not on this branch** | Hosted mode. Built against the driver interface, compiles, unit tests pass — and it has never run against a live Managed Agents session, so it lives on the `hosted` branch rather than being described here as a feature |
 
-There are ~300 tests (`npm test`), and six exploitable defects found by an
+There are ~330 tests (`npm test`), and six exploitable defects found by an
 adversarial audit have been fixed, each with a regression test written from the
 exploit. Several other bugs were found only by two people *using* it — the tests
-proved the parts worked; those were failures of what the parts added up to.
+proved the parts worked; those were failures of what the parts added up to. The
+newest tests close that gap where it is worst: they run a real relay, a real
+agent host and a real subprocess, and assert on the prompt the agent was
+actually handed. The first one written found that every CLI agent had silently
+been running Claude Code.
 
 ## Try it in one minute, alone
 
@@ -77,6 +81,12 @@ Capability differs and the room says so rather than implying otherwise: a Claude
 Code agent can read and write files and run commands; a chat-API agent can only
 talk. Presenting both as "an agent" without distinction would let somebody ask
 Grok to fix a file and get a confident answer while nothing happened.
+
+Usage is per agent, and in BYO it is **turns and tokens, never a price**. Claude
+Code reports a dollar figure on a subscription too, where it is what those
+tokens would have cost on the API and nobody is billed a penny of it — and next
+to a colleague's agent on a different plan, the two figures do not mean the same
+thing.
 
 An agent can also join over MCP instead — copy `.mcp.json.example` to `.mcp.json`
 and fill in `MPA_ROOM` / `MPA_HANDLE` / `MPA_NAME`. That path gets ten tools
@@ -166,14 +176,22 @@ they were present for.
 ## Tests
 
 ```bash
-npm test          # ~300 across six packages, ~1 minute
+npm test          # ~330 across six packages, ~1 minute
 npm run typecheck
 ```
 
 The rules that are expensive to get wrong are pure functions with no I/O —
-`roomCore.ts` (provenance envelope, addressing, event dedupe, the idle gate) and
+`roomCore.ts` (provenance envelope, addressing, event dedupe, the idle gate),
+`protocol/describeMembers` (what an agent is told about who is in the room) and
 `workspace-core/paths.ts` (the confinement boundary) — so they are tested without
 a socket or a credential.
+
+What that misses is everything the pieces do *together*, which is where the bugs
+two real users hit actually lived. So `extension/test/agentHost.test.js` starts a
+relay, attaches real agent hosts to it, and puts a script in place of the model
+that writes down the prompt it was given. It is the only way to assert that an
+agent was told who is in the room — and it immediately found that selecting a
+CLI provider had been quietly running Claude Code instead.
 
 ## Not done, on purpose
 
@@ -181,6 +199,7 @@ a socket or a credential.
   infrastructure work that produces nothing a reader can see.
 - **Nothing is published to a marketplace.** Build the `.vsix` and install it.
 - **Hosted mode is on a branch**, because it has never run against a live session.
-- **Agents cannot chain.** Asking agent A to summarise agent B's output does not
-  fire when B posts — agents deliberately ignore each other's messages, or two of
-  them talk forever. A human re-asks.
+- **Agent chains stop at two.** One agent may name another and get an answer —
+  report, then check — but the third reply does not fire and a person has to
+  speak again. The relay counts the chain from its own transcript, so the bound
+  is not something a client can talk its way out of.

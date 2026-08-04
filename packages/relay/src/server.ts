@@ -359,7 +359,13 @@ export function startServer(config: ServerConfig): Relay {
             if (!joined.room.canAct(joined.handle)) {
               return send(socket, "viewers can read this room but not post to it");
             }
-            await joined.room.say(joined.handle, msg.text, joined.role, joined.agentId);
+            await joined.room.say(
+              joined.handle,
+              msg.text,
+              joined.role,
+              joined.agentId,
+              msg.inReplyTo
+            );
             break;
           case "toolProgress":
             if (!joined) return send(socket, "join a room before reporting tool progress");
@@ -383,6 +389,13 @@ export function startServer(config: ServerConfig): Relay {
           case "agentUsage":
             if (!joined?.agentId) return;
             joined.room.recordUsage(joined.agentId, msg.provider, msg.usage);
+            break;
+
+          case "agentState":
+            // Only an agent connection has a state to report, and it reports
+            // its own — the id comes from the socket, not from the message.
+            if (!joined?.agentId) return;
+            joined.room.setAgentState(joined.agentId, msg.state);
             break;
 
           case "setRole":

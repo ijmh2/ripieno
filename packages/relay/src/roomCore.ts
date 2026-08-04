@@ -7,7 +7,7 @@
  */
 
 import type { AttachedAgent, Member, RoomRole, RosterEntry } from "@mpa/protocol";
-import { colorIndexFor } from "@mpa/protocol";
+import { colorIndexFor, describeMembers } from "@mpa/protocol";
 
 /* ------------------------------------------------------------------ */
 /* Provenance envelope                                                 */
@@ -59,38 +59,12 @@ export function toRosterEntry(
  * membership or presence changes.
  */
 export function rosterPrompt(roster: RosterEntry[]): string {
-  // The shared workspace is a container, not a participant. Listing it as a
-  // member would invite the agent to address it as a person and to attribute
-  // work to "workspace" — it is reached with the "room" target instead.
-  const people = roster.filter((r) => r.kind !== "workspace");
-  if (people.length === 0) {
-    return "There are currently no members in this room.";
+  const members = describeMembers(roster);
+  if (!roster.some((r) => r.kind !== "workspace")) {
+    return members;
   }
-  const lines = people.map((r) => {
-    const repo = r.repo ? `, working in ${r.repo}` : "";
-    const state = r.present ? "present" : "OFFLINE — do not address tools to them";
-    // Members may run their own agents alongside you. Naming them stops you
-    // mistaking another agent's message for its owner's own words.
-    const agents =
-      r.agents.length > 0 ? `; runs ${r.agents.map((a) => `"${a.label}"`).join(" and ")}` : "";
-    return `- @${r.handle} (${r.displayName}${repo}) — ${state}${agents}`;
-  });
-
-  const agentCount = people.reduce((n, r) => n + r.agents.length, 0);
-  const mixedRoomNote =
-    agentCount > 0
-      ? [
-          "",
-          "Some members have their own agents in this room. Their messages are labelled with the agent's",
-          "name, not the person's. Do not treat an agent's statement as its owner's decision, and do not",
-          "address workspace tools to an agent — tools run on a *member's* machine.",
-        ]
-      : [];
-
   return [
-    "Room members:",
-    ...lines,
-    ...mixedRoomNote,
+    members,
     "",
     "Every message you receive is wrapped in a <message from=\"@handle\"> tag naming its author.",
     "Attribute facts, preferences and decisions to the member who stated them; never merge them into a single anonymous view.",

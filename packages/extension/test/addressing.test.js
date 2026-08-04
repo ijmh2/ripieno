@@ -186,3 +186,67 @@ describe("naming one of somebody's agents does not wake the others", () => {
     assert.equal(mentions("get miras agent to run the tests", mirasAgent), true);
   });
 });
+
+describe("agents may address each other, twice, and only by name", () => {
+  // Two agents that answer each other's every message talk until somebody
+  // notices the bill, which is why they ignored each other entirely until now.
+  // Both halves are needed: naming is what an agent chooses, so naming alone
+  // bounds nothing; the hop count is stamped by the relay from its own
+  // transcript, so it is not something a client can talk its way out of.
+  const { answersEntry, nextUnanswered } = require("../dist/addressing.js");
+  const fromAgent = (text, hops, agentId) => ({ kind: "agent", text, hops, agentId });
+  const fromHuman = (text) => ({ kind: "human", text });
+
+  test("a named agent answers another agent's first reply", () => {
+    const entry = fromAgent("miras reviewer, does this hold up?", 1, "sam:1");
+    assert.equal(answersEntry(entry, mirasReviewer, [mirasAgent, samsAgent]), true);
+  });
+
+  test("naming nobody wakes nobody, however shallow", () => {
+    // The ordinary case: an agent answers its owner and says nothing about
+    // anyone else. Every other agent must stay out of it.
+    const entry = fromAgent("Done — the tests pass.", 1, "sam:1");
+    assert.equal(answersEntry(entry, mirasAgent, [samsAgent]), false);
+    assert.equal(answersEntry(entry, mirasReviewer, [samsAgent]), false);
+  });
+
+  test("the primary fallback does not apply to agents", () => {
+    // A human question with no name in it still deserves one reply per member.
+    // An agent statement with no name in it deserves none at all — the fallback
+    // is exactly what would turn two agents into a conversation.
+    const text = "does this build?";
+    assert.equal(answersEntry(fromHuman(text), mirasAgent, [samsAgent]), true);
+    assert.equal(answersEntry(fromAgent(text, 1, "sam:1"), mirasAgent, [samsAgent]), false);
+  });
+
+  test("a second hop is the last one", () => {
+    const second = fromAgent("miras reviewer, one more thing", 2, "sam:1");
+    assert.equal(answersEntry(second, mirasReviewer, [mirasAgent, samsAgent]), false);
+    // Named just as clearly at depth 1, so it is the depth stopping it.
+    const first = fromAgent("miras reviewer, one more thing", 1, "sam:1");
+    assert.equal(answersEntry(first, mirasReviewer, [mirasAgent, samsAgent]), true);
+  });
+
+  test("an agent does not answer itself", () => {
+    // An agent that signs off with its own name would otherwise wake itself,
+    // which is the shortest loop available.
+    const own = fromAgent("— Mira Ellery's reviewer", 1, "mira:reviewer");
+    assert.equal(answersEntry(own, mirasReviewer, [mirasAgent], "mira:reviewer"), false);
+    assert.equal(answersEntry(own, mirasReviewer, [mirasAgent], "mira:coder"), true);
+  });
+
+  test("a human can always restart a chain that has stopped", () => {
+    const entry = fromHuman("reviewer, what did you make of that?");
+    assert.equal(answersEntry(entry, mirasReviewer, [mirasAgent]), true);
+  });
+
+  test("recovery after a turn picks up an agent message that named us", () => {
+    const queued = [fromAgent("nothing to see", 1, "sam:1"), fromAgent("miras reviewer?", 1, "sam:1")];
+    assert.equal(nextUnanswered(queued, mirasReviewer, [mirasAgent, samsAgent])?.text, "miras reviewer?");
+  });
+
+  test("and skips one that is out of hops", () => {
+    const queued = [fromAgent("miras reviewer?", 2, "sam:1")];
+    assert.equal(nextUnanswered(queued, mirasReviewer, [mirasAgent, samsAgent]), undefined);
+  });
+});

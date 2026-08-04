@@ -7,7 +7,13 @@
 // so nothing here is drag-only.
 
 import * as vscode from "vscode";
-import type { AgentUsage, AttachedAgent, RoomMode, RosterEntry } from "@mpa/protocol";
+import type {
+  AgentActivity,
+  AgentUsage,
+  AttachedAgent,
+  RoomMode,
+  RosterEntry,
+} from "@mpa/protocol";
 import type { AgentState } from "./agentHost";
 
 const MIME = "application/vnd.code.tree.mpa.rooms";
@@ -204,12 +210,17 @@ export class RoomsTreeProvider
         // Naming the folder matters once agents can work in different projects:
         // otherwise two identically-named agents look interchangeable.
         const suffix = mine ? detailSuffix(mine) : "";
-        item.description = `${mine ? describeAgent(mine.state) : "attached"}${suffix}${describeUsage(
-          this.usage.get(node.agent.id)
+        // Another member's agent reports its own state through the roster, so
+        // the room can see somebody else's agent is mid-turn rather than
+        // wondering why it has gone quiet. Ours is read locally, which is a
+        // roster broadcast sooner.
+        const state = mine ? describeAgent(mine.state) : describeForeign(node.agent.state);
+        const thinking = (mine ? mine.state : node.agent.state) === "thinking";
+        item.description = `${state}${suffix}${describeUsage(
+          this.usage.get(node.agent.id),
+          this.mode
         )}`;
-        item.iconPath = new vscode.ThemeIcon(
-          mine?.state === "thinking" ? "loading~spin" : "robot"
-        );
+        item.iconPath = new vscode.ThemeIcon(thinking ? "loading~spin" : "robot");
         // Only your own agents are yours to stop.
         item.contextValue = mine ? "mpaAgentAttached" : "mpaForeignAgent";
         item.id = `attached:${node.agent.id}`;
@@ -306,17 +317,35 @@ function describeAgent(state: AgentState): string {
 }
 
 /**
- * What an agent has cost, in a form that fits beside its name.
+ * Another member's agent, which we only know about through the roster.
+ *
+ * "attached" when it has not reported — an agent joined over MCP has no host to
+ * report for it, and calling that idle would be a claim we cannot support.
+ */
+function describeForeign(state: AgentActivity | undefined): string {
+  return state === "thinking" ? "thinking…" : state === "idle" ? "watching the room" : "attached";
+}
+
+/**
+ * What an agent has used, in a form that fits beside its name.
  *
  * Says nothing at all when the provider reports nothing. A "$0.00" against a
  * wrapped CLI would be the most confident number in the tree and the least true
  * one — and the cheapest-looking agent is exactly the one people would then
  * reach for.
+ *
+ * No currency in BYO, whatever the provider says. Claude Code reports
+ * `total_cost_usd` on a subscription too, where it is what those tokens would
+ * have cost on the API and not a penny of it is billed. Showing it invents a
+ * bill nobody receives, and next to a second member's agent on a different plan
+ * the two figures do not even mean the same thing. Tokens and turns are true in
+ * every case. The number stays in the data — hosted mode has one org key and a
+ * real invoice, and there the dollars are the answer.
  */
-function describeUsage(usage: AgentUsage | undefined): string {
+function describeUsage(usage: AgentUsage | undefined, mode: RoomMode): string {
   if (!usage || usage.turns === 0) return "";
   const bits: string[] = [`${usage.turns} turn${usage.turns === 1 ? "" : "s"}`];
-  if (usage.costUsd !== undefined) {
+  if (usage.costUsd !== undefined && mode === "hosted") {
     bits.push(`$${usage.costUsd.toFixed(2)}`);
   } else if (usage.outputTokens !== undefined) {
     // Tokens without a price: an OpenAI-compatible endpoint leaves pricing to
@@ -324,7 +353,7 @@ function describeUsage(usage: AgentUsage | undefined): string {
     const total = (usage.inputTokens ?? 0) + usage.outputTokens;
     bits.push(`${Math.round(total / 1000)}k tokens`);
   } else if (usage.unreported) {
-    bits.push("cost not reported");
+    bits.push("usage not reported");
   }
   return ` · ${bits.join(" · ")}`;
 }

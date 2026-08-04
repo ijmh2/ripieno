@@ -25,7 +25,23 @@ export interface AttachedAgent {
   owner: string;
   /** How it appears in the transcript, e.g. "Mira's agent" or "Mira's reviewer". */
   label: string;
+  /**
+   * What it is doing right now, when its host has said.
+   *
+   * Absent means nobody reported — an agent joined over MCP has no host to
+   * report for it, and "we do not know" must not render as "idle".
+   */
+  state?: AgentActivity;
 }
+
+/**
+ * An agent's activity, as the room sees it.
+ *
+ * Deliberately coarser than the extension's own AgentState: "attaching" and
+ * "detached" are answered by presence in the roster, and a room only needs to
+ * know whether waiting for this agent is worthwhile.
+ */
+export type AgentActivity = "idle" | "thinking";
 
 /**
  * What a member may do in a room.
@@ -73,7 +89,28 @@ export interface TranscriptEntry {
    * "Mira's coder" from "Mira's reviewer" while keeping both in Mira's colour.
    */
   agentId?: string;
+  /**
+   * How many agent replies deep this is. A human message is 0; an agent
+   * answering it is 1; an agent answering *that* is 2, and at MAX_AGENT_HOPS
+   * the chain stops.
+   *
+   * Computed by the relay from the entry being answered, never taken from the
+   * client — the whole point is a bound a participant cannot lift.
+   */
+  hops?: number;
 }
+
+/**
+ * How far a chain of agents talking to each other may run before a human has to
+ * speak again.
+ *
+ * Two covers the case worth having — one agent reports, another summarises or
+ * checks it — and stops well short of the failure it replaces, which is two
+ * agents answering each other until somebody notices the bill. Naming is
+ * required as well as this cap: an unnamed agent message wakes nobody at any
+ * depth, so the bound is the second line of defence, not the first.
+ */
+export const MAX_AGENT_HOPS = 2;
 
 /** Lifecycle of the agent as far as the room is concerned. */
 export type RoomStatus = "idle" | "thinking" | "awaiting-tool" | "error";
@@ -147,6 +184,13 @@ export interface JoinMsg {
 export interface SayMsg {
   t: "say";
   text: string;
+  /**
+   * The transcript entry this answers, when an agent is replying to another
+   * agent. The relay uses it to count how far a chain has run — see
+   * TranscriptEntry.hops. Clients send the id, never the count: a client that
+   * could state its own depth could simply always claim zero.
+   */
+  inReplyTo?: string;
 }
 
 /** Result of a workspace tool the agent addressed to this member. */
@@ -271,6 +315,17 @@ export interface AgentUsageMsg {
   usage: TurnUsage;
 }
 
+/**
+ * An agent telling the room whether it is working.
+ *
+ * Sent on the agent's own connection, so it can only ever describe itself —
+ * the relay reads who this is from the socket rather than from the message.
+ */
+export interface AgentStateMsg {
+  t: "agentState";
+  state: AgentActivity;
+}
+
 /** The room's running totals, per agent. */
 export interface UsageMsg {
   t: "usage";
@@ -300,6 +355,7 @@ export type ClientMsg =
   | ClaimWorkspaceMsg
   | SetRoleMsg
   | AgentUsageMsg
+  | AgentStateMsg
   | WorkspaceChangedMsg
   | PingMsg;
 
@@ -327,6 +383,14 @@ export interface JoinedMsg {
   /** Per-agent spend so far, so a joiner sees the room's cost immediately. */
   usage?: AgentUsage[];
   you: RosterEntry;
+  /**
+   * Agent connections only: the id the relay gave this agent.
+   *
+   * It is namespaced by owner rather than taken raw from the client, so the
+   * client cannot work it out — and without it an agent cannot pick its own
+   * messages out of the transcript, which is how one ends up answering itself.
+   */
+  youAgentId?: string;
   roster: RosterEntry[];
   /** Replayed so a joiner sees the conversation so far. */
   transcript: TranscriptEntry[];
@@ -487,4 +551,60 @@ export function colorIndexFor(handle: string): number {
     h = (h * 31 + handle.charCodeAt(i)) | 0;
   }
   return Math.abs(h) % PALETTE_SIZE;
+}
+
+/**
+ * Who is in the room, as a block an agent can read.
+ *
+ * This lives in the protocol because both drivers need the same answer: the
+ * relay builds the hosted agent's system prompt from it, and each member's own
+ * AgentHost prepends it to a BYO turn. Two renderings would drift, and the
+ * failure is not cosmetic — an agent that has been told a different roster from
+ * the one the relay is enforcing will address tools to people who are not
+ * there.
+ *
+ * It exists at all because an agent with no roster guesses from display names,
+ * and guesses wrongly with total confidence: asked a question by a person whose
+ * name reads like a label, one refused to answer them on the grounds that they
+ * were an agent. It could not check. Now it can.
+ */
+export function describeMembers(roster: RosterEntry[]): string {
+  // The shared workspace is a container, not a participant. Listing it as a
+  // member invites the agent to address it as a person and to attribute work to
+  // "workspace" — it is reached with the "room" target instead.
+  const people = roster.filter((r) => r.kind !== "workspace");
+  if (people.length === 0) {
+    return "There are currently no members in this room.";
+  }
+
+  const lines = people.map((r) => {
+    const repo = r.repo ? `, working in ${r.repo}` : "";
+    const state = r.present ? "present" : "OFFLINE — do not address tools to them";
+    // Members may run their own agents alongside you. Naming them stops you
+    // mistaking another agent's message for its owner's own words, and the
+    // activity stops you answering half a question because the agent that was
+    // asked for the other half has not finished yet.
+    const agents =
+      r.agents.length > 0
+        ? `; runs ${r.agents
+            .map((a) => `"${a.label}"${a.state === "thinking" ? " (thinking)" : ""}`)
+            .join(" and ")}`
+        : "";
+    return `- @${r.handle} (${r.displayName}${repo}) — ${state}${agents}`;
+  });
+
+  const agentCount = people.reduce((n, r) => n + r.agents.length, 0);
+  const mixedRoomNote =
+    agentCount > 0
+      ? [
+          "",
+          "Some members have their own agents in this room. Their messages are labelled with the agent's",
+          "name, not the person's. Do not treat an agent's statement as its owner's decision, and do not",
+          "address workspace tools to an agent — tools run on a *member's* machine.",
+          "Everyone above who is not listed as an agent is a person. Never decide from a display name that",
+          "somebody is an agent and refuse them; this list is what you check.",
+        ]
+      : [];
+
+  return ["Room members:", ...lines, ...mixedRoomNote].join("\n");
 }

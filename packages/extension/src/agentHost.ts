@@ -15,8 +15,9 @@ import * as vscode from "vscode";
 import { randomBytes } from "crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { Member, RosterEntry, TranscriptEntry } from "@mpa/protocol";
+import { describeMembers } from "@mpa/protocol";
 import {
-  shouldAnswer,
+  answersEntry,
   nextUnanswered,
   type AgentIdentity,
   type SelfIdentity,
@@ -148,6 +149,23 @@ export class AgentHost implements vscode.Disposable {
    * carries all of them, so the gate can close before the model runs.
    */
   private others: AgentIdentity[] = [];
+  /**
+   * The room's membership, as last broadcast.
+   *
+   * Held whole rather than reduced to siblings, because it is sent to the model
+   * on every turn — the system prompt is written once per session, so a roster
+   * placed there is wrong the moment anybody joins or leaves.
+   */
+  private roster: RosterEntry[] = [];
+  /**
+   * The entry the next turn is answering, so the relay can count the chain.
+   *
+   * Only used to derive depth; the relay looks the id up in its own transcript,
+   * so nothing here can shorten a chain by claiming to be at its start.
+   */
+  private replyTo: string | undefined;
+  /** This agent's id *as the room knows it*, told to us on joining. */
+  private roomAgentId: string | undefined;
 
   constructor(private readonly opts: AgentHostOptions) {
     this.output = vscode.window.createOutputChannel(`Multiplayer Agent — ${opts.label}`);
@@ -188,6 +206,10 @@ export class AgentHost implements vscode.Disposable {
       onStateChange: (s) => this.setState(s === "online" ? "idle" : "attaching"),
       onMessage: (msg) => {
         if (msg.t === "joined") {
+          // The relay namespaces agent ids by owner, so ours is not something
+          // we can construct — it has to be told to us, and it is how we
+          // recognise our own messages rather than answering them.
+          this.roomAgentId = msg.youAgentId;
           this.noteRoster(msg.roster);
           this.transcript.push(...msg.transcript);
           // Everything before we attached is context, not a question to answer.
@@ -307,19 +329,29 @@ export class AgentHost implements vscode.Disposable {
 
   /**
    * React to any human message, including our owner's — an agent that ignores
-   * the person it belongs to is useless. Agent messages are deliberately not
-   * triggers: that is what stops several agents in a room answering each other
-   * forever, which matters more now that one member can run two.
+   * the person it belongs to is useless.
+   *
+   * Another agent's message counts only when it names this one, and only within
+   * MAX_AGENT_HOPS of a human. Ignoring agents entirely was the safe answer for
+   * as long as there was no bound; the bound is now enforced by the relay, which
+   * counts the chain from the transcript rather than believing a client.
    */
   private consider(entry: TranscriptEntry): void {
-    if (entry.kind !== "human") return;
-    if (!this.shouldAnswer(entry)) return;
+    if (!this.answers(entry)) return;
     this.clearPending();
+    this.replyTo = entry.id;
     this.pending = setTimeout(() => void this.respond(), DEBOUNCE_MS);
   }
 
-  /** Track every other agent in the room, so addressing can be decided locally. */
+  /**
+   * Keep the whole roster, not just the other agents.
+   *
+   * Addressing needs the agents; the *agent* needs everyone. Keeping only
+   * siblings is why an agent asked a direct question by a person could not tell
+   * they were a person, judged from their display name, and refused them.
+   */
   private noteRoster(roster: RosterEntry[]): void {
+    this.roster = roster;
     this.others = roster
       .flatMap((member) =>
         member.agents.map((agent) => ({ label: agent.label, handle: member.handle }))
@@ -327,8 +359,8 @@ export class AgentHost implements vscode.Disposable {
       .filter((agent) => agent.label !== this.opts.label);
   }
 
-  private shouldAnswer(entry: TranscriptEntry): boolean {
-    return shouldAnswer(entry.text, this.me(), this.siblings());
+  private answers(entry: TranscriptEntry): boolean {
+    return answersEntry(entry, this.me(), this.siblings(), this.roomAgentId);
   }
 
   /** Tell the room what that turn cost, if the provider said. */
@@ -372,6 +404,8 @@ export class AgentHost implements vscode.Disposable {
     if (unseen.length === 0) return;
     this.busy = true;
     this.fed = this.transcript.length;
+    const answering = this.replyTo;
+    this.replyTo = undefined;
     this.setState("thinking");
 
     try {
@@ -379,6 +413,10 @@ export class AgentHost implements vscode.Disposable {
       const text = await runner.run(
         {
           system: this.systemPreamble(),
+          // Sent every turn rather than in the system preamble, which is written
+          // once per session: somebody joining, leaving or attaching an agent
+          // afterwards would otherwise never reach the model at all.
+          roster: describeMembers(this.roster),
           unseen: unseen.map((e) => `${e.authorName} (@${e.authorHandle}): ${e.text}`).join("\n\n"),
           recent: this.recent(),
           cwd: this.workingDirectory(),
@@ -392,7 +430,7 @@ export class AgentHost implements vscode.Disposable {
       this.reportUsage();
 
       if (text) {
-        this.relay?.send({ t: "say", text });
+        this.relay?.send({ t: "say", text, inReplyTo: answering });
         this.log(`posted ${text.length} chars`);
       } else {
         this.log("no reply produced");
@@ -408,11 +446,17 @@ export class AgentHost implements vscode.Disposable {
       this.setState("idle");
       // Anything said while we were thinking still needs an answer.
       //
-      // Re-arming on the *last* entry silently dropped it: consider() ignores
-      // anything that is not a human message, so a join or another agent's
-      // reply arriving after the question meant nobody ever answered — and in a
-      // room with several agents that is the common case, not the edge one.
-      const waiting = nextUnanswered(this.transcript.slice(this.fed), this.me(), this.siblings());
+      // Re-arming on the *last* entry silently dropped it: it looked only at
+      // that one and skipped it unless it was a human message, so a join or
+      // another agent's reply arriving after the question meant nobody ever
+      // answered — and in a room with several agents that is the common case,
+      // not the edge one.
+      const waiting = nextUnanswered(
+        this.transcript.slice(this.fed),
+        this.me(),
+        this.siblings(),
+        this.roomAgentId
+      );
       if (waiting) this.consider(waiting);
     }
   }
@@ -426,8 +470,28 @@ export class AgentHost implements vscode.Disposable {
    */
   private async ensureRunner(): Promise<ModelRunner> {
     if (this.runner) return this.runner;
+    const providerId = this.opts.providerId ?? "claude-code";
 
-    if (isWorkspaceProvider(this.opts.providerId ?? "claude-code")) {
+    // Selected by the exact provider, not by capability. `isWorkspaceProvider`
+    // answers "can this touch files", which is true of Codex and Gemini too —
+    // so asking it here silently ran *every* CLI agent as Claude Code, and the
+    // branch below could never be reached. It looked like it worked, because
+    // what came back was a real answer from a real coding agent; it was just
+    // the wrong one, on the wrong subscription.
+    if (providerById(providerId)?.kind === "cli") {
+      if (!this.opts.command) {
+        throw new Error(`${this.opts.label} has no command configured — re-add the agent.`);
+      }
+      this.runner = new CliRunner({
+        command: this.opts.command,
+        args: this.opts.args ?? ["{prompt}"],
+        label: this.opts.label,
+        timeoutMs: 300_000,
+      });
+      return this.runner;
+    }
+
+    if (providerById(providerId)?.kind === "claude-code") {
       const bridge = await this.opts.approvals.start();
     const workspaceUrl = await this.startWorkspaceBridge();
       // Route permission requests to the member instead of leaving them
@@ -473,19 +537,6 @@ export class AgentHost implements vscode.Disposable {
       return this.runner;
     }
 
-    if (providerById(this.opts.providerId ?? "")?.kind === "cli") {
-      if (!this.opts.command) {
-        throw new Error(`${this.opts.label} has no command configured — re-add the agent.`);
-      }
-      this.runner = new CliRunner({
-        command: this.opts.command,
-        args: this.opts.args ?? ["{prompt}"],
-        label: this.opts.label,
-        timeoutMs: 300_000,
-      });
-      return this.runner;
-    }
-
     if (!this.opts.baseUrl || !this.opts.apiKey) {
       throw new Error(
         `${this.opts.label} has no endpoint or API key configured — re-add the agent to set them.`
@@ -519,9 +570,13 @@ export class AgentHost implements vscode.Disposable {
       `agents. Messages arrive labelled with their author. Attribute anything you assert to whoever said`,
       `it, and never merge different people's statements into one anonymous view.`,
       ``,
-      `Other agents may be in this room, including others belonging to your own owner. Do not answer them —`,
-      `only the people. Whether you are the one to reply is decided before you are asked, so if you are`,
-      `reading this, the message is yours to answer.`,
+      `Other agents may be in this room, including others belonging to your own owner. Whether you are the`,
+      `one to reply is decided before you are asked, so if you are reading this, the message is yours to`,
+      `answer — you never need to work out whether it was meant for you.`,
+      ``,
+      `You may address another agent by name when its owner's question genuinely needs it, and it will`,
+      `answer. That chain is capped: after two agent replies it stops and a person has to speak again, so`,
+      `do not rely on a third. Naming no agent is the normal case — say what you found and stop.`,
       ``,
       `You have file and shell access to ${cwd}, and that directory is yours to work in — create files,`,
       `run commands, initialise git, scaffold a project from nothing. Other members may be working in`,
@@ -560,6 +615,11 @@ export class AgentHost implements vscode.Disposable {
     if (this.state === state) return;
     this.state = state;
     this.opts.onStateChange(this.opts.id, state);
+    // Tell the room too, but only what the room can act on: "attaching" and
+    // "detached" are already answered by whether we are in the roster at all.
+    if (state === "thinking" || state === "idle") {
+      this.relay?.send({ t: "agentState", state });
+    }
   }
 
   private log(line: string): void {

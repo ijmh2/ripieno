@@ -51,6 +51,17 @@ module.exports = {
     workspaceFolders: undefined,
     getConfiguration: () => ({ get: (_k, d) => d }),
   },
-  window: {},
+  window: {
+    // AgentHost logs its whole turn here. Collected rather than discarded, so a
+    // test that fails can show what the agent was actually told.
+    createOutputChannel: (name) => ({
+      name,
+      lines: [],
+      appendLine(line) {
+        this.lines.push(line);
+      },
+      dispose() {},
+    }),
+  },
   commands: {},
 };
