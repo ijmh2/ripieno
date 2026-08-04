@@ -90,6 +90,16 @@ export class RoomsTreeProvider
     this.refresh();
   }
 
+  /**
+   * The people whose role this member may change: everyone but themselves, and
+   * only if they own the room. Same rule the relay enforces, so the palette
+   * cannot offer an action that will be refused.
+   */
+  manageableMembers(): RosterEntry[] {
+    if (!this.iAmOwner) return [];
+    return this.roster.filter((r) => r.kind !== "workspace" && r.handle !== this.myHandle);
+  }
+
   /** Running spend per agent, so the tree can say what each one has cost. */
   setUsage(usage: AgentUsage[]): void {
     this.usage = new Map(usage.map((u) => [u.agentId, u]));

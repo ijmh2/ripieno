@@ -633,10 +633,19 @@ export class AgentHost implements vscode.Disposable {
  * With the approval bridge in place the honest default is "ask" — the member
  * gets a modal and decides, exactly as they would in their own editor. The
  * bypass option exists for a room you are alone in, where the prompts are noise.
+ *
+ * "ask" maps to `default`, not `acceptEdits`. `acceptEdits` pre-approves Edit
+ * and Write for the whole session, so those tools never reach
+ * --permission-prompt-tool and the approval bridge never sees them: only Bash
+ * was ever actually asked about. The setting promised "asks you before anything
+ * with side effects" and the README promised writes are approved by the member
+ * whose machine runs them, and for the entire time this shipped, neither was
+ * true. In a room where anybody can steer your agent, a write to your disk is
+ * the thing most worth being asked about.
  */
-function permissionMode(): string {
+export function permissionMode(): string {
   const mode = vscode.workspace
     .getConfiguration("mpa")
     .get<string>("agentPermissions", "ask");
-  return mode === "bypassPermissions" ? "bypassPermissions" : "acceptEdits";
+  return mode === "bypassPermissions" ? "bypassPermissions" : "default";
 }

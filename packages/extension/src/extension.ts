@@ -137,6 +137,18 @@ export function activate(context: vscode.ExtensionContext): void {
   // never shown nowhere.
   approvals.setPrompt((request) => roomView.requestApproval(request));
 
+  // Restore the agents this member configured, before anything concludes there
+  // are none.
+  //
+  // This used to happen in restoreSession(), at the very end of activate().
+  // ensureSpec ran first, found an empty map, inserted the bootstrap agent and
+  // called saveState — which writes `agents: [...specs.values()]`, so it wrote
+  // its single agent over the saved list. The restore then read back what it
+  // had just destroyed. Every reload silently reset every member to one default
+  // agent: models, briefs, folders and providers all gone, and the persistence
+  // code was correct the whole time.
+  for (const spec of loadState().agents) specs.set(spec.id, spec);
+
   // Everyone starts with one agent; more can be added.
   ensureSpec("default", "agent");
 
@@ -809,8 +821,9 @@ export function activate(context: vscode.ExtensionContext): void {
    * caused.
    */
   async function restoreSession(): Promise<void> {
+    // The agents themselves are restored during activation — see above. Only
+    // rejoining the room is deferred to here, because only that is a question.
     const saved = loadState();
-    for (const spec of saved.agents) specs.set(spec.id, spec);
     roomsTree.setMyAgents(myAgentsForTree());
     if (!saved.room) return;
 
@@ -938,7 +951,11 @@ export function activate(context: vscode.ExtensionContext): void {
    * assign. The relay still decides: this only asks.
    */
   async function setRole(node?: unknown): Promise<void> {
-    const entry = (node as { entry?: RosterEntry } | undefined)?.entry;
+    // Two ways in: the member's row in the tree, or the command palette. The
+    // palette used to arrive with no node and return silently, so the one
+    // remaining route to a feature the relay fully enforces did nothing at all
+    // and said nothing about it.
+    const entry = (node as { entry?: RosterEntry } | undefined)?.entry ?? (await pickMember());
     if (!entry) return;
 
     const choice = await vscode.window.showQuickPick(
@@ -951,6 +968,36 @@ export function activate(context: vscode.ExtensionContext): void {
     );
     if (!choice) return;
     relay?.send({ t: "setRole", handle: entry.handle, role: choice.value });
+  }
+
+  /**
+   * Who to change the role of, when the command arrived from the palette.
+   *
+   * Says why it cannot proceed rather than doing nothing, which is what it did
+   * before: not in a room, not the owner, or nobody else here are three quite
+   * different situations and silence is indistinguishable from a broken build.
+   */
+  async function pickMember(): Promise<RosterEntry | undefined> {
+    if (!currentRoom) {
+      void vscode.window.showInformationMessage("Join a room before changing anyone's role.");
+      return undefined;
+    }
+    const members = roomsTree.manageableMembers();
+    if (members.length === 0) {
+      void vscode.window.showInformationMessage(
+        "Only the room's owner can change roles, and not their own."
+      );
+      return undefined;
+    }
+    const picked = await vscode.window.showQuickPick(
+      members.map((entry) => ({
+        label: entry.displayName,
+        description: `@${entry.handle} · ${entry.role ?? "member"}`,
+        entry,
+      })),
+      { title: "Change role", placeHolder: "Whose role?" }
+    );
+    return picked?.entry;
   }
 
   /** Everything joining a room does, however the room code arrived. */

@@ -15,7 +15,9 @@
   "extensionKind": [
     "workspace"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onUri"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -130,7 +132,7 @@
         },
         {
           "command": "mpa.setRole",
-          "when": "view == mpaRooms && viewItem == mpaMemberManageable",
+          "when": "view == mpa.rooms && viewItem == mpaMemberManageable",
           "group": "inline"
         }
       ],

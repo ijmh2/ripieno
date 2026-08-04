@@ -223,3 +223,40 @@ describe("an agent does not answer a message that names nobody", () => {
     // so nobody answers it, and a human has to speak again.
   });
 });
+
+describe("what an agent may do without being asked", () => {
+  // `acceptEdits` pre-approves Edit and Write for the whole session, so those
+  // tools never reach --permission-prompt-tool and the approval bridge never
+  // sees them. Only Bash was ever actually asked about, while the setting's own
+  // description promised "asks you before anything with side effects" and the
+  // README promised writes are approved by the member whose machine runs them.
+  // In a shared room a write to your disk is the thing most worth being asked
+  // about, so this is the one mapping in the product that must not drift.
+  const { permissionMode } = require("../dist/agentHost.js");
+  const vscode = require("./vscode-stub.js");
+  const withSetting = (value, fn) => {
+    const original = vscode.workspace.getConfiguration;
+    vscode.workspace.getConfiguration = () => ({ get: (_k, d) => value ?? d });
+    try {
+      return fn();
+    } finally {
+      vscode.workspace.getConfiguration = original;
+    }
+  };
+
+  test("the default asks, which means Claude Code's default mode and not acceptEdits", () => {
+    assert.equal(withSetting(undefined, permissionMode), "default");
+    assert.equal(withSetting("ask", permissionMode), "default");
+  });
+
+  test("bypass is the only way to switch prompting off", () => {
+    assert.equal(withSetting("bypassPermissions", permissionMode), "bypassPermissions");
+  });
+
+  test("an unrecognised value asks rather than assuming permission", () => {
+    // A setting that has been hand-edited, or written by an older build, must
+    // fail towards being asked.
+    assert.equal(withSetting("acceptEdits", permissionMode), "default");
+    assert.equal(withSetting("", permissionMode), "default");
+  });
+});

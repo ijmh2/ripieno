@@ -41,14 +41,22 @@ Honest, because an unknown repository has no other way to earn it.
 | **Built and tested, never deployed** | The shared-workspace container (`packages/workspace-host`) — 43 tests including real git integration, and it has never run anywhere but a test |
 | **Not on this branch** | Hosted mode. Built against the driver interface, compiles, unit tests pass — and it has never run against a live Managed Agents session, so it lives on the `hosted` branch rather than being described here as a feature |
 
-There are ~330 tests (`npm test`), and six exploitable defects found by an
+There are 340 tests (`npm test`) across the five packages that have them
+(`relay-client` and `mcp` do not), and six exploitable defects found by an
 adversarial audit have been fixed, each with a regression test written from the
-exploit. Several other bugs were found only by two people *using* it — the tests
-proved the parts worked; those were failures of what the parts added up to. The
-newest tests close that gap where it is worst: they run a real relay, a real
-agent host and a real subprocess, and assert on the prompt the agent was
-actually handed. The first one written found that every CLI agent had silently
-been running Claude Code.
+exploit.
+
+The more useful thing to say is where tests did *not* help. Several bugs were
+found only by two people using it, and several more by an outside reading of the
+whole repo — a role menu whose `when` clause named a view that does not exist, so
+the feature rendered for nobody; an empty `activationEvents`, so invite links
+only worked if the extension was already awake; a permission setting that
+promised to ask before writes and mapped to a mode that pre-approves them. None
+of those are reachable from a unit test of the code behind them, and all three
+had passing tests underneath. The newest tests go after exactly that: one runs a
+real relay, a real agent host and a real subprocess and asserts on the prompt the
+agent was handed (it immediately found that every CLI agent had been silently
+running Claude Code); another checks the extension manifest against itself.
 
 ## Try it in one minute, alone
 
@@ -193,7 +201,7 @@ they were present for.
 ## Tests
 
 ```bash
-npm test          # ~330 across six packages, ~1 minute
+npm test          # 340 across five packages, ~1 minute
 npm run typecheck
 ```
 
