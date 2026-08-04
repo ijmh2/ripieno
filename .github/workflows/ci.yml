@@ -18,7 +18,10 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run build
+      # No explicit build step: `test` and `typecheck` each build first, so what
+      # runs here is the same command a reader runs after cloning. A CI that
+      # prepares the tree differently from the README stops being evidence for
+      # the README.
       - run: npm run typecheck
       # Several suites drive real git repositories, so git needs an identity.
       - name: Give git an identity for the integration tests

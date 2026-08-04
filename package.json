@@ -14,8 +14,9 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "_comment": "test and typecheck build first: relay-client and mcp have no test script of their own, so nothing else builds them, and both the extension's bundler and its typechecker resolve @mpa/relay-client through its dist. In a working copy that dist is usually lying around from an earlier build, so the missing step only shows up in a fresh clone — which is exactly who it has to work for.",
+    "test": "npm run build && npm run test --workspaces --if-present",
+    "typecheck": "npm run build && npm run typecheck --workspaces --if-present",
     "build:relay": "npm run build -w @mpa/protocol && npm run build -w @mpa/relay",
     "start": "node packages/relay/dist/src/index.js",
     "build:workspace": "npm run build -w @mpa/protocol && npm run build -w @mpa/relay-client && npm run build -w @mpa/workspace-core && npm run build -w @mpa/workspace-host",
