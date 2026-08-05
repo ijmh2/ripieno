@@ -820,11 +820,40 @@ export class Room {
 
   private append(entry: TranscriptEntry): void {
     this.transcript.push(entry);
-    if (this.transcript.length > Room.MAX_TRANSCRIPT) {
-      this.transcript.splice(0, this.transcript.length - Room.MAX_TRANSCRIPT);
-    }
+    this.trim();
     this.broadcast({ t: "entry", entry });
     this.onChanged?.();
+  }
+
+  /**
+   * Keep the transcript bounded, discarding join/leave noise before anything
+   * anybody said.
+   *
+   * Trimming by position alone treats "Sam joined the room." as equal in value
+   * to the message Sam wrote, and there are far more of the former: every
+   * connection, every agent attach, every reconnect on a flaky link appends
+   * one. The live demo room reached the cap at 500 of 500 entries, all of them
+   * system, having evicted every real message in it — a room in use for two
+   * days remembering nothing but its own doorbell.
+   *
+   * So system entries go first, oldest first, and real messages are only
+   * touched when there is nothing else left to give. The memory bound is
+   * unchanged; what it spends its budget on is not.
+   */
+  private trim(): void {
+    let excess = this.transcript.length - Room.MAX_TRANSCRIPT;
+    if (excess <= 0) return;
+
+    for (let i = 0; i < this.transcript.length && excess > 0; ) {
+      if (this.transcript[i].kind === "system") {
+        this.transcript.splice(i, 1);
+        excess--;
+      } else {
+        i++;
+      }
+    }
+    // Still over, so the room is genuinely full of conversation. Oldest first.
+    if (excess > 0) this.transcript.splice(0, excess);
   }
 
   private broadcastRoster(): void {

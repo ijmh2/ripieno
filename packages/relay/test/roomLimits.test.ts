@@ -103,6 +103,50 @@ describe("a room that never empties does not grow without limit", () => {
     assert.ok(!sent.some((e) => e.text === "message 0"), "the oldest should have aged out");
   });
 
+  test("join and leave noise is discarded before anything anybody said", async () => {
+    // Taken from the live relay. The demo room had been in use for two days and
+    // held 500 entries out of a cap of 500 — every one of them a system entry,
+    // 64 of which were the same agent announcing itself after a reconnect. The
+    // conversation it was keeping a transcript of had been evicted by the
+    // record of people arriving to have it.
+    const room = new Room("r", new Driver());
+    await room.join(mira, new Socket());
+    await room.say("ijmh2", "the message that matters");
+
+    // Churn: every connect and disconnect appends a system entry.
+    for (let i = 0; i < 900; i++) {
+      const socket = new Socket();
+      await room.join({ handle: "sam", displayName: "Sam" }, socket);
+      await room.leave("sam", "human", socket);
+    }
+
+    const joiner = new Socket();
+    await room.join({ handle: "alex", displayName: "Alex" }, joiner);
+    const sent = joiner.joined().transcript;
+
+    assert.ok(
+      sent.some((e) => e.text === "the message that matters"),
+      `the only real message was evicted by ${sent.length} entries of noise`
+    );
+    assert.ok(sent.length <= 520, `still bounded: ${sent.length} entries`);
+  });
+
+  test("a room genuinely full of conversation still drops its oldest", async () => {
+    // The bound is on memory, and preferring real messages must not mean
+    // keeping them forever.
+    const room = new Room("r", new Driver());
+    await room.join(mira, new Socket());
+    for (let i = 0; i < 700; i++) await room.say("ijmh2", `message ${i}`);
+
+    const joiner = new Socket();
+    await room.join({ handle: "sam", displayName: "Sam" }, joiner);
+    const sent = joiner.joined().transcript;
+
+    assert.ok(sent.length <= 520, `a joiner was sent ${sent.length} entries`);
+    assert.ok(sent.some((e) => e.text === "message 699"), "the newest must survive");
+    assert.ok(!sent.some((e) => e.text === "message 0"), "the oldest must not");
+  });
+
   test("the action log is capped too", async () => {
     const room = new Room("r", new Driver());
     await room.join(mira, new Socket());

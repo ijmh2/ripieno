@@ -41,7 +41,7 @@ Honest, because an unknown repository has no other way to earn it.
 | **Built and tested, never deployed** | The shared-workspace container (`packages/workspace-host`) — 43 tests including real git integration, and it has never run anywhere but a test |
 | **Not on this branch** | Hosted mode. Built against the driver interface, compiles, unit tests pass — and it has never run against a live Managed Agents session, so it lives on the `hosted` branch rather than being described here as a feature |
 
-There are 346 tests (`npm test`) across the five packages that have them
+There are 348 tests (`npm test`) across the five packages that have them
 (`relay-client` and `mcp` do not), and six exploitable defects found by an
 adversarial audit have been fixed, each with a regression test written from the
 exploit.
@@ -201,7 +201,7 @@ they were present for.
 ## Tests
 
 ```bash
-npm test          # 346 across five packages, ~1 minute
+npm test          # 348 across five packages, ~1 minute
 npm run typecheck
 ```
 
