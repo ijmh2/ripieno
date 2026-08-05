@@ -157,13 +157,6 @@ export class AgentHost implements vscode.Disposable {
    * placed there is wrong the moment anybody joins or leaves.
    */
   private roster: RosterEntry[] = [];
-  /**
-   * The entry the next turn is answering, so the relay can count the chain.
-   *
-   * Only used to derive depth; the relay looks the id up in its own transcript,
-   * so nothing here can shorten a chain by claiming to be at its start.
-   */
-  private replyTo: string | undefined;
   /** This agent's id *as the room knows it*, told to us on joining. */
   private roomAgentId: string | undefined;
 
@@ -339,7 +332,6 @@ export class AgentHost implements vscode.Disposable {
   private consider(entry: TranscriptEntry): void {
     if (!this.answers(entry)) return;
     this.clearPending();
-    this.replyTo = entry.id;
     this.pending = setTimeout(() => void this.respond(), DEBOUNCE_MS);
   }
 
@@ -404,8 +396,6 @@ export class AgentHost implements vscode.Disposable {
     if (unseen.length === 0) return;
     this.busy = true;
     this.fed = this.transcript.length;
-    const answering = this.replyTo;
-    this.replyTo = undefined;
     this.setState("thinking");
 
     try {
@@ -430,7 +420,7 @@ export class AgentHost implements vscode.Disposable {
       this.reportUsage();
 
       if (text) {
-        this.relay?.send({ t: "say", text, inReplyTo: answering });
+        this.relay?.send({ t: "say", text });
         this.log(`posted ${text.length} chars`);
       } else {
         this.log("no reply produced");

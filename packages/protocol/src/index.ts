@@ -90,25 +90,28 @@ export interface TranscriptEntry {
    */
   agentId?: string;
   /**
-   * How many agent replies deep this is. A human message is 0; an agent
-   * answering it is 1; an agent answering *that* is 2, and at MAX_AGENT_HOPS
-   * the chain stops.
+   * How many times this agent has spoken since a person last did. Its first
+   * contribution is 1; at MAX_AGENT_HOPS its messages stop waking anyone.
    *
-   * Computed by the relay from the entry being answered, never taken from the
-   * client — the whole point is a bound a participant cannot lift.
+   * Counted by the relay per agent, with nothing in the message influencing it
+   * — the whole point is a bound a participant cannot lift. Absent on human
+   * messages, which are what resets every count.
    */
   hops?: number;
 }
 
 /**
- * How far a chain of agents talking to each other may run before a human has to
- * speak again.
+ * How many times one agent may speak between two human messages before its
+ * messages stop waking anyone.
  *
- * Two covers the case worth having — one agent reports, another summarises or
- * checks it — and stops well short of the failure it replaces, which is two
- * agents answering each other until somebody notices the bill. Naming is
- * required as well as this cap: an unnamed agent message wakes nobody at any
- * depth, so the bound is the second line of defence, not the first.
+ * Two covers the case worth having — one agent reports, another checks it, the
+ * first responds — and stops well short of the failure it replaces, which is
+ * two agents answering each other until somebody notices the bill. With N
+ * agents in a room the worst case is 2N messages and then silence, whatever
+ * they say to each other.
+ *
+ * Naming is required as well as this cap: an unnamed agent message wakes nobody
+ * at any depth, so the bound is the second line of defence, not the first.
  */
 export const MAX_AGENT_HOPS = 2;
 
@@ -184,13 +187,6 @@ export interface JoinMsg {
 export interface SayMsg {
   t: "say";
   text: string;
-  /**
-   * The transcript entry this answers, when an agent is replying to another
-   * agent. The relay uses it to count how far a chain has run — see
-   * TranscriptEntry.hops. Clients send the id, never the count: a client that
-   * could state its own depth could simply always claim zero.
-   */
-  inReplyTo?: string;
 }
 
 /** Result of a workspace tool the agent addressed to this member. */

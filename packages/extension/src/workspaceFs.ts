@@ -51,6 +51,18 @@ const MAX_CACHED_FILES = 200;
 const MAX_CACHED_DIRS = 400;
 
 /**
+ * Lines per `read_file` call when assembling a whole file.
+ *
+ * Kept well under what 50KB of bytes can hold at any plausible line length, so
+ * the byte cap is the exception rather than the normal path — the resume logic
+ * is correct either way, but a page that fits costs one round trip instead of
+ * two.
+ */
+const PAGE_LINES = 500;
+/** Refuse rather than page forever; ~250k lines is not an editor tab. */
+const MAX_READ_PAGES = 500;
+
+/**
  * The host's workspace, addressed as `mpa-workspace:/<path>`.
  *
  * Deliberately read-only: `writeFile` throws `NoPermissions`, which makes VS
@@ -154,10 +166,32 @@ export class WorkspaceFileSystem implements vscode.FileSystemProvider {
     const cached = this.files.get(rel);
     if (cached && fresh(cached.at)) return cached.bytes;
 
-    // Ask for the whole file: read_file pages by default, and a half-file in an
-    // editor tab looks like a truncated file rather than a paged one.
-    const result = await this.remote("read_file", { path: rel, offset: 1, limit: 1_000_000 });
-    const bytes = new TextEncoder().encode(stripReadFileHeader(result));
+    // Page until the file is complete. Asking for every line in one call does
+    // not get you every line: the response is capped at 50KB of *bytes*
+    // regardless of how many lines were requested, so a single call returned
+    // the first 50KB of any larger file and nothing said so. An editor tab
+    // showing a confident half-file is the worst available outcome, because
+    // "Propose change to host" then writes that half back over the whole.
+    const lines: string[] = [];
+    let offset = 1;
+    for (let page = 0; ; page++) {
+      if (page >= MAX_READ_PAGES) {
+        throw vscode.FileSystemError.Unavailable(
+          `This file is too large to open from a shared workspace (over ${MAX_READ_PAGES} pages).`
+        );
+      }
+      const result = await this.remote("read_file", { path: rel, offset, limit: PAGE_LINES });
+      const parsed = parseReadPage(result);
+      lines.push(...parsed.lines);
+      if (parsed.next === undefined) break;
+      if (parsed.next <= offset) {
+        // No forward progress; looping would hang the tab rather than fail it.
+        throw vscode.FileSystemError.Unavailable("This file could not be read completely.");
+      }
+      offset = parsed.next;
+    }
+
+    const bytes = new TextEncoder().encode(lines.join("\n"));
     this.files.set(rel, { bytes, at: Date.now() });
     evictOldest(this.files, MAX_CACHED_FILES);
     return bytes;
@@ -229,22 +263,90 @@ function parentOf(relativePath: string): string {
   return cut <= 0 ? "." : relativePath.slice(0, cut);
 }
 
+/** One page of `read_file` output, turned back into file content. */
+export interface ReadPage {
+  /** Content lines, numbering removed, in order. */
+  lines: string[];
+  /** Line to ask for next, or undefined when this page completes the file. */
+  next?: number;
+}
+
 /**
+ * Parse one page of `read_file` output.
+ *
  * `read_file` prefixes a "path — lines a-b of n" header and numbers every line,
- * which is right for a model reading a page and wrong for an editor buffer.
+ * which is right for a model reading a page and wrong for an editor buffer. It
+ * can also end in one of two markers, and conflating them corrupted files:
+ *
+ * - `[N more lines — call again with offset: X]` — you asked for a page and
+ *   there is more. Ask again.
+ * - `[truncated — output exceeds 50KB]` — the *byte* cap in capResult cut the
+ *   response, possibly mid-line. This one was not filtered at all, so it landed
+ *   in the editor buffer as though it were the last line of the file, with
+ *   everything past 50KB simply gone. VS Code renders that as a complete file;
+ *   "Propose change to host" then sends it back, and the host's copy of any file
+ *   over 50KB is replaced by the first 50KB of itself. Silent, on somebody
+ *   else's machine, and the tab gives no sign.
+ *
+ * Content lines are recognised by their numbering rather than by position, so a
+ * partially-written final line — which is exactly what a byte cap leaves behind
+ * — is dropped rather than kept as content. Whatever is dropped is re-requested,
+ * so the parser is self-correcting: `next` resumes at the last line it is sure
+ * about.
+ */
+export function parseReadPage(result: string): ReadPage {
+  const raw = result.split("\n");
+  // Not a paged read: some other tool's output, or an error. Pass it through.
+  if (!/ — lines \d+-\d+ of \d+$/.test(raw[0] ?? "")) return { lines: raw };
+
+  const kept: { n: number; text: string }[] = [];
+  let more: number | undefined;
+  let capped = false;
+
+  for (const line of raw.slice(1)) {
+    const numbered = /^\s*(\d+)\t(.*)$/.exec(line);
+    if (numbered) {
+      kept.push({ n: Number(numbered[1]), text: numbered[2] });
+      continue;
+    }
+    const paged = /^\[\d+ more lines — call again with offset: (\d+)\]/.exec(line);
+    if (paged) {
+      more = Number(paged[1]);
+      continue;
+    }
+    if (/^\[truncated — output exceeds/.test(line)) capped = true;
+    // Anything else is the blank line capResult inserts before its marker, or
+    // the remains of a line the byte cap bisected. Neither is content.
+  }
+
+  if (capped) {
+    // The last line we kept may itself have been cut mid-way — it is only
+    // trustworthy if something followed it. Drop it and ask again from there.
+    kept.pop();
+    const resume = kept.at(-1);
+    if (resume === undefined) {
+      // A single line longer than the cap. Paging cannot make progress, and
+      // returning what we have would be the silent corruption all over again.
+      throw vscode.FileSystemError.Unavailable(
+        "A line in this file is too long to transfer. Open it on the host's machine."
+      );
+    }
+    return { lines: kept.map((l) => l.text), next: resume.n + 1 };
+  }
+
+  return { lines: kept.map((l) => l.text), next: more };
+}
+
+/**
+ * The whole of one page as an editor buffer. Kept for the single-page case and
+ * because the exact format is a contract with `read_file`.
+ *
+ * No trailing-newline normalisation: this is an editor buffer, and a file that
+ * genuinely ends in two blank lines must come back with two. Collapsing them
+ * would corrupt the file quietly, which is the worst way to be wrong.
  */
 export function stripReadFileHeader(result: string): string {
-  const lines = result.split("\n");
-  if (!/ — lines \d+-\d+ of \d+$/.test(lines[0] ?? "")) return result;
-
-  // No trailing-newline normalisation: this is an editor buffer, and a file
-  // that genuinely ends in two blank lines must come back with two. Collapsing
-  // them would corrupt the file quietly, which is the worst way to be wrong.
-  return lines
-    .slice(1)
-    .filter((line) => !/^\[\d+ more lines/.test(line))
-    .map((line) => line.replace(/^\s*\d+\t/, ""))
-    .join("\n");
+  return parseReadPage(result).lines.join("\n");
 }
 
 /** Drop the least recently read entries until the cache fits. */

@@ -359,13 +359,7 @@ export function startServer(config: ServerConfig): Relay {
             if (!joined.room.canAct(joined.handle)) {
               return send(socket, "viewers can read this room but not post to it");
             }
-            await joined.room.say(
-              joined.handle,
-              msg.text,
-              joined.role,
-              joined.agentId,
-              msg.inReplyTo
-            );
+            await joined.room.say(joined.handle, msg.text, joined.role, joined.agentId);
             break;
           case "toolProgress":
             if (!joined) return send(socket, "join a room before reporting tool progress");

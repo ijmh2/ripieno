@@ -182,10 +182,12 @@ describe("an agent does not answer a message that names nobody", () => {
     );
   });
 
-  test("naming another agent does wake it, and the chain stops at two", async () => {
-    // The behaviour worth having — one agent reports, another checks it — and
-    // the bound that makes it safe to have. Sam's reviewer is not primary, so
-    // every turn it runs is one it was named in.
+  test("naming another agent wakes it, and the exchange terminates", async () => {
+    // The behaviour worth having — one agent reports, another checks it, the
+    // first responds — and the bound that makes it safe to have. Both agents
+    // are scripted to keep naming each other forever, so the only thing that
+    // ends this is the relay's count. Sam's reviewer is not primary, so every
+    // turn it runs is one it was named in.
     const r = await room("hops", [
       { when: 'You are "Mira\'s coder"', reply: "Sam's reviewer, please check this." },
       { when: 'You are "Sam\'s reviewer"', reply: "Mira's coder, one more thing." },
@@ -207,11 +209,10 @@ describe("an agent does not answer a message that names nobody", () => {
     await wait(400);
 
     mira.say("does this build?");
-    // Three turns' worth of debounce and process time, so a third would show.
-    await wait(9000);
+    // Long enough for several more turns, if anything were still willing.
+    await wait(12_000);
 
     const prompts = await r.prompts();
-    assert.equal(prompts.length, 2, `expected the coder then the reviewer, got ${prompts.length}`);
     assert.match(prompts[0], /You are "Mira's coder"/);
     assert.match(prompts[1], /You are "Sam's reviewer"/);
     assert.match(
@@ -219,8 +220,17 @@ describe("an agent does not answer a message that names nobody", () => {
       /Sam's reviewer, please check this/,
       "the reviewer should have been woken by the coder naming it"
     );
-    // The reviewer's own reply named the coder just as clearly. It is depth 2,
-    // so nobody answers it, and a human has to speak again.
+    assert.equal(
+      prompts.length,
+      3,
+      `coder, reviewer, coder — then stop. Got ${prompts.length} turns.`
+    );
+    // The coder's third message is its second turn since a person spoke, so it
+    // carries the cap and wakes nobody. Both are still naming each other; the
+    // count is the only thing ending it.
+    const settled = prompts.length;
+    await wait(5000);
+    assert.equal((await r.prompts()).length, settled, "and it stays stopped");
   });
 });
 

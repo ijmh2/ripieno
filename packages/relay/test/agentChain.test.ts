@@ -7,10 +7,16 @@
  * request, and until now the answer was that a human had to re-ask.
  *
  * The bound has two halves and this file tests the relay's. Each agent's host
- * decides whether to wake, and it needs to know how deep the chain already is —
- * so the depth is counted *here*, from the transcript, rather than being sent by
- * the client that would like it to be lower. A client names the entry it is
- * answering; it never states its own depth.
+ * decides whether to wake, and it needs a depth it can trust — so the relay
+ * counts, per agent, how many times that agent has spoken since a person last
+ * did. Nothing in a say frame influences the number.
+ *
+ * The first version did let the client influence it: it named the entry it was
+ * answering, and the relay derived the depth from that. Which stops a client
+ * stating a low number and does nothing about a client choosing a shallow
+ * parent — and the test written for it drove an agent deep in a chain, had it
+ * point at the original human message, watched it come back to depth 1, and
+ * asserted that as proof the attack failed.
  *
  * The other half — that an agent must be *named* to be woken at all — lives in
  * the extension's addressing tests, because that is where the decision is made.
@@ -19,6 +25,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import type { AgentActivity, Member, RosterEntry, ServerMsg, TranscriptEntry } from "@mpa/protocol";
+import { MAX_AGENT_HOPS } from "@mpa/protocol";
 import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
 
@@ -64,53 +71,86 @@ async function room(): Promise<{ room: Room; watcher: Socket }> {
 }
 
 describe("how deep a chain is, is the relay's answer and not the client's", () => {
-  test("a human message starts at zero and an agent's reply to it is one", async () => {
+  test("an agent's first contribution after a person speaks is depth 1", async () => {
     const { room: r, watcher } = await room();
     await r.say("ijmh2", "does this build?");
-    const question = watcher.entries().at(-1)!;
-    assert.equal(question.hops ?? 0, 0);
+    assert.equal(watcher.entries().at(-1)?.hops, undefined, "a human message carries no depth");
 
-    await r.say("ijmh2", "It does.", "agent", "mira:coder", question.id);
+    await r.say("ijmh2", "It does.", "agent", "mira:coder");
     assert.equal(watcher.entries().at(-1)?.hops, 1);
   });
 
-  test("an agent answering an agent is two, and it is counted from the transcript", async () => {
+  test("every agent answering the same person is on its first turn", async () => {
+    // The case a chain-position scheme gets wrong. Five people's agents all
+    // answering one question are not five links in a chain; they are five
+    // first replies, and counting them as deepening would silence a wide room
+    // for no reason.
     const { room: r, watcher } = await room();
     await r.say("ijmh2", "does this build?");
-    const question = watcher.entries().at(-1)!;
-    await r.say("ijmh2", "It does. Sam's reviewer, check me.", "agent", "mira:coder", question.id);
-    const first = watcher.entries().at(-1)!;
+    await r.say("ijmh2", "Yes.", "agent", "mira:coder");
+    await r.say("swhitfield", "Agreed.", "agent", "sam:reviewer");
 
-    await r.say("swhitfield", "Checked.", "agent", "sam:reviewer", first.id);
-    assert.equal(watcher.entries().at(-1)?.hops, 2);
+    const [coder, reviewer] = watcher.entries().slice(-2);
+    assert.equal(coder.hops, 1);
+    assert.equal(reviewer.hops, 1, "a second member's agent is not deeper for going second");
   });
 
-  test("a client cannot restart the count by pointing at the wrong entry", async () => {
-    // The whole reason the client sends an id rather than a number. Pointing at
-    // the original human message is the most plausible way to try it, and it is
-    // answered by the transcript rather than believed.
+  test("speaking twice without a person in between is what deepens", async () => {
     const { room: r, watcher } = await room();
     await r.say("ijmh2", "does this build?");
-    const question = watcher.entries().at(-1)!;
-    await r.say("ijmh2", "It does.", "agent", "mira:coder", question.id);
-    const first = watcher.entries().at(-1)!;
-    assert.equal(first.hops, 1);
+    await r.say("ijmh2", "It does. Sam's reviewer, check me.", "agent", "mira:coder");
+    await r.say("swhitfield", "Checked.", "agent", "sam:reviewer");
+    await r.say("ijmh2", "Then I will fix it.", "agent", "mira:coder");
 
-    // Deep in a chain, claiming to be answering the human.
-    await r.say("swhitfield", "And again.", "agent", "sam:reviewer", question.id);
-    assert.equal(
-      watcher.entries().at(-1)?.hops,
-      1,
-      "it is depth 1 because the human message is depth 0 — not because it said so"
+    assert.equal(watcher.entries().at(-1)?.hops, 2, "the coder's second turn in one exchange");
+  });
+
+  test("nothing a client sends can lower its own count", async () => {
+    // The property the first version of this claimed and did not have. It had
+    // the client name the entry it was answering: that stops a client stating a
+    // low number, but not choosing a shallow parent — an agent deep in a chain
+    // could point at the original human message and be handed depth 1 forever.
+    // There is now nothing in a say frame that touches the count at all.
+    const { room: r, watcher } = await room();
+    await r.say("ijmh2", "does this build?");
+    for (let i = 0; i < 4; i++) {
+      await r.say("ijmh2", `turn ${i}`, "agent", "mira:coder");
+    }
+    assert.deepEqual(
+      watcher.entries().slice(-4).map((e) => e.hops),
+      [1, 2, 3, 4],
+      "the count rises with every turn regardless of what was sent"
     );
   });
 
-  test("an unknown id is a fresh chain rather than an error", async () => {
-    // A message that has aged out of the capped transcript is the honest case,
-    // and refusing to post the reply would lose work that was already done.
+  test("a person speaking restarts every count", async () => {
     const { room: r, watcher } = await room();
-    await r.say("ijmh2", "nothing", "agent", "mira:coder", "an-id-from-last-week");
-    assert.equal(watcher.entries().at(-1)?.hops, 1);
+    await r.say("ijmh2", "does this build?");
+    await r.say("ijmh2", "Yes.", "agent", "mira:coder");
+    await r.say("ijmh2", "And again.", "agent", "mira:coder");
+    assert.equal(watcher.entries().at(-1)?.hops, 2);
+
+    await r.say("ijmh2", "hang on — what about the tests?");
+    await r.say("ijmh2", "Running them now.", "agent", "mira:coder");
+    assert.equal(watcher.entries().at(-1)?.hops, 1, "a human message makes it a conversation again");
+  });
+
+  test("two agents cannot talk past a bounded number of messages", async () => {
+    // The failure this exists to prevent, played out. Each keeps answering the
+    // other; both reach MAX_AGENT_HOPS and from then on everything they say
+    // wakes nobody, whatever it says.
+    const { room: r, watcher } = await room();
+    await r.say("ijmh2", "go");
+    const said: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      await r.say("ijmh2", "you check", "agent", "mira:coder");
+      await r.say("swhitfield", "no you", "agent", "sam:reviewer");
+    }
+    for (const e of watcher.entries()) if (e.hops !== undefined) said.push(e.hops);
+    assert.ok(
+      said.filter((h) => h < MAX_AGENT_HOPS).length <= 2,
+      `only the first turn of each agent may be under the cap, got ${said.join(",")}`
+    );
   });
 
   test("a human message is never given a depth at all", async () => {

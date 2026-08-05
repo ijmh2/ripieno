@@ -654,8 +654,7 @@ export class Room {
     handle: string,
     text: string,
     role: ConnectionRole = "human",
-    agentId?: string,
-    inReplyTo?: string
+    agentId?: string
   ): Promise<void> {
     // Bounded before anything else touches it. The transcript lives in memory
     // and is rebroadcast to everyone, so an unbounded message is everyone's
@@ -664,6 +663,8 @@ export class Room {
     if (role === "agent") {
       const conn = this.agents.get(agentId ?? `${handle}:default`);
       if (!conn || text.trim() === "") return;
+      const depth = (this.chainDepth.get(conn.id) ?? 0) + 1;
+      this.chainDepth.set(conn.id, depth);
       // Attributed to its owner, in their colour, and named so two of one
       // person's agents are told apart rather than blurring into "the agent".
       this.append({
@@ -674,13 +675,17 @@ export class Room {
         agentId: conn.id,
         text,
         ts: Date.now(),
-        hops: this.hopsFor(inReplyTo),
+        hops: depth,
       });
       return;
     }
 
     const conn = this.connections.get(handle);
     if (!conn || text.trim() === "") return;
+    // A person speaking restarts every chain. That is the whole shape of the
+    // bound: agents may carry something a short way between two human messages,
+    // and a human is what makes it a conversation again rather than a loop.
+    this.chainDepth.clear();
     this.append({
       id: randomUUID(),
       kind: "human",
@@ -693,25 +698,27 @@ export class Room {
   }
 
   /**
-   * How deep into a chain of agents an answer is.
+   * How many times this agent has spoken since a person last did.
    *
-   * The client names the entry it is answering; the depth is derived here from
-   * what the transcript actually says. A client that could send the number
-   * itself could send 0 forever, and the cap it is subject to (MAX_AGENT_HOPS,
-   * applied by each agent's host when deciding whether to wake) would be a
-   * suggestion. An unknown or missing id means a fresh chain — a reply to a
-   * human is depth 1, which is every ordinary turn.
+   * The bound on agents talking to each other has to be something a client
+   * cannot arrange to be lower, and the first version was not. It had the
+   * client name the entry it was answering and derived the depth from that —
+   * which stops a client *stating* a low number, but not choosing a shallow
+   * parent. An agent deep in a chain could point at the original human message
+   * and be handed depth 1 again, indefinitely. The test written for it asserted
+   * exactly that and called it proof of the opposite.
    *
-   * Counting here rather than enforcing here is deliberate: the bound is on
-   * which agent *wakes*, not on what may be posted. Refusing to broadcast a
-   * message an agent has already spent a turn producing would hide work that
-   * was done, which is worse than a chain one reply too long.
+   * Counting per agent instead removes the client from it entirely: nothing in
+   * the message influences the number. It also stops penalising wide rooms —
+   * five agents answering one person are each on their first turn, where a
+   * chain-position scheme would have made every one after the first look
+   * deeper than it was.
+   *
+   * Counting rather than refusing is still deliberate: the bound is on which
+   * agent *wakes*, not on what may be posted. Refusing to broadcast a message
+   * an agent has already spent a turn producing would hide work that was done.
    */
-  private hopsFor(inReplyTo: string | undefined): number {
-    if (!inReplyTo) return 1;
-    const parent = this.transcript.find((e) => e.id === inReplyTo);
-    return (parent?.hops ?? 0) + 1;
-  }
+  private readonly chainDepth = new Map<string, number>();
 
   /** Extend an outstanding call's deadline as its addressee makes progress. */
   toolProgress(handle: string, callId: string, state: ToolProgressState): void {

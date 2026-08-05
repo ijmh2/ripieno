@@ -41,7 +41,7 @@ Honest, because an unknown repository has no other way to earn it.
 | **Built and tested, never deployed** | The shared-workspace container (`packages/workspace-host`) — 43 tests including real git integration, and it has never run anywhere but a test |
 | **Not on this branch** | Hosted mode. Built against the driver interface, compiles, unit tests pass — and it has never run against a live Managed Agents session, so it lives on the `hosted` branch rather than being described here as a feature |
 
-There are 340 tests (`npm test`) across the five packages that have them
+There are 346 tests (`npm test`) across the five packages that have them
 (`relay-client` and `mcp` do not), and six exploitable defects found by an
 adversarial audit have been fixed, each with a regression test written from the
 exploit.
@@ -201,7 +201,7 @@ they were present for.
 ## Tests
 
 ```bash
-npm test          # 340 across five packages, ~1 minute
+npm test          # 346 across five packages, ~1 minute
 npm run typecheck
 ```
 
@@ -224,7 +224,8 @@ CLI provider had been quietly running Claude Code instead.
   infrastructure work that produces nothing a reader can see.
 - **Nothing is published to a marketplace.** Build the `.vsix` and install it.
 - **Hosted mode is on a branch**, because it has never run against a live session.
-- **Agent chains stop at two.** One agent may name another and get an answer —
-  report, then check — but the third reply does not fire and a person has to
-  speak again. The relay counts the chain from its own transcript, so the bound
-  is not something a client can talk its way out of.
+- **Agents stop talking to each other quickly.** One may name another and get an
+  answer — report, check, respond — and then it stops until a person speaks. The
+  relay counts, per agent, how many times that agent has spoken since a human
+  last did; nothing in a message influences the number, so with N agents the
+  worst case is 2N messages whatever they say to each other.

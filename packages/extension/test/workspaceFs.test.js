@@ -142,3 +142,77 @@ describe("the action log invalidates exactly what changed", () => {
     await assert.rejects(() => fs.readFile({ path: "/x.ts" }), /nobody in this room is hosting/i);
   });
 });
+
+describe("a file larger than the 50KB response cap survives the round trip", () => {
+  // The corruption this closes: read_file caps its *response* at 50KB of bytes
+  // no matter how many lines were asked for, and appends "[truncated — output
+  // exceeds 50KB]". Only the paging marker was ever filtered, so for any file
+  // over 50KB the editor got the first 50KB plus that notice, presented as the
+  // whole file. "Propose change to host" then sent it back — replacing another
+  // member's file with a prefix of itself, silently, with the tab showing
+  // nothing unusual.
+  //
+  // Driven through the REAL read_file rather than a hand-written fake, because
+  // a fake of the producer is exactly where this bug would hide again.
+  const os = require("node:os");
+  const nodeFs = require("node:fs");
+  const { WorkspaceCore } = require("@mpa/workspace-core");
+
+  /** A WorkspaceFileSystem wired to a real WorkspaceCore over a real directory. */
+  function workspaceOver(content, name = "big.ts") {
+    const root = nodeFs.mkdtempSync(path.join(os.tmpdir(), "mpa-fs-"));
+    nodeFs.writeFileSync(path.join(root, name), content, "utf8");
+    const core = new WorkspaceCore({
+      resolveRoot: () => ({ ok: true, abs: root }),
+      gate: { proposeWrite: async () => ({ content: "no", isError: true }) },
+    });
+    const fs = new WorkspaceFileSystem();
+    let calls = 0;
+    fs.setRemote(async (tool, input) => {
+      calls++;
+      return await core.execute(tool, input);
+    });
+    return { fs, root, calls: () => calls };
+  }
+
+  const read = async (fs, name) =>
+    Buffer.from(await fs.readFile({ path: `/${name}` })).toString("utf8");
+
+  test("a 200KB file comes back byte-identical, not the first 50KB", async () => {
+    // Long lines on purpose: the cap is on bytes, so wide lines reach it while
+    // the line count is still modest — a minified bundle, a CSV, a lockfile.
+    const content = Array.from({ length: 800 }, (_, i) => `${i}: ${"x".repeat(240)}`).join("\n");
+    assert.ok(Buffer.byteLength(content) > 190_000, "the fixture must exceed the cap several times over");
+
+    const { fs, calls } = workspaceOver(content);
+    const got = await read(fs, "big.ts");
+
+    assert.equal(got.length, content.length, "length must match exactly");
+    assert.equal(got, content, "content must match exactly");
+    assert.ok(!got.includes("[truncated"), "no marker may reach the buffer");
+    assert.ok(calls() > 1, "it must actually have paged rather than got lucky");
+  });
+
+  test("a small file still costs a single round trip", async () => {
+    const { fs, calls } = workspaceOver("const a = 1;\nconst b = 2;\n", "small.ts");
+    assert.equal(await read(fs, "small.ts"), "const a = 1;\nconst b = 2;\n");
+    assert.equal(calls(), 1, "paging must not tax the ordinary case");
+  });
+
+  test("exact bytes are preserved across a page boundary, trailing blanks included", async () => {
+    // Trailing newlines are the classic silent corruption: an editor that eats
+    // one rewrites the file the moment anybody saves. Sized to land just past
+    // the cap so the last page is nearly empty — the case where an off-by-one
+    // in the resume offset would show.
+    const content = `${Array.from({ length: 300 }, (_, i) => `line ${i} ${"y".repeat(200)}`).join("\n")}\n\n\n`;
+    assert.ok(Buffer.byteLength(content) > 51_200, "the fixture must cross the cap");
+    const { fs } = workspaceOver(content, "edge.ts");
+    assert.equal(await read(fs, "edge.ts"), content);
+  });
+
+  test("a single line too long to transfer fails loudly instead of silently", async () => {
+    // No amount of paging helps, and returning what fits is the original bug.
+    const { fs } = workspaceOver("z".repeat(80_000), "oneline.ts");
+    await assert.rejects(() => fs.readFile({ path: "/oneline.ts" }), /too long to transfer/);
+  });
+});
