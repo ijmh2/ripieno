@@ -80,6 +80,32 @@ export type Relay = WebSocketServer & {
   whenListening(): Promise<number>;
 };
 
+/**
+ * Should this relay verify who members are, rather than believing the handle
+ * they send?
+ *
+ * On by default for any relay another machine can reach; off for one bound to
+ * loopback. This product's whole claim is that authorship is structure the
+ * relay maintains rather than something a client asserts — and it shipped with
+ * verification off, so what a stranger ran out of the box was the version where
+ * everybody simply says who they are, with the attribution in the README
+ * describing a mode they had not enabled. A default that contradicts the
+ * headline is worse than not making the claim.
+ *
+ * Loopback is exempt because there is nobody else on it. Solo mode talks to a
+ * relay on the same machine, and demanding a GitHub sign-in to speak to your own
+ * laptop is ceremony rather than security — it would also ruin the one-minute
+ * path that is most people's first impression of the product.
+ *
+ * An explicit `0` or empty string turns it off, for an existing deployment or a
+ * private network where the token is already the boundary. Requiring somebody to
+ * say so out loud is the point: it should be a decision rather than a default.
+ */
+export function resolveRequireGithub(raw: string | undefined, host: string | undefined): boolean {
+  if (raw !== undefined) return raw !== "0" && raw !== "" && raw.toLowerCase() !== "false";
+  return host !== undefined && host !== "127.0.0.1" && host !== "localhost" && host !== "::1";
+}
+
 export function startServer(config: ServerConfig): Relay {
   const rooms = new Map<string, Room>();
   const store = createRoomStore(config.dataDir);

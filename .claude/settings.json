@@ -38,14 +38,14 @@
       "Bash(tail:*)"
     ],
     "deny": [
-      "Read(/~/.ssh/**)",
-      "Read(/~/.aws/**)",
-      "Read(/~/.config/anthropic/**)",
+      "Read(//**/.ssh/**)",
+      "Read(//**/.aws/**)",
+      "Read(//**/.config/anthropic/**)",
       "Read(//**/.env)",
       "Read(//**/.env.*)",
-      "Edit(/~/.ssh/**)",
-      "Edit(/~/.claude/**)",
-      "Edit(/~/.config/**)",
+      "Edit(//**/.ssh/**)",
+      "Edit(//**/.claude/**)",
+      "Edit(//**/.config/**)",
       "Bash(rm -rf:*)",
       "Bash(curl:*)",
       "Bash(git push:*)"
