@@ -1,5 +1,5 @@
 {
-  "name": "@mpa/workspace-core",
+  "name": "@ripieno/workspace-core",
   "version": "0.0.0",
   "private": true,
   "type": "commonjs",
@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@mpa/protocol": "*"
+    "@ripieno/protocol": "*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

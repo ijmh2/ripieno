@@ -10,22 +10,22 @@ import { createServer } from "node:http";
 import { WorkspaceHost } from "./host.js";
 import { parseRepo } from "./git.js";
 
-const relayUrl = process.env.MPA_RELAY_URL;
-const room = process.env.MPA_ROOM;
-const workspaceToken = process.env.MPA_WORKSPACE_TOKEN;
-const token = process.env.MPA_TOKEN;
-const root = process.env.MPA_WORKSPACE_DIR ?? "/data/workspace";
-const keyDir = process.env.MPA_KEY_DIR ?? "/data/keys";
+const relayUrl = process.env.RIPIENO_RELAY_URL;
+const room = process.env.RIPIENO_ROOM;
+const workspaceToken = process.env.RIPIENO_WORKSPACE_TOKEN;
+const token = process.env.RIPIENO_TOKEN;
+const root = process.env.RIPIENO_WORKSPACE_DIR ?? "/data/workspace";
+const keyDir = process.env.RIPIENO_KEY_DIR ?? "/data/keys";
 const repo = parseRepo(
-  process.env.MPA_REPO,
-  process.env.MPA_BRANCH ?? "main",
-  process.env.MPA_REPO_URL
+  process.env.RIPIENO_REPO,
+  process.env.RIPIENO_BRANCH ?? "main",
+  process.env.RIPIENO_REPO_URL
 );
 
 const missing = [
-  ["MPA_RELAY_URL", relayUrl],
-  ["MPA_ROOM", room],
-  ["MPA_WORKSPACE_TOKEN", workspaceToken],
+  ["RIPIENO_RELAY_URL", relayUrl],
+  ["RIPIENO_ROOM", room],
+  ["RIPIENO_WORKSPACE_TOKEN", workspaceToken],
 ].filter(([, value]) => !value);
 
 if (missing.length > 0) {
@@ -33,11 +33,11 @@ if (missing.length > 0) {
     [
       `Refusing to start: missing ${missing.map(([name]) => name).join(", ")}.`,
       "",
-      "  MPA_RELAY_URL        wss://your-relay.up.railway.app",
-      "  MPA_ROOM             the room this workspace hosts",
-      "  MPA_WORKSPACE_TOKEN  must match the relay's own MPA_WORKSPACE_TOKEN",
-      "  MPA_TOKEN            the room token, if the relay requires one",
-      "  MPA_REPO             owner/name — omit for a scratch workspace",
+      "  RIPIENO_RELAY_URL        wss://your-relay.up.railway.app",
+      "  RIPIENO_ROOM             the room this workspace hosts",
+      "  RIPIENO_WORKSPACE_TOKEN  must match the relay's own RIPIENO_WORKSPACE_TOKEN",
+      "  RIPIENO_TOKEN            the room token, if the relay requires one",
+      "  RIPIENO_REPO             owner/name — omit for a scratch workspace",
       "",
       "The workspace token is deliberately separate from the room token: everyone",
       "in a room holds that one, and this connection is trusted to say what every",
@@ -47,12 +47,12 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-if (process.env.MPA_ALLOW_ALL_COMMANDS === "1" && !process.env.MPA_I_UNDERSTAND_THE_RISK) {
+if (process.env.RIPIENO_ALLOW_ALL_COMMANDS === "1" && !process.env.RIPIENO_I_UNDERSTAND_THE_RISK) {
   console.error(
     [
-      "Refusing to start: MPA_ALLOW_ALL_COMMANDS lets anyone in the room run any",
+      "Refusing to start: RIPIENO_ALLOW_ALL_COMMANDS lets anyone in the room run any",
       "command in this container, because agents act on whatever members ask them to.",
-      "Set MPA_I_UNDERSTAND_THE_RISK=1 as well if that is genuinely what you want.",
+      "Set RIPIENO_I_UNDERSTAND_THE_RISK=1 as well if that is genuinely what you want.",
     ].join("\n")
   );
   process.exit(1);
@@ -67,11 +67,11 @@ const host = new WorkspaceHost({
   keyDir,
   repo,
   policy: {
-    allow: (process.env.MPA_ALLOWED_COMMANDS ?? "")
+    allow: (process.env.RIPIENO_ALLOWED_COMMANDS ?? "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
-    allowAll: process.env.MPA_ALLOW_ALL_COMMANDS === "1",
+    allowAll: process.env.RIPIENO_ALLOW_ALL_COMMANDS === "1",
   },
   log: (...parts) => console.log("[workspace]", ...parts),
   onEvicted: (reason) => {
@@ -97,7 +97,7 @@ const port = Number(process.env.PORT ?? 8080);
 const http = createServer((req, res) => {
   if (req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "multiplayer-agent-workspace", room, repo: repo ?? null }));
+    res.end(JSON.stringify({ service: "ripieno-workspace", room, repo: repo ?? null }));
     return;
   }
   res.writeHead(404).end();

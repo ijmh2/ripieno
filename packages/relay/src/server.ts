@@ -7,8 +7,8 @@
 
 import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { ClientMsg, ConnectionRole, Member } from "@mpa/protocol";
-import { WORKSPACE_HANDLE } from "@mpa/protocol";
+import type { ClientMsg, ConnectionRole, Member } from "@ripieno/protocol";
+import { WORKSPACE_HANDLE } from "@ripieno/protocol";
 import { ByoDriver } from "./byoDriver.js";
 import { Room } from "./room.js";
 import { createRoomStore } from "./roomStore.js";
@@ -153,7 +153,7 @@ export function startServer(config: ServerConfig): Relay {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
         JSON.stringify({
-          service: "multiplayer-agent-relay",
+          service: "ripieno-relay",
           status: "ok",
           mode: config.mode,
           tokenRequired: Boolean(config.token),
@@ -218,7 +218,7 @@ export function startServer(config: ServerConfig): Relay {
     // is right here, which is the part worth keeping either way.
     throw new Error(
       "hosted mode is not available on this branch — see the `hosted` branch. " +
-        "Unset MPA_MODE to run in BYO mode, which is what this relay is for."
+        "Unset RIPIENO_MODE to run in BYO mode, which is what this relay is for."
     );
   }
 
@@ -487,7 +487,7 @@ export function startServer(config: ServerConfig): Relay {
       `${config.dataDir ? `history in ${config.dataDir}` : "history in memory only"})`
   );
   if (!config.token && config.host !== "127.0.0.1") {
-    log("  warning: no MPA_TOKEN set. Anyone who can reach this port can join any room.");
+    log("  warning: no RIPIENO_TOKEN set. Anyone who can reach this port can join any room.");
   }
   const relay = wss as Relay;
   relay.flush = flushSaves;

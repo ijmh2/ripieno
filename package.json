@@ -1,5 +1,5 @@
 {
-  "name": "multiplayer-agent-workspace",
+  "name": "ripieno-workspace",
   "private": true,
   "version": "0.0.0",
   "description": "A shared AI agent room — one conversation, multiple people, one agent that knows who said what.",
@@ -14,15 +14,15 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "_comment": "test and typecheck build first: relay-client and mcp have no test script of their own, so nothing else builds them, and both the extension's bundler and its typechecker resolve @mpa/relay-client through its dist. In a working copy that dist is usually lying around from an earlier build, so the missing step only shows up in a fresh clone — which is exactly who it has to work for.",
+    "_comment": "test and typecheck build first: relay-client and mcp have no test script of their own, so nothing else builds them, and both the extension's bundler and its typechecker resolve @ripieno/relay-client through its dist. In a working copy that dist is usually lying around from an earlier build, so the missing step only shows up in a fresh clone — which is exactly who it has to work for.",
     "test": "npm run build && npm run test --workspaces --if-present",
     "typecheck": "npm run build && npm run typecheck --workspaces --if-present",
-    "build:relay": "npm run build -w @mpa/protocol && npm run build -w @mpa/relay",
+    "build:relay": "npm run build -w @ripieno/protocol && npm run build -w @ripieno/relay",
     "start": "node packages/relay/dist/src/index.js",
-    "build:workspace": "npm run build -w @mpa/protocol && npm run build -w @mpa/relay-client && npm run build -w @mpa/workspace-core && npm run build -w @mpa/workspace-host",
+    "build:workspace": "npm run build -w @ripieno/protocol && npm run build -w @ripieno/relay-client && npm run build -w @ripieno/workspace-core && npm run build -w @ripieno/workspace-host",
     "start:workspace": "node packages/workspace-host/dist/src/index.js",
     "demo:provenance": "npm run build:workspace --silent && node scripts/demo-provenance.js",
-    "package": "npm run build && npm run package -w multiplayer-agent"
+    "package": "npm run build && npm run package -w ripieno"
   },
   "engines": {
     "node": ">=20"

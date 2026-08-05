@@ -11,7 +11,7 @@
     "does not restrain file writing \u2014 a room agent running with acceptEdits can create",
     "or overwrite any file it can reach while still being unable to run `ls -R`. That",
     "asymmetry is real and backwards; the deny list is what narrows reach, and the",
-    "mpa.agentPermissions setting decides whether commands run unattended at all.",
+    "ripieno.agentPermissions setting decides whether commands run unattended at all.",
     "",
     "Also note a headless room agent cannot answer an approval prompt: without the",
     "extension's approval bridge, anything needing one strands rather than being denied."

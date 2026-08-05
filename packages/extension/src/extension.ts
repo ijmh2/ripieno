@@ -1,14 +1,14 @@
 import * as vscode from "vscode";
 import { spawn } from "child_process";
-import type { Member, RosterEntry, ServerMsg } from "@mpa/protocol";
+import type { Member, RosterEntry, ServerMsg } from "@ripieno/protocol";
 import { resolveIdentity, resolveIdentityWithToken, relayRequiresIdentity } from "./identity";
 import { SoloRelay } from "./soloRelay";
 import { buildInvite, describeInvite, parseInvite } from "./invite";
 
 /** Where the room token lives, when it did not come from settings. */
-const ROOM_TOKEN_SECRET = "mpa.roomToken";
+const ROOM_TOKEN_SECRET = "ripieno.roomToken";
 import * as os from "node:os";
-import { RelayClient, type ConnectionState } from "@mpa/relay-client";
+import { RelayClient, type ConnectionState } from "@ripieno/relay-client";
 import { ToolExecutor, registerProposedDocuments } from "./toolExecutor";
 import { RoomViewProvider } from "./roomView";
 import { AgentHost, type AgentState } from "./agentHost";
@@ -80,7 +80,7 @@ export function activate(context: vscode.ExtensionContext): void {
    * constructed per attach, so an id held there cannot outlive the thing that
    * loses it.
    */
-  const STATE_KEY = "mpa.session";
+  const STATE_KEY = "ripieno.session";
   interface PersistedState {
     room?: string;
     relayUrl?: string;
@@ -165,19 +165,19 @@ export function activate(context: vscode.ExtensionContext): void {
       treeDataProvider: roomsTree,
       dragAndDropController: roomsTree,
     }),
-    vscode.commands.registerCommand("mpa.joinRoom", () => joinRoom()),
-    vscode.commands.registerCommand("mpa.copyInvite", () => copyInvite()),
-    vscode.commands.registerCommand("mpa.setRole", (node?: unknown) => setRole(node)),
-    vscode.commands.registerCommand("mpa.leaveRoom", () => leaveRoom()),
-    vscode.commands.registerCommand("mpa.signIn", () => signIn()),
-    vscode.commands.registerCommand("mpa.addAgent", () => addAgent()),
-    vscode.commands.registerCommand("mpa.hostWorkspace", () => toggleWorkspaceHost()),
-    vscode.commands.registerCommand("mpa.mountWorkspace", () => mountSharedWorkspace()),
-    vscode.commands.registerCommand("mpa.proposeChange", () => proposeChange()),
-    vscode.commands.registerCommand("mpa.attachAgent", (node?: { id?: string }) =>
+    vscode.commands.registerCommand("ripieno.joinRoom", () => joinRoom()),
+    vscode.commands.registerCommand("ripieno.copyInvite", () => copyInvite()),
+    vscode.commands.registerCommand("ripieno.setRole", (node?: unknown) => setRole(node)),
+    vscode.commands.registerCommand("ripieno.leaveRoom", () => leaveRoom()),
+    vscode.commands.registerCommand("ripieno.signIn", () => signIn()),
+    vscode.commands.registerCommand("ripieno.addAgent", () => addAgent()),
+    vscode.commands.registerCommand("ripieno.hostWorkspace", () => toggleWorkspaceHost()),
+    vscode.commands.registerCommand("ripieno.mountWorkspace", () => mountSharedWorkspace()),
+    vscode.commands.registerCommand("ripieno.proposeChange", () => proposeChange()),
+    vscode.commands.registerCommand("ripieno.attachAgent", (node?: { id?: string }) =>
       void attachAgent(idFromNode(node))
     ),
-    vscode.commands.registerCommand("mpa.detachAgent", (node?: { id?: string }) =>
+    vscode.commands.registerCommand("ripieno.detachAgent", (node?: { id?: string }) =>
       detachAgent(idFromNode(node))
     ),
     approvals,
@@ -348,7 +348,7 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         : undefined
     );
-    void vscode.commands.executeCommand("setContext", "mpa.hasSharedWorkspace", Boolean(someoneElse));
+    void vscode.commands.executeCommand("setContext", "ripieno.hasSharedWorkspace", Boolean(someoneElse));
   }
 
   /**
@@ -383,7 +383,7 @@ export function activate(context: vscode.ExtensionContext): void {
    */
   async function toggleWorkspaceHost(): Promise<void> {
     if (!relay || !currentRoom) {
-      vscode.window.showInformationMessage("Multiplayer Agent: join a room first.");
+      vscode.window.showInformationMessage("Ripieno: join a room first.");
       return;
     }
     if (hostingWorkspace) {
@@ -415,7 +415,7 @@ export function activate(context: vscode.ExtensionContext): void {
   async function mountSharedWorkspace(): Promise<void> {
     const host = workspaceTree.hostHandle;
     if (!host) {
-      vscode.window.showInformationMessage("Multiplayer Agent: nobody is hosting a shared workspace.");
+      vscode.window.showInformationMessage("Ripieno: nobody is hosting a shared workspace.");
       return;
     }
     const go = await vscode.window.showWarningMessage(
@@ -446,12 +446,12 @@ export function activate(context: vscode.ExtensionContext): void {
   async function proposeChange(): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
-      vscode.window.showInformationMessage("Multiplayer Agent: open a file to propose a change.");
+      vscode.window.showInformationMessage("Ripieno: open a file to propose a change.");
       return;
     }
     const host = workspaceTree.hostHandle;
     if (!host) {
-      vscode.window.showInformationMessage("Multiplayer Agent: nobody is hosting a shared workspace.");
+      vscode.window.showInformationMessage("Ripieno: nobody is hosting a shared workspace.");
       return;
     }
 
@@ -475,7 +475,7 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     void vscode.window.showInformationMessage(
       result.isError
-        ? `Multiplayer Agent: ${result.content}`
+        ? `Ripieno: ${result.content}`
         : `Sent to @${host} — they decide whether to apply it.`
     );
   }
@@ -660,7 +660,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const spec = id ? specs.get(id) : [...specs.values()][0];
     if (!spec) return;
     if (!currentRoom || !me) {
-      vscode.window.showInformationMessage("Multiplayer Agent: join a room first.");
+      vscode.window.showInformationMessage("Ripieno: join a room first.");
       return;
     }
     if (agents.has(spec.id)) return;
@@ -783,7 +783,7 @@ export function activate(context: vscode.ExtensionContext): void {
    */
   async function loadRoomToken(): Promise<void> {
     const stored = await context.secrets.get(ROOM_TOKEN_SECRET);
-    const configured = vscode.workspace.getConfiguration("mpa").get<string>("roomToken", "").trim();
+    const configured = vscode.workspace.getConfiguration("ripieno").get<string>("roomToken", "").trim();
     cachedRoomToken = stored ?? configured ?? undefined;
     if (cachedRoomToken === "") cachedRoomToken = undefined;
   }
@@ -801,7 +801,7 @@ export function activate(context: vscode.ExtensionContext): void {
    */
   async function ensureRelayUrl(): Promise<string> {
     const configured = vscode.workspace
-      .getConfiguration("mpa")
+      .getConfiguration("ripieno")
       .get<string>("relayUrl", "")
       .trim();
     if (configured) {
@@ -847,7 +847,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (uri.path !== "/join") return;
     const parsed = parseInvite(uri.query);
     if (!parsed.ok) {
-      void vscode.window.showErrorMessage(`Multiplayer Agent: ${parsed.reason}.`);
+      void vscode.window.showErrorMessage(`Ripieno: ${parsed.reason}.`);
       return;
     }
 
@@ -858,7 +858,7 @@ export function activate(context: vscode.ExtensionContext): void {
     );
     if (choice !== "Join") return;
 
-    const config = vscode.workspace.getConfiguration("mpa");
+    const config = vscode.workspace.getConfiguration("ripieno");
     await config.update("relayUrl", parsed.invite.relayUrl, vscode.ConfigurationTarget.Global);
     // Into SecretStorage rather than settings: a token in settings.json is one
     // `git add .` away from being published, which is how shared secrets usually
@@ -892,7 +892,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   async function joinRoom(): Promise<void> {
     const room = await vscode.window.showInputBox({
-      title: "Join Multiplayer Agent Room",
+      title: "Join Ripieno Room",
       prompt: "Room code",
       placeHolder: "e.g. tgtbt-standup",
       ignoreFocusOut: true,
@@ -912,7 +912,7 @@ export function activate(context: vscode.ExtensionContext): void {
    */
   async function copyInvite(): Promise<void> {
     if (!currentRoom || !activeRelayUrl) {
-      void vscode.window.showWarningMessage("Multiplayer Agent: join a room first.");
+      void vscode.window.showWarningMessage("Ripieno: join a room first.");
       return;
     }
     if (activeRelayUrl === solo.address) {
@@ -924,7 +924,7 @@ export function activate(context: vscode.ExtensionContext): void {
         "Set a relay URL"
       );
       if (choice) {
-        await vscode.commands.executeCommand("workbench.action.openSettings", "mpa.relayUrl");
+        await vscode.commands.executeCommand("workbench.action.openSettings", "ripieno.relayUrl");
       }
       return;
     }
@@ -1058,7 +1058,7 @@ export function activate(context: vscode.ExtensionContext): void {
           if (choice === "Why?") {
             void vscode.window.showInformationMessage(
               "Two machines signed in as the same person evict each other in turn. " +
-                "Give one of them a different mpa.devIdentityOverride and rejoin.",
+                "Give one of them a different ripieno.devIdentityOverride and rejoin.",
               { modal: true }
             );
             return;
@@ -1071,12 +1071,12 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     relay.connect();
 
-    await vscode.commands.executeCommand("mpa.room.focus");
+    await vscode.commands.executeCommand("ripieno.room.focus");
   }
 
   function leaveRoom(): void {
     if (!relay) {
-      vscode.window.showInformationMessage("Multiplayer Agent: not connected to a room.");
+      vscode.window.showInformationMessage("Ripieno: not connected to a room.");
       return;
     }
     detachAll();
@@ -1092,7 +1092,7 @@ export function activate(context: vscode.ExtensionContext): void {
   async function signIn(): Promise<void> {
     const member = await resolveIdentity(false);
     if (member) {
-      vscode.window.showInformationMessage(`Multiplayer Agent: signed in as ${member.handle}.`);
+      vscode.window.showInformationMessage(`Ripieno: signed in as ${member.handle}.`);
     }
   }
 
@@ -1157,7 +1157,7 @@ export function activate(context: vscode.ExtensionContext): void {
         roomView.setStatus(msg.status, msg.waitingOn);
         break;
       case "error":
-        vscode.window.showErrorMessage(`Multiplayer Agent: ${msg.message}`);
+        vscode.window.showErrorMessage(`Ripieno: ${msg.message}`);
         break;
     }
   }

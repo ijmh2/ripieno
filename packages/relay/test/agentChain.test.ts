@@ -24,8 +24,8 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import type { AgentActivity, Member, RosterEntry, ServerMsg, TranscriptEntry } from "@mpa/protocol";
-import { MAX_AGENT_HOPS } from "@mpa/protocol";
+import type { AgentActivity, Member, RosterEntry, ServerMsg, TranscriptEntry } from "@ripieno/protocol";
+import { MAX_AGENT_HOPS } from "@ripieno/protocol";
 import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
 

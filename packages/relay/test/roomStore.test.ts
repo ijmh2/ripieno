@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Member, RosterEntry, TranscriptEntry } from "@mpa/protocol";
+import type { Member, RosterEntry, TranscriptEntry } from "@ripieno/protocol";
 import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
 import { FileRoomStore } from "../src/roomStore.js";

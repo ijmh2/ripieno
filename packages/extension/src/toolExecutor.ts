@@ -1,7 +1,7 @@
 // Executes ToolCallMsg tools against THIS member's workspace, under this
 // user's own OS permissions, and hands back a plain result string.
 //
-// The tools themselves now live in @mpa/workspace-core, so a headless container
+// The tools themselves now live in @ripieno/workspace-core, so a headless container
 // can answer exactly the same calls — before that split, the room's shared
 // workspace could only ever be somebody's laptop. What remains here is the part
 // that genuinely needs an editor: showing a diff before a write, applying it
@@ -15,7 +15,7 @@
 
 import * as vscode from "vscode";
 import * as path from "path";
-import type { ToolCallMsg } from "@mpa/protocol";
+import type { ToolCallMsg } from "@ripieno/protocol";
 import {
   WorkspaceCore,
   capResult,
@@ -28,7 +28,7 @@ import {
   type SafePath,
   type ToolResult,
   type WriteProposal,
-} from "@mpa/workspace-core";
+} from "@ripieno/workspace-core";
 
 export type { ProgressReporter, Requester, ToolResult };
 
@@ -262,12 +262,12 @@ export function registerProposedDocuments(): vscode.Disposable {
  * tell the agent to prefer one big command over several small ones — a prompt
  * working around a missing feature.
  *
- * The matching itself is `matchesAllowlist` in @mpa/workspace-core. This file
+ * The matching itself is `matchesAllowlist` in @ripieno/workspace-core. This file
  * used to carry its own copy, identical down to the regex, which is precisely
  * the duplication the path checks are kept in one place to avoid.
  */
 function isAllowedCommand(command: string): boolean {
-  const config = vscode.workspace.getConfiguration("mpa");
+  const config = vscode.workspace.getConfiguration("ripieno");
   const mode = config.get<string>("commandApproval", "always");
   if (mode === "never") return true;
   if (mode !== "allowlist") return false;
@@ -276,7 +276,7 @@ function isAllowedCommand(command: string): boolean {
 
 /** Persist an "always allow" choice to workspace settings, not globally. */
 async function rememberAllowedCommand(command: string): Promise<void> {
-  const config = vscode.workspace.getConfiguration("mpa");
+  const config = vscode.workspace.getConfiguration("ripieno");
   const existing = config.get<string[]>("allowedCommands", []);
   const entry = command.trim();
   if (!existing.includes(entry)) {

@@ -19,7 +19,7 @@ export interface Invite {
 }
 
 /**
- * Parse `vscode://ijmh2.multiplayer-agent/join?relay=…&room=…&token=…`.
+ * Parse `vscode://ijmh2.ripieno/join?relay=…&room=…&token=…`.
  *
  * Returns a reason rather than throwing, because every failure here is
  * something to show a person: a link that silently does nothing is worse than

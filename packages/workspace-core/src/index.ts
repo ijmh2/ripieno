@@ -23,8 +23,8 @@ import { realpath as fsRealpath } from "fs/promises";
 import type { Dirent } from "fs";
 import { exec } from "child_process";
 import { promisify } from "util";
-import type { ToolProgressState } from "@mpa/protocol";
-import { COMMAND_TIMEOUT_MS } from "@mpa/protocol";
+import type { ToolProgressState } from "@ripieno/protocol";
+import { COMMAND_TIMEOUT_MS } from "@ripieno/protocol";
 import { resolveSafePath, confineToWorkspace, sanitizeGlob, type SafePath } from "./paths.js";
 import { walkFiles } from "./walk.js";
 
@@ -581,7 +581,7 @@ export function commandEnv(requester?: Requester, unattended = false): NodeJS.Pr
  * agent just wrote tells it to, and no blocklist of shell metacharacters changes
  * that. What *can* be changed is what is lying around when it happens.
  *
- * `MPA_*` always goes. Those are the relay and workspace credentials, no command
+ * `RIPIENO_*` always goes. Those are the relay and workspace credentials, no command
  * has any use for them, and they were sitting in the environment of every one —
  * which is what made the gate worth defeating in the first place. Holding the
  * workspace token lets a member impersonate the shared workspace and feed the
@@ -597,7 +597,7 @@ export function commandEnv(requester?: Requester, unattended = false): NodeJS.Pr
 export function withoutSecrets(env: NodeJS.ProcessEnv, unattended: boolean): NodeJS.ProcessEnv {
   const safe: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(env)) {
-    if (/^MPA_/i.test(key)) continue;
+    if (/^RIPIENO_/i.test(key)) continue;
     if (unattended && /^(ANTHROPIC|OPENAI|XAI|GROQ|GOOGLE|GEMINI|AWS|GITHUB|GH)_/i.test(key)) continue;
     if (unattended && /(TOKEN|SECRET|PASSWORD|API_KEY|APIKEY|CREDENTIAL|PRIVATE_KEY)$/i.test(key)) {
       continue;

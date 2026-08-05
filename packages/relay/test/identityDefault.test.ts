@@ -3,7 +3,7 @@
  *
  * The product's whole claim is that authorship is structure the relay
  * maintains rather than something a client asserts. It shipped with
- * verification off unless an operator set MPA_REQUIRE_GITHUB=1, so what
+ * verification off unless an operator set RIPIENO_REQUIRE_GITHUB=1, so what
  * anybody actually ran was the version where everyone says who they are —
  * while the README described the other one. An outside reading found it; the
  * live relay reported identityRequired:false at the time.

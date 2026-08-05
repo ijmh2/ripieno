@@ -4,7 +4,7 @@
 // account system of our own.
 
 import * as vscode from "vscode";
-import type { Member } from "@mpa/protocol";
+import type { Member } from "@ripieno/protocol";
 import { resolveGitApi } from "./gitApi";
 
 const GITHUB_PROVIDER = "github";
@@ -21,21 +21,21 @@ interface GhUser {
  * Development-only identity override, so a second Extension Development Host
  * can join a room as somebody else without a second GitHub account.
  *
- * A testing affordance, not a feature. A relay running with MPA_REQUIRE_GITHUB
+ * A testing affordance, not a feature. A relay running with RIPIENO_REQUIRE_GITHUB
  * refuses whatever this produces, because it takes the handle from GitHub's
  * answer rather than from the client — which is the point. It survives only for
  * local relays that have not turned verification on.
  */
 function resolveOverride(): Member | undefined {
   const handle = vscode.workspace
-    .getConfiguration("mpa")
+    .getConfiguration("ripieno")
     .get<string>("devIdentityOverride", "")
     .trim();
   if (!handle) {
     return undefined;
   }
   const name = vscode.workspace
-    .getConfiguration("mpa")
+    .getConfiguration("ripieno")
     .get<string>("devDisplayNameOverride", "")
     .trim();
   return { handle, displayName: name || handle };
@@ -44,7 +44,7 @@ function resolveOverride(): Member | undefined {
 /**
  * Resolve a Member for the signed-in GitHub user. Silent by default so
  * activation never nags; pass silent=false only in response to an explicit
- * user action (mpa.joinRoom, mpa.signIn). Returns undefined if there is no
+ * user action (ripieno.joinRoom, ripieno.signIn). Returns undefined if there is no
  * session and none was requested (or the user declined the prompt).
  */
 export async function resolveIdentity(silent = true): Promise<Member | undefined> {

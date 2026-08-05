@@ -18,9 +18,9 @@
 //   and an open tab refreshes.
 
 import * as vscode from "vscode";
-import type { ActionEntry } from "@mpa/protocol";
+import type { ActionEntry } from "@ripieno/protocol";
 
-export const WORKSPACE_SCHEME = "mpa-workspace";
+export const WORKSPACE_SCHEME = "ripieno-workspace";
 
 /** Executes a tool on the host's machine and returns its raw result. */
 export type RemoteCall = (
@@ -63,7 +63,7 @@ const PAGE_LINES = 500;
 const MAX_READ_PAGES = 500;
 
 /**
- * The host's workspace, addressed as `mpa-workspace:/<path>`.
+ * The host's workspace, addressed as `ripieno-workspace:/<path>`.
  *
  * Deliberately read-only: `writeFile` throws `NoPermissions`, which makes VS
  * Code render the correct affordances rather than accepting edits and failing

@@ -13,7 +13,7 @@
 // interface and gets surfaced in the UI.
 
 import { spawn, type ChildProcess } from "child_process";
-import type { TurnUsage } from "@mpa/protocol";
+import type { TurnUsage } from "@ripieno/protocol";
 
 /** What an agent can actually do, which the room shows rather than implies. */
 export type RunnerCapability = "workspace" | "conversation";
@@ -503,7 +503,7 @@ export const PROVIDERS: ProviderPreset[] = [
 
 /** API keys belong in SecretStorage, never in settings, which sync and are readable. */
 export function secretKeyFor(agentId: string): string {
-  return `mpa.providerKey.${agentId}`;
+  return `ripieno.providerKey.${agentId}`;
 }
 
 /** Anything running locally can touch files; a hosted chat API cannot. */

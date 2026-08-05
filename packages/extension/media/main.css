@@ -1,21 +1,21 @@
-/* Multiplayer Agent — room webview styling.
+/* Ripieno — room webview styling.
    Uses VS Code theme variables throughout so the room looks native in every
    theme; the 8 author hues are defined once as custom properties and always
    applied as a low-alpha tint + full-strength left border, never a solid
    fill, so they stay legible in both light and dark themes. */
 
 :root {
-  --mpa-hue-0: 356; /* red */
-  --mpa-hue-1: 27; /* orange */
-  --mpa-hue-2: 45; /* amber */
-  --mpa-hue-3: 142; /* green */
-  --mpa-hue-4: 174; /* teal */
-  --mpa-hue-5: 207; /* blue */
-  --mpa-hue-6: 262; /* violet */
-  --mpa-hue-7: 322; /* pink */
+  --ripieno-hue-0: 356; /* red */
+  --ripieno-hue-1: 27; /* orange */
+  --ripieno-hue-2: 45; /* amber */
+  --ripieno-hue-3: 142; /* green */
+  --ripieno-hue-4: 174; /* teal */
+  --ripieno-hue-5: 207; /* blue */
+  --ripieno-hue-6: 262; /* violet */
+  --ripieno-hue-7: 322; /* pink */
 
-  --mpa-radius: 6px;
-  --mpa-gap: 8px;
+  --ripieno-radius: 6px;
+  --ripieno-gap: 8px;
 }
 
 * {
@@ -47,7 +47,7 @@ body {
 .header {
   display: flex;
   align-items: center;
-  gap: var(--mpa-gap);
+  gap: var(--ripieno-gap);
   padding: 8px 10px;
   border-bottom: 1px solid var(--vscode-panel-border);
   flex-shrink: 0;
@@ -109,7 +109,7 @@ body {
 }
 
 .status-pill.thinking {
-  animation: mpa-pulse 1.4s ease-in-out infinite;
+  animation: ripieno-pulse 1.4s ease-in-out infinite;
 }
 
 .status-pill.error {
@@ -122,7 +122,7 @@ body {
   color: var(--vscode-inputValidation-warningForeground, #f4d871);
 }
 
-@keyframes mpa-pulse {
+@keyframes ripieno-pulse {
   0%,
   100% {
     opacity: 1;
@@ -168,13 +168,13 @@ body {
 }
 
 .bubble {
-  border-radius: var(--mpa-radius);
+  border-radius: var(--ripieno-radius);
   padding: 6px 10px;
 }
 
 .row.human .bubble {
-  background: hsl(var(--mpa-hue) 70% 50% / 0.14);
-  border-left: 3px solid hsl(var(--mpa-hue) 70% 50%);
+  background: hsl(var(--ripieno-hue) 70% 50% / 0.14);
+  border-left: 3px solid hsl(var(--ripieno-hue) 70% 50%);
   align-self: flex-start;
   max-width: 92%;
 }
@@ -189,11 +189,11 @@ body {
 /* BYO: an agent that belongs to a member wears their colour on its edge, while
    keeping the neutral fill that distinguishes agents from people. */
 .row.agent .bubble.owned {
-  border-left: 3px solid hsl(var(--mpa-hue) 70% 50%);
+  border-left: 3px solid hsl(var(--ripieno-hue) 70% 50%);
 }
 
 .row.agent .bubble.owned .author {
-  color: hsl(var(--mpa-hue) 75% 45%);
+  color: hsl(var(--ripieno-hue) 75% 45%);
 }
 
 .author {
@@ -203,7 +203,7 @@ body {
 }
 
 .row.human .author {
-  color: hsl(var(--mpa-hue) 75% 45%);
+  color: hsl(var(--ripieno-hue) 75% 45%);
 }
 
 .row.agent .author {
@@ -227,7 +227,7 @@ body {
   font-family: var(--vscode-editor-font-family, monospace);
   background: var(--vscode-textCodeBlock-background);
   padding: 8px;
-  border-radius: var(--mpa-radius);
+  border-radius: var(--ripieno-radius);
   overflow-x: auto;
   margin: 4px 0;
 }
@@ -244,10 +244,10 @@ body {
   vertical-align: text-bottom;
   background: var(--vscode-foreground);
   margin-left: 2px;
-  animation: mpa-caret 0.9s steps(1) infinite;
+  animation: ripieno-caret 0.9s steps(1) infinite;
 }
 
-@keyframes mpa-caret {
+@keyframes ripieno-caret {
   0%,
   49% {
     opacity: 1;
@@ -277,7 +277,7 @@ body {
   max-height: 160px;
   min-height: 28px;
   padding: 5px 8px;
-  border-radius: var(--mpa-radius);
+  border-radius: var(--ripieno-radius);
   border: 1px solid var(--vscode-input-border, transparent);
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
@@ -297,7 +297,7 @@ body {
 
 .send-button {
   border: none;
-  border-radius: var(--mpa-radius);
+  border-radius: var(--ripieno-radius);
   padding: 6px 12px;
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
@@ -360,7 +360,7 @@ body {
   font-size: 11px;
   background: var(--vscode-textCodeBlock-background);
   padding: 6px 8px;
-  border-radius: var(--mpa-radius);
+  border-radius: var(--ripieno-radius);
   max-height: 140px;
   overflow: auto;
   white-space: pre-wrap;
@@ -380,7 +380,7 @@ body {
 
 .approval-button {
   border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--mpa-radius);
+  border-radius: var(--ripieno-radius);
   padding: 4px 10px;
   font-family: inherit;
   font-size: 12px;

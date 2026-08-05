@@ -1,4 +1,4 @@
-// WebviewViewProvider for the "mpa.room" view. Owns the webview's HTML and
+// WebviewViewProvider for the "ripieno.room" view. Owns the webview's HTML and
 // is the single source of truth for room state on the extension-host side,
 // so the view can be torn down and recreated (VS Code disposes hidden
 // webviews' DOM but keeps this provider alive) without losing history:
@@ -6,8 +6,8 @@
 // process around) we just resend a full snapshot on visibility change.
 
 import * as vscode from "vscode";
-import type { ActionEntry, RoomMode, RoomStatus, RosterEntry, TranscriptEntry } from "@mpa/protocol";
-import type { ConnectionState } from "@mpa/relay-client";
+import type { ActionEntry, RoomMode, RoomStatus, RosterEntry, TranscriptEntry } from "@ripieno/protocol";
+import type { ConnectionState } from "@ripieno/relay-client";
 import type { ApprovalChoice } from "./approvals";
 
 interface RoomState {
@@ -68,7 +68,7 @@ type FromWebview =
   | { type: "approvalVerdict"; id: string; choice: ApprovalChoice };
 
 export class RoomViewProvider implements vscode.WebviewViewProvider {
-  static readonly viewId = "mpa.room";
+  static readonly viewId = "ripieno.room";
 
   private view: vscode.WebviewView | undefined;
   private state: RoomState = emptyState("offline");
@@ -210,7 +210,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  /** Called on mpa.leaveRoom: clears the transcript and returns to idle. */
+  /** Called on ripieno.leaveRoom: clears the transcript and returns to idle. */
   reset(): void {
     this.state = emptyState(this.state.connection);
     this.postSnapshot();
@@ -262,7 +262,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
 <meta http-equiv="Content-Security-Policy" content="${cspHeader}" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <link rel="stylesheet" href="${styleUri}" />
-<title>Multiplayer Agent</title>
+<title>Ripieno</title>
 </head>
 <body>
 <div id="header" class="header">

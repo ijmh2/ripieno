@@ -28,7 +28,7 @@ function fakeBridge(decide) {
   const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   const seen = [];
   wss.on("connection", (socket, req) => {
-    if (req.headers["x-mpa-token"] !== TOKEN) {
+    if (req.headers["x-ripieno-token"] !== TOKEN) {
       socket.close(4001, "bad token");
       return;
     }
@@ -85,9 +85,9 @@ describe("approval bridge", () => {
 
   test("a denial from the member becomes a deny verdict", async () => {
     const payload = await askPermission({
-      MPA_APPROVAL_URL: bridge.url(),
-      MPA_APPROVAL_TOKEN: TOKEN,
-      MPA_AGENT_LABEL: "Mira's agent",
+      RIPIENO_APPROVAL_URL: bridge.url(),
+      RIPIENO_APPROVAL_TOKEN: TOKEN,
+      RIPIENO_AGENT_LABEL: "Mira's agent",
     });
     assert.equal(payload.behavior, "deny");
     assert.match(payload.message, /\w/, "a denial must explain itself, or the agent just retries");
@@ -95,10 +95,10 @@ describe("approval bridge", () => {
 
   test("the request reaches the member with enough context to judge it", async () => {
     await askPermission({
-      MPA_APPROVAL_URL: bridge.url(),
-      MPA_APPROVAL_TOKEN: TOKEN,
-      MPA_AGENT_ID: "ijmh2::reviewer",
-      MPA_AGENT_LABEL: "Mira's reviewer",
+      RIPIENO_APPROVAL_URL: bridge.url(),
+      RIPIENO_APPROVAL_TOKEN: TOKEN,
+      RIPIENO_AGENT_ID: "ijmh2::reviewer",
+      RIPIENO_AGENT_LABEL: "Mira's reviewer",
     });
     const last = bridge.seen.at(-1);
     assert.equal(last.toolName, "Bash");
@@ -112,8 +112,8 @@ describe("approval bridge", () => {
     const allowAll = fakeBridge(() => ({ allow: true }));
     await allowAll.ready;
     const payload = await askPermission({
-      MPA_APPROVAL_URL: allowAll.url(),
-      MPA_APPROVAL_TOKEN: TOKEN,
+      RIPIENO_APPROVAL_URL: allowAll.url(),
+      RIPIENO_APPROVAL_TOKEN: TOKEN,
     });
     assert.equal(payload.behavior, "allow");
     // The input must be echoed back, or the call runs with nothing.
@@ -126,8 +126,8 @@ describe("failing closed", () => {
   test("an unreachable bridge denies rather than allows", async () => {
     // Port 1 is reserved and nothing listens there.
     const payload = await askPermission({
-      MPA_APPROVAL_URL: "ws://127.0.0.1:1",
-      MPA_APPROVAL_TOKEN: TOKEN,
+      RIPIENO_APPROVAL_URL: "ws://127.0.0.1:1",
+      RIPIENO_APPROVAL_TOKEN: TOKEN,
     });
     assert.equal(payload.behavior, "deny");
     assert.match(payload.message, /bridge/i);
@@ -135,8 +135,8 @@ describe("failing closed", () => {
 
   test("no bridge configured at all denies", async () => {
     const payload = await askPermission({
-      MPA_APPROVAL_URL: "",
-      MPA_APPROVAL_TOKEN: "",
+      RIPIENO_APPROVAL_URL: "",
+      RIPIENO_APPROVAL_TOKEN: "",
     });
     assert.equal(payload.behavior, "deny");
   });
@@ -145,8 +145,8 @@ describe("failing closed", () => {
     const bridge = fakeBridge(() => ({ allow: true }));
     await bridge.ready;
     const payload = await askPermission({
-      MPA_APPROVAL_URL: bridge.url(),
-      MPA_APPROVAL_TOKEN: "wrong-token",
+      RIPIENO_APPROVAL_URL: bridge.url(),
+      RIPIENO_APPROVAL_TOKEN: "wrong-token",
     });
     assert.equal(payload.behavior, "deny");
     await bridge.close();
@@ -157,7 +157,7 @@ describe("failing closed", () => {
     const silent = fakeBridge(() => undefined);
     await silent.ready;
     const url = silent.url();
-    const pending = askPermission({ MPA_APPROVAL_URL: url, MPA_APPROVAL_TOKEN: TOKEN });
+    const pending = askPermission({ RIPIENO_APPROVAL_URL: url, RIPIENO_APPROVAL_TOKEN: TOKEN });
     // Close the bridge while the request is outstanding.
     setTimeout(() => void silent.close(), 300);
     const payload = await pending;

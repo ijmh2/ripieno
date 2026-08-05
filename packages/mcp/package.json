@@ -1,5 +1,5 @@
 {
-  "name": "@mpa/mcp",
+  "name": "@ripieno/mcp",
   "version": "0.0.0",
   "private": true,
   "type": "commonjs",
@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@mpa/protocol": "*",
+    "@ripieno/protocol": "*",
     "ws": "^8.18.0",
     "zod": "^3.23.0"
   },

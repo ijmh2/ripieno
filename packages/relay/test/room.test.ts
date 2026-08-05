@@ -1,6 +1,6 @@
 import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import type { Member, RosterEntry, ServerMsg } from "@mpa/protocol";
+import type { Member, RosterEntry, ServerMsg } from "@ripieno/protocol";
 import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
 

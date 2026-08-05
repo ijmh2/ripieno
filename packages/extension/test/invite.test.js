@@ -34,8 +34,8 @@ describe("a good link joins a room", () => {
     // A generator that produces something its own parser rejects is a bug
     // nobody notices until somebody else clicks the link.
     const invite = { relayUrl: "wss://relay.example", room: "a-b_c.1", token: "tok en/+=" };
-    const link = buildInvite(invite, "ijmh2.multiplayer-agent");
-    assert.match(link, /^vscode:\/\/ijmh2\.multiplayer-agent\/join\?/);
+    const link = buildInvite(invite, "ijmh2.ripieno");
+    assert.match(link, /^vscode:\/\/ijmh2\.ripieno\/join\?/);
     const back = parseInvite(link.slice(link.indexOf("?") + 1));
     assert.equal(back.ok, true);
     assert.deepEqual(back.invite, invite);
@@ -96,16 +96,16 @@ describe("the link uses the editor's own scheme", () => {
     // own. A hardcoded vscode: link silently did nothing for those users.
     const link = buildInvite(
       { relayUrl: "wss://r.example", room: "demo" },
-      "ijmh2.multiplayer-agent",
+      "ijmh2.ripieno",
       "antigravity"
     );
-    assert.match(link, /^antigravity:\/\/ijmh2\.multiplayer-agent\/join\?/);
+    assert.match(link, /^antigravity:\/\/ijmh2\.ripieno\/join\?/);
   });
 
   test("it still round-trips whatever the scheme", () => {
     const invite = { relayUrl: "wss://r.example", room: "demo", token: "t" };
     for (const scheme of ["vscode", "antigravity", "cursor", "vscode-insiders"]) {
-      const link = buildInvite(invite, "ijmh2.multiplayer-agent", scheme);
+      const link = buildInvite(invite, "ijmh2.ripieno", scheme);
       const back = parseInvite(link.slice(link.indexOf("?") + 1));
       assert.equal(back.ok, true, scheme);
       assert.deepEqual(back.invite, invite);

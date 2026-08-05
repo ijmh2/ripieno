@@ -6,8 +6,8 @@
  * functions, so nothing in this file may assume it owns the agent loop.
  */
 
-import type { AttachedAgent, Member, RoomRole, RosterEntry } from "@mpa/protocol";
-import { colorIndexFor, describeMembers } from "@mpa/protocol";
+import type { AttachedAgent, Member, RoomRole, RosterEntry } from "@ripieno/protocol";
+import { colorIndexFor, describeMembers } from "@ripieno/protocol";
 
 /* ------------------------------------------------------------------ */
 /* Provenance envelope                                                 */

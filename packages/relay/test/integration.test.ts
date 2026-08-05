@@ -9,7 +9,7 @@ import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import WebSocket = require("ws");
 import type { WebSocketServer } from "ws";
-import type { ClientMsg, ServerMsg, TranscriptEntry } from "@mpa/protocol";
+import type { ClientMsg, ServerMsg, TranscriptEntry } from "@ripieno/protocol";
 import { startServer } from "../src/server.js";
 
 const PORT = 8899;

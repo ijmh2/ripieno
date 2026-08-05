@@ -46,7 +46,7 @@ export type AgentActivity = "idle" | "thinking";
 /**
  * What a member may do in a room.
  *
- * Only meaningful on a relay that verifies identity (MPA_REQUIRE_GITHUB) —
+ * Only meaningful on a relay that verifies identity (RIPIENO_REQUIRE_GITHUB) —
  * without it a handle is self-asserted, so a role attached to one is a
  * suggestion. Enforced regardless, because the alternative is a permission
  * system that only exists in the UI.

@@ -11,8 +11,8 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { WORKSPACE_HANDLE } from "@mpa/protocol";
-import type { Member, RosterEntry, ServerMsg } from "@mpa/protocol";
+import { WORKSPACE_HANDLE } from "@ripieno/protocol";
+import type { Member, RosterEntry, ServerMsg } from "@ripieno/protocol";
 import { Room, type SocketLike } from "../src/room.js";
 import { rosterPrompt } from "../src/roomCore.js";
 import type { RoomDriver } from "../src/driver.js";

@@ -19,11 +19,11 @@ import type {
   ServerMsg,
   ToolProgressState,
   TranscriptEntry,
-} from "@mpa/protocol";
-import { WORKSPACE_HANDLE } from "@mpa/protocol";
+} from "@ripieno/protocol";
+import { WORKSPACE_HANDLE } from "@ripieno/protocol";
 import { toRosterEntry } from "./roomCore.js";
 import type { RoomDriver } from "./driver.js";
-import type { AgentUsage, RoomRole, TurnUsage } from "@mpa/protocol";
+import type { AgentUsage, RoomRole, TurnUsage } from "@ripieno/protocol";
 import type { RoomSnapshot } from "./roomStore.js";
 
 /**

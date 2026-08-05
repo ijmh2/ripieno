@@ -12,7 +12,7 @@ import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import WebSocket = require("ws");
 import type { WebSocketServer } from "ws";
-import type { ServerMsg } from "@mpa/protocol";
+import type { ServerMsg } from "@ripieno/protocol";
 import { startServer } from "../src/server.js";
 import { GithubVerifier } from "../src/identity.js";
 

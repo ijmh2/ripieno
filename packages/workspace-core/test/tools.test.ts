@@ -233,20 +233,20 @@ describe("a command never sees this deployment's own credentials", () => {
   const ambient = {
     PATH: "/usr/bin",
     HOME: "/home/agent",
-    MPA_TOKEN: "room-secret",
-    MPA_WORKSPACE_TOKEN: "workspace-secret",
+    RIPIENO_TOKEN: "room-secret",
+    RIPIENO_WORKSPACE_TOKEN: "workspace-secret",
     ANTHROPIC_API_KEY: "sk-ant-xxx",
     GITHUB_TOKEN: "gho_xxx",
     MY_APP_SECRET: "hunter2",
   };
 
-  test("MPA_* is stripped even where a human approved the command", () => {
+  test("RIPIENO_* is stripped even where a human approved the command", () => {
     // Holding the workspace token lets a member impersonate the shared
     // workspace and feed the whole room a different codebase. No command has any
     // use for it, so it goes in both hosts.
     const env = withoutSecrets(ambient, false);
-    assert.equal(env.MPA_TOKEN, undefined);
-    assert.equal(env.MPA_WORKSPACE_TOKEN, undefined);
+    assert.equal(env.RIPIENO_TOKEN, undefined);
+    assert.equal(env.RIPIENO_WORKSPACE_TOKEN, undefined);
   });
 
   test("a member's own keys survive on their own machine", () => {

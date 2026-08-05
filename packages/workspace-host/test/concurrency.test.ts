@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { GitWorkspace } from "../src/git.js";
 import { ContainerGate } from "../src/gate.js";
-import type { WriteProposal } from "@mpa/workspace-core";
+import type { WriteProposal } from "@ripieno/workspace-core";
 
 const execAsync = promisify(exec);
 

@@ -1,5 +1,5 @@
 {
-  "name": "@mpa/relay-client",
+  "name": "@ripieno/relay-client",
   "version": "0.0.0",
   "private": true,
   "type": "commonjs",
@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@mpa/protocol": "*",
+    "@ripieno/protocol": "*",
     "ws": "^8.18.0"
   },
   "devDependencies": {

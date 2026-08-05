@@ -20,10 +20,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import WebSocket = require("ws");
 
-const URL = process.env.MPA_APPROVAL_URL;
-const TOKEN = process.env.MPA_APPROVAL_TOKEN;
-const AGENT_ID = process.env.MPA_AGENT_ID ?? "agent";
-const AGENT_LABEL = process.env.MPA_AGENT_LABEL ?? "your agent";
+const URL = process.env.RIPIENO_APPROVAL_URL;
+const TOKEN = process.env.RIPIENO_APPROVAL_TOKEN;
+const AGENT_ID = process.env.RIPIENO_AGENT_ID ?? "agent";
+const AGENT_LABEL = process.env.RIPIENO_AGENT_LABEL ?? "your agent";
 
 /** Nothing may run unattended just because the bridge is unreachable. */
 const CONNECT_TIMEOUT_MS = 5000;
@@ -47,7 +47,7 @@ function connect(): Promise<WebSocket> {
   if (socket && socket.readyState === WebSocket.OPEN) return Promise.resolve(socket);
   return new Promise((resolve, reject) => {
     if (!URL || !TOKEN) return reject(new Error("approval bridge not configured"));
-    const ws = new WebSocket(URL, { headers: { "x-mpa-token": TOKEN } });
+    const ws = new WebSocket(URL, { headers: { "x-ripieno-token": TOKEN } });
     const timer = setTimeout(() => reject(new Error("approval bridge unreachable")), CONNECT_TIMEOUT_MS);
 
     ws.on("open", () => {

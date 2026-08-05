@@ -14,8 +14,8 @@
 
 import { writeFile, mkdir } from "node:fs/promises";
 import * as path from "node:path";
-import { matchesAllowlist } from "@mpa/workspace-core";
-import type { ApprovalGate, Requester, ToolResult, WriteProposal } from "@mpa/workspace-core";
+import { matchesAllowlist } from "@ripieno/workspace-core";
+import type { ApprovalGate, Requester, ToolResult, WriteProposal } from "@ripieno/workspace-core";
 
 export interface CommandPolicy {
   /**
@@ -118,7 +118,7 @@ export class ContainerGate implements ApprovalGate {
 /**
  * Does the policy permit this command?
  *
- * The matching itself lives in @mpa/workspace-core so the editor and the
+ * The matching itself lives in @ripieno/workspace-core so the editor and the
  * container cannot drift apart; only allowAll is specific to a container, where
  * there is no human to ask.
  *

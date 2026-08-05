@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import WebSocket from "ws";
-import type { ServerMsg } from "@mpa/protocol";
+import type { ServerMsg } from "@ripieno/protocol";
 import { WorkspaceHost } from "../src/host.js";
 
 const execAsync = promisify(exec);
@@ -106,7 +106,7 @@ describe("a container hosts the room's workspace", () => {
     // gates and the workspace-token check are exercised rather than bypassed.
     relay = spawn("node", ["dist/src/index.js"], {
       cwd: path.resolve(__dirname, "..", "..", "..", "relay"),
-      env: { ...process.env, MPA_PORT: String(PORT), MPA_WORKSPACE_TOKEN: WORKSPACE_TOKEN },
+      env: { ...process.env, RIPIENO_PORT: String(PORT), RIPIENO_WORKSPACE_TOKEN: WORKSPACE_TOKEN },
       stdio: "ignore",
     });
     await wait(900);

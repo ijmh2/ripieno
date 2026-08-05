@@ -18,7 +18,7 @@ interface Node {
 }
 
 export class WorkspaceTreeProvider implements vscode.TreeDataProvider<Node> {
-  static readonly viewId = "mpa.workspace";
+  static readonly viewId = "ripieno.workspace";
 
   private readonly changed = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.changed.event;

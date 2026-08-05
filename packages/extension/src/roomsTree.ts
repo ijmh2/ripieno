@@ -13,10 +13,10 @@ import type {
   AttachedAgent,
   RoomMode,
   RosterEntry,
-} from "@mpa/protocol";
+} from "@ripieno/protocol";
 import type { AgentState } from "./agentHost";
 
-const MIME = "application/vnd.code.tree.mpa.rooms";
+const MIME = "application/vnd.code.tree.ripieno.rooms";
 
 /** One of this member's agents, as the tree knows it. */
 export interface MyAgent {
@@ -52,7 +52,7 @@ export interface RoomsTreeHandlers {
 export class RoomsTreeProvider
   implements vscode.TreeDataProvider<Node>, vscode.TreeDragAndDropController<Node>
 {
-  static readonly viewId = "mpa.rooms";
+  static readonly viewId = "ripieno.rooms";
 
   readonly dropMimeTypes = [MIME];
   readonly dragMimeTypes = [MIME];
@@ -139,13 +139,13 @@ export class RoomsTreeProvider
       roots.push(
         this.room
           ? { kind: "room", code: this.room, mode: this.mode, connected: this.connected }
-          : { kind: "hint", text: "Not in a room — click to join", command: "mpa.joinRoom" }
+          : { kind: "hint", text: "Not in a room — click to join", command: "ripieno.joinRoom" }
       );
       // Detached agents live outside the room, ready to be dragged in.
       for (const agent of this.myAgents.filter((a) => a.state === "detached")) {
         roots.push({ kind: "myAgent", agent });
       }
-      roots.push({ kind: "hint", text: "Add another agent…", command: "mpa.addAgent" });
+      roots.push({ kind: "hint", text: "Add another agent…", command: "ripieno.addAgent" });
       return roots;
     }
 
@@ -210,7 +210,7 @@ export class RoomsTreeProvider
         item.iconPath = new vscode.ThemeIcon(entry.present ? "account" : "circle-outline");
         // Only an owner can change roles, and only somebody else's — the tree
         // shows the action accordingly rather than offering it and refusing.
-        item.contextValue = this.iAmOwner && !isYou ? "mpaMemberManageable" : "mpaMember";
+        item.contextValue = this.iAmOwner && !isYou ? "ripienoMemberManageable" : "ripienoMember";
         return item;
       }
 
@@ -232,7 +232,7 @@ export class RoomsTreeProvider
         )}`;
         item.iconPath = new vscode.ThemeIcon(thinking ? "loading~spin" : "robot");
         // Only your own agents are yours to stop.
-        item.contextValue = mine ? "mpaAgentAttached" : "mpaForeignAgent";
+        item.contextValue = mine ? "ripienoAgentAttached" : "ripienoForeignAgent";
         item.id = `attached:${node.agent.id}`;
         return item;
       }
@@ -241,7 +241,7 @@ export class RoomsTreeProvider
         const item = new vscode.TreeItem(node.agent.label);
         item.description = `${describeAgent(node.agent.state)}${detailSuffix(node.agent)}`;
         item.iconPath = new vscode.ThemeIcon("robot");
-        item.contextValue = "mpaAgentDetached";
+        item.contextValue = "ripienoAgentDetached";
         item.id = `detached:${node.agent.id}`;
         item.tooltip = "Drag onto the room to attach it, or use the attach action.";
         return item;

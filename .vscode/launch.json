@@ -5,7 +5,7 @@
       // Root-level so the whole monorepo can be open in one window — the relay,
       // .mcp.json and the extension all live here. The package-level launch.json
       // only works if you open packages/extension as the folder.
-      "name": "Run Multiplayer Agent Extension",
+      "name": "Run Ripieno Extension",
       "type": "extensionHost",
       "request": "launch",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}/packages/extension"],

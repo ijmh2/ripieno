@@ -17,7 +17,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { access, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { commandEnv, type Requester } from "@mpa/workspace-core";
+import { commandEnv, type Requester } from "@ripieno/workspace-core";
 
 const execAsync = promisify(exec);
 
@@ -76,7 +76,7 @@ export class GitWorkspace {
   private get sshEnv(): NodeJS.ProcessEnv {
     return {
       ...process.env,
-      // Quoted: MPA_KEY_DIR is operator-supplied, and a directory with a space
+      // Quoted: RIPIENO_KEY_DIR is operator-supplied, and a directory with a space
       // in it would otherwise silently authenticate as nobody.
       GIT_SSH_COMMAND: `ssh -i ${shellQuote(this.keyPath)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`,
     };
@@ -90,7 +90,7 @@ export class GitWorkspace {
       await access(pub);
     } catch {
       await execAsync(
-        `ssh-keygen -t ed25519 -N "" -C "multiplayer-agent room workspace" -f ${shellQuote(this.keyPath)}`
+        `ssh-keygen -t ed25519 -N "" -C "ripieno room workspace" -f ${shellQuote(this.keyPath)}`
       );
     }
     // ssh refuses to use a key others can read, and a fresh volume does not

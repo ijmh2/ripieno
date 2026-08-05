@@ -18,8 +18,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import WebSocket = require("ws");
 
-const URL = process.env.MPA_WORKSPACE_URL;
-const TOKEN = process.env.MPA_WORKSPACE_TOKEN;
+const URL = process.env.RIPIENO_WORKSPACE_URL;
+const TOKEN = process.env.RIPIENO_WORKSPACE_TOKEN;
 
 const CONNECT_TIMEOUT_MS = 5000;
 /** Generous: the far end may be showing a human a diff to approve. */
@@ -38,7 +38,7 @@ function connect(): Promise<WebSocket> {
   if (socket && socket.readyState === WebSocket.OPEN) return Promise.resolve(socket);
   return new Promise((resolve, reject) => {
     if (!URL || !TOKEN) return reject(new Error("workspace bridge not configured"));
-    const ws = new WebSocket(URL, { headers: { "x-mpa-token": TOKEN } });
+    const ws = new WebSocket(URL, { headers: { "x-ripieno-token": TOKEN } });
     const timer = setTimeout(() => reject(new Error("workspace bridge unreachable")), CONNECT_TIMEOUT_MS);
 
     ws.on("open", () => {
@@ -97,7 +97,7 @@ async function call(name: string, input: Record<string, unknown>): Promise<Reply
   });
 }
 
-const server = new McpServer({ name: "mpa-workspace", version: "0.0.1" });
+const server = new McpServer({ name: "ripieno-workspace", version: "0.0.1" });
 
 function reply(result: Reply) {
   return { content: [{ type: "text" as const, text: result.content }], isError: result.isError };
@@ -177,6 +177,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(`[mpa-workspace] fatal: ${err instanceof Error ? err.message : err}`);
+  console.error(`[ripieno-workspace] fatal: ${err instanceof Error ? err.message : err}`);
   process.exit(1);
 });

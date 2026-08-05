@@ -156,7 +156,7 @@ describe("a file larger than the 50KB response cap survives the round trip", () 
   // a fake of the producer is exactly where this bug would hide again.
   const os = require("node:os");
   const nodeFs = require("node:fs");
-  const { WorkspaceCore } = require("@mpa/workspace-core");
+  const { WorkspaceCore } = require("@ripieno/workspace-core");
 
   /** A WorkspaceFileSystem wired to a real WorkspaceCore over a real directory. */
   function workspaceOver(content, name = "big.ts") {

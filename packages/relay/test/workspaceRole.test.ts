@@ -13,8 +13,8 @@ import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import WebSocket = require("ws");
 import type { WebSocketServer } from "ws";
-import type { ClientMsg, ServerMsg } from "@mpa/protocol";
-import { WORKSPACE_HANDLE } from "@mpa/protocol";
+import type { ClientMsg, ServerMsg } from "@ripieno/protocol";
+import { WORKSPACE_HANDLE } from "@ripieno/protocol";
 import { startServer } from "../src/server.js";
 import { rosterPrompt, toRosterEntry } from "../src/roomCore.js";
 

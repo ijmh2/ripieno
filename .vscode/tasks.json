@@ -4,7 +4,7 @@
     {
       "label": "watch extension",
       "type": "shell",
-      "command": "npm run watch -w multiplayer-agent",
+      "command": "npm run watch -w ripieno",
       "isBackground": true,
       "group": { "kind": "build", "isDefault": true },
       "presentation": { "reveal": "silent", "panel": "dedicated" },
@@ -21,7 +21,7 @@
     {
       "label": "start relay (BYO)",
       "type": "shell",
-      "command": "npm start -w @mpa/relay",
+      "command": "npm start -w @ripieno/relay",
       "isBackground": true,
       "presentation": { "reveal": "always", "panel": "dedicated" },
       "problemMatcher": []

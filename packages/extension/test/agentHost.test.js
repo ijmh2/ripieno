@@ -45,8 +45,8 @@ async function room(code, replies = []) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mpa-agent-"));
   const url = await relay.start(dir);
   const record = path.join(dir, "prompts.jsonl");
-  process.env.MPA_TEST_RECORD = record;
-  process.env.MPA_TEST_REPLIES = JSON.stringify(replies);
+  process.env.RIPIENO_TEST_RECORD = record;
+  process.env.RIPIENO_TEST_REPLIES = JSON.stringify(replies);
   cleanup.push(() => relay.stop());
   return {
     url,

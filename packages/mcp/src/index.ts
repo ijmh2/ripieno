@@ -12,7 +12,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import type { TranscriptEntry } from "@mpa/protocol";
+import type { TranscriptEntry } from "@ripieno/protocol";
 import { RoomClient } from "./roomClient.js";
 
 function required(name: string): string {
@@ -25,14 +25,14 @@ function required(name: string): string {
 }
 
 const client = new RoomClient({
-  url: process.env.MPA_RELAY_URL ?? "ws://localhost:8787",
-  room: required("MPA_ROOM"),
-  handle: required("MPA_HANDLE"),
-  displayName: process.env.MPA_NAME ?? required("MPA_HANDLE"),
-  repo: process.env.MPA_REPO,
-  token: process.env.MPA_TOKEN,
-  // Needed only by a relay running MPA_REQUIRE_GITHUB=1; harmless otherwise.
-  githubToken: process.env.MPA_GITHUB_TOKEN,
+  url: process.env.RIPIENO_RELAY_URL ?? "ws://localhost:8787",
+  room: required("RIPIENO_ROOM"),
+  handle: required("RIPIENO_HANDLE"),
+  displayName: process.env.RIPIENO_NAME ?? required("RIPIENO_HANDLE"),
+  repo: process.env.RIPIENO_REPO,
+  token: process.env.RIPIENO_TOKEN,
+  // Needed only by a relay running RIPIENO_REQUIRE_GITHUB=1; harmless otherwise.
+  githubToken: process.env.RIPIENO_GITHUB_TOKEN,
 });
 
 /** Render entries the way the agent should read them: authored, never anonymous. */
@@ -47,7 +47,7 @@ function format(entries: TranscriptEntry[]): string {
     .join("\n\n");
 }
 
-const server = new McpServer({ name: "multiplayer-agent-room", version: "0.0.1" });
+const server = new McpServer({ name: "ripieno-room", version: "0.0.1" });
 
 server.registerTool(
   "room_read",
@@ -289,7 +289,7 @@ async function main(): Promise<void> {
   // discovers the relay is down.
   try {
     await client.connect();
-    console.error(`[mpa-mcp] attached to room ${process.env.MPA_ROOM} as @${process.env.MPA_HANDLE}`);
+    console.error(`[mpa-mcp] attached to room ${process.env.RIPIENO_ROOM} as @${process.env.RIPIENO_HANDLE}`);
   } catch (err) {
     console.error(`[mpa-mcp] could not reach relay: ${err instanceof Error ? err.message : err}`);
   }

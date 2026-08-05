@@ -13,10 +13,10 @@
 
 import { realpath } from "node:fs/promises";
 import * as path from "node:path";
-import type { RemoteToolRequestMsg, ServerMsg } from "@mpa/protocol";
-import { WORKSPACE_HANDLE } from "@mpa/protocol";
-import { RelayClient, type ConnectionState } from "@mpa/relay-client";
-import { WorkspaceCore, type Requester } from "@mpa/workspace-core";
+import type { RemoteToolRequestMsg, ServerMsg } from "@ripieno/protocol";
+import { WORKSPACE_HANDLE } from "@ripieno/protocol";
+import { RelayClient, type ConnectionState } from "@ripieno/relay-client";
+import { WorkspaceCore, type Requester } from "@ripieno/workspace-core";
 import { ContainerGate, type CommandPolicy } from "./gate.js";
 import { GitWorkspace, type RepoBinding } from "./git.js";
 

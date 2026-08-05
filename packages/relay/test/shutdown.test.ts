@@ -14,7 +14,7 @@ import { mkdtemp, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import WebSocket = require("ws");
-import type { TranscriptEntry } from "@mpa/protocol";
+import type { TranscriptEntry } from "@ripieno/protocol";
 import { startServer, type Relay } from "../src/server.js";
 import { FileRoomStore } from "../src/roomStore.js";
 

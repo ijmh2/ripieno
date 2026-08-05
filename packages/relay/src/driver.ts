@@ -12,7 +12,7 @@
  * the network.
  */
 
-import type { Member, RosterEntry, ToolProgressState } from "@mpa/protocol";
+import type { Member, RosterEntry, ToolProgressState } from "@ripieno/protocol";
 
 export interface RoomDriver {
   /** Tell the agent who is in the room and who is unreachable. */

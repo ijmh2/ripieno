@@ -9,7 +9,7 @@ Three ways to run one, in increasing order of effort.
 
 ## 1. No relay at all
 
-Leave `mpa.relayUrl` empty. The extension starts a relay inside your editor,
+Leave `ripieno.relayUrl` empty. The extension starts a relay inside your editor,
 bound to loopback, on a port the OS picks. Nothing is deployed, nothing is
 exposed, no token, no account.
 
@@ -27,7 +27,7 @@ Anywhere Node 20+ runs:
 ```bash
 git clone <this repo> && cd <this repo>
 npm ci
-MPA_TOKEN=$(openssl rand -hex 24) MPA_DATA_DIR=./data npm start
+RIPIENO_TOKEN=$(openssl rand -hex 24) RIPIENO_DATA_DIR=./data npm start
 ```
 
 It listens on `8787` by default. For other people to reach it they need a route
@@ -49,7 +49,7 @@ work the same way.
 # Railway, from a clone of this repo
 railway init
 railway volume add --mount-path /data
-railway variables --set "MPA_TOKEN=$(openssl rand -hex 24)" --set "MPA_DATA_DIR=/data"
+railway variables --set "RIPIENO_TOKEN=$(openssl rand -hex 24)" --set "RIPIENO_DATA_DIR=/data"
 railway up
 ```
 
@@ -65,27 +65,27 @@ message, per room).
 
 | Variable | Default | What it does |
 |---|---|---|
-| `MPA_TOKEN` | none | Shared secret required to join. **Mandatory** when `PORT` is set — the relay refuses to start on a deployment without one. |
-| `MPA_DATA_DIR` | none | Where room history is written. Without it, a restart empties every room. Point it at a mounted volume. |
-| `MPA_REQUIRE_GITHUB` | on, unless loopback | Verify members against GitHub rather than believing the handle they send. Set `0` to turn it off — see below. |
-| `MPA_WORKSPACE_TOKEN` | none | Separate secret for the shared-workspace container. Without it the workspace role is refused entirely. |
-| `MPA_PORT` / `PORT` | 8787 | `PORT` wins, so most hosts need no configuration. |
-| `MPA_HOST` | `0.0.0.0` when `PORT` is set | Interface to bind. |
+| `RIPIENO_TOKEN` | none | Shared secret required to join. **Mandatory** when `PORT` is set — the relay refuses to start on a deployment without one. |
+| `RIPIENO_DATA_DIR` | none | Where room history is written. Without it, a restart empties every room. Point it at a mounted volume. |
+| `RIPIENO_REQUIRE_GITHUB` | on, unless loopback | Verify members against GitHub rather than believing the handle they send. Set `0` to turn it off — see below. |
+| `RIPIENO_WORKSPACE_TOKEN` | none | Separate secret for the shared-workspace container. Without it the workspace role is refused entirely. |
+| `RIPIENO_PORT` / `PORT` | 8787 | `PORT` wins, so most hosts need no configuration. |
+| `RIPIENO_HOST` | `0.0.0.0` when `PORT` is set | Interface to bind. |
 
 ### The token is a gate, not a login
 
-A holder of `MPA_TOKEN` can reach the relay. It does **not** establish who they
+A holder of `RIPIENO_TOKEN` can reach the relay. It does **not** establish who they
 are: without identity verification, a token holder can claim any handle,
 including yours, and the attribution the room displays is then a convention
 rather than a fact.
 
-So on any relay another machine can reach, `MPA_REQUIRE_GITHUB` is **on by
+So on any relay another machine can reach, `RIPIENO_REQUIRE_GITHUB` is **on by
 default**. Members sign in with GitHub, the relay asks GitHub who the token
 belongs to, and the handle in the transcript is the one GitHub returned. If
 GitHub cannot be reached, joins are refused rather than trusted — "cannot check"
 is the state the feature exists to replace.
 
-Turn it off with `MPA_REQUIRE_GITHUB=0` if the relay is on a private network
+Turn it off with `RIPIENO_REQUIRE_GITHUB=0` if the relay is on a private network
 where the token is already the boundary. That is a reasonable choice; it is not
 a default, because a default that quietly weakens the product's central claim is
 worse than not making the claim.

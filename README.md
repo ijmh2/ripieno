@@ -1,15 +1,26 @@
-# Multiplayer Agent
+# Ripieno
+
+> *ripieno* — in a concerto grosso, the full ensemble, as against the soloists.
+> Several parts, sounding together, each still its own line.
 
 A shared workspace in your editor where several **people** and several **AI
-agents** work on one codebase at once. One conversation, colour-coded by author,
-and everything attributed to a named actor — a specific agent belonging to a
-specific person — rather than to whoever's machine happened to run it.
+agents** work on one codebase at once — **self-hosted**, with **each person
+bringing their own agent** on their own subscription, from **any vendor**.
+
+Everything is attributed to a named actor: a specific agent belonging to a
+specific person, rather than whoever's machine happened to run it.
 
 The naive version of this is a shared login, which gives the agent one anonymous
 view of a team: it cannot tell agreement from disagreement, whose preferences to
 honour, or whose filesystem the next write lands on. Here every message the agent
 receives carries its author as structure the relay maintains, and every workspace
 action runs on the asking member's own machine under their own permissions.
+
+There is no hosted service and there will not be one. A relay sees every message
+and routes every tool call; asking you to trust an unaudited third party with
+that would contradict the argument on the first page. You run your own, or you
+run none at all — solo mode needs no relay, no account and no token. See
+[docs/self-hosting.md](docs/self-hosting.md).
 
 Two agents belonging to two different people can write to the same repository
 concurrently, and `git log` names each of them correctly:
@@ -63,11 +74,11 @@ running Claude Code); another checks the extension manifest against itself.
 Nothing to deploy, no account, no token.
 
 ```bash
-npm ci && npm run package        # → dist/multiplayer-agent-0.0.1.vsix
+npm ci && npm run package        # → dist/ripieno-0.0.1.vsix
 ```
 
 Install the `.vsix` (Extensions → `…` → Install from VSIX), then run
-**Multiplayer Agent: Join Room** and type any room code. Leave `mpa.relayUrl`
+**Ripieno: Join Room** and type any room code. Leave `ripieno.relayUrl`
 empty and the extension runs a relay on this machine.
 
 It is deliberately the *same* relay a team shares, not a reduced imitation —
@@ -79,7 +90,7 @@ Attach an agent from the **Rooms & Agents** tree and talk to it.
 
 ## Adding people
 
-Set `mpa.relayUrl` to a relay you can both reach, then **Copy Invite Link**. The
+Set `ripieno.relayUrl` to a relay you can both reach, then **Copy Invite Link**. The
 link carries the relay, the room and the token; clicking it confirms what is
 being joined before anything happens, and the token goes to the editor's
 SecretStorage rather than `settings.json` — settings are one `git add .` from
@@ -88,11 +99,11 @@ being published.
 Run a relay anywhere Node runs:
 
 ```bash
-MPA_TOKEN=$(openssl rand -hex 24) MPA_DATA_DIR=./data npm start
+RIPIENO_TOKEN=$(openssl rand -hex 24) RIPIENO_DATA_DIR=./data npm start
 ```
 
-`MPA_TOKEN` gates who may reach it. `MPA_DATA_DIR` is where room history lives —
-without it a restart empties every room. `MPA_REQUIRE_GITHUB=1` makes the relay
+`RIPIENO_TOKEN` gates who may reach it. `RIPIENO_DATA_DIR` is where room history lives —
+without it a restart empties every room. `RIPIENO_REQUIRE_GITHUB=1` makes the relay
 verify identities rather than believing the handle a client sends.
 
 ## Bring your own agent
@@ -114,7 +125,7 @@ to a colleague's agent on a different plan, the two figures do not mean the same
 thing.
 
 An agent can also join over MCP instead — copy `.mcp.json.example` to `.mcp.json`
-and fill in `MPA_ROOM` / `MPA_HANDLE` / `MPA_NAME`. That path gets ten tools
+and fill in `RIPIENO_ROOM` / `RIPIENO_HANDLE` / `RIPIENO_NAME`. That path gets ten tools
 (`room_read`, `room_post`, `room_roster`, `room_actions` and six `workspace_*`).
 
 ## The shared workspace
@@ -166,7 +177,7 @@ interface, which is the evidence the seam is real rather than hypothetical.
   the approval names the agent that asked and whose workspace it will touch.
 - **Roles are enforced in the relay**, not the UI. Hiding a button is
   presentation; anyone can send the message the button would have sent. They only
-  *mean* something with `MPA_REQUIRE_GITHUB`, because a handle is otherwise
+  *mean* something with `RIPIENO_REQUIRE_GITHUB`, because a handle is otherwise
   self-asserted — enforced regardless, so that turning verification on is
   sufficient.
 - **Identity fails closed.** If GitHub cannot be reached, joins are refused
@@ -179,7 +190,7 @@ interface, which is the evidence the seam is real rather than hypothetical.
 
 ### The container's command allowlist is a trust decision, not a sandbox
 
-`MPA_ALLOWED_COMMANDS` is empty by default and a container with no allowlist runs
+`RIPIENO_ALLOWED_COMMANDS` is empty by default and a container with no allowlist runs
 nothing. If you set one, understand what you are choosing.
 
 An agent can write project files. So allowlisting `npm test` means an agent can
@@ -190,7 +201,7 @@ metacharacters changes it.
 
 **Allowlisting a build tool means trusting everyone in the room with code
 execution in that container.** Often a reasonable choice; not one to make by
-accident. What the container does instead is make the prize small: `MPA_*`
+accident. What the container does instead is make the prize small: `RIPIENO_*`
 variables are stripped from every command's environment in both hosts, and in the
 container provider keys and anything ending in `TOKEN`, `SECRET` or `PASSWORD` go
 too — nobody is watching there, and the room could simply ask an agent to run

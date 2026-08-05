@@ -9,7 +9,7 @@
 // fiddly, they decide whether anyone answers at all, and both failure modes are
 // bad: a pile-on wastes money, and silence looks like the product is broken.
 
-import { MAX_AGENT_HOPS } from "@mpa/protocol";
+import { MAX_AGENT_HOPS } from "@ripieno/protocol";
 
 export interface AgentIdentity {
   /** Transcript label, e.g. "Mira Ellery's reviewer". */

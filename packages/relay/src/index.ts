@@ -2,20 +2,20 @@ import { startServer, resolveRequireGithub, type RelayMode } from "./server.js";
 
 // Railway (and most hosts) inject PORT. Honour it first so a deploy needs no
 // bespoke config, then fall back to our own variable, then a local default.
-const port = Number(process.env.PORT ?? process.env.MPA_PORT ?? 8787);
-const mode: RelayMode = process.env.MPA_MODE === "hosted" ? "hosted" : "byo";
-const agentId = process.env.MPA_AGENT_ID;
-const environmentId = process.env.MPA_ENVIRONMENT_ID;
-const token = process.env.MPA_TOKEN;
+const port = Number(process.env.PORT ?? process.env.RIPIENO_PORT ?? 8787);
+const mode: RelayMode = process.env.RIPIENO_MODE === "hosted" ? "hosted" : "byo";
+const agentId = process.env.RIPIENO_AGENT_ID;
+const environmentId = process.env.RIPIENO_ENVIRONMENT_ID;
+const token = process.env.RIPIENO_TOKEN;
 // Held only by the shared-workspace container. Without it, the workspace role
 // is simply unavailable and rooms fall back to a member hosting from a laptop.
-const workspaceToken = process.env.MPA_WORKSPACE_TOKEN;
+const workspaceToken = process.env.RIPIENO_WORKSPACE_TOKEN;
 // Point this at a mounted volume and room history survives redeploys too.
-const dataDir = process.env.MPA_DATA_DIR;
+const dataDir = process.env.RIPIENO_DATA_DIR;
 // A deployed relay must listen on all interfaces; a local one need not.
-const host = process.env.MPA_HOST ?? (process.env.PORT ? "0.0.0.0" : undefined);
+const host = process.env.RIPIENO_HOST ?? (process.env.PORT ? "0.0.0.0" : undefined);
 
-const requireGithub = resolveRequireGithub(process.env.MPA_REQUIRE_GITHUB, host);
+const requireGithub = resolveRequireGithub(process.env.RIPIENO_REQUIRE_GITHUB, host);
 
 // BYO is the default because it needs nothing: no API key, no agent, no
 // environment, no credit balance. Members attach their own agents instead.
@@ -26,11 +26,11 @@ if (mode === "hosted" && (!agentId || !environmentId)) {
     [
       "Hosted mode needs both resource IDs.",
       "",
-      "  MPA_AGENT_ID        from: ant beta:agents create < infra/agent.yaml --transform id -r",
-      "  MPA_ENVIRONMENT_ID  from: ant beta:environments create < infra/env.yaml --transform id -r",
+      "  RIPIENO_AGENT_ID        from: ant beta:agents create < infra/agent.yaml --transform id -r",
+      "  RIPIENO_ENVIRONMENT_ID  from: ant beta:environments create < infra/env.yaml --transform id -r",
       "",
       "Credentials resolve automatically from ANTHROPIC_API_KEY or an `ant auth login` profile.",
-      "To run without any of that, use BYO mode (the default): unset MPA_MODE.",
+      "To run without any of that, use BYO mode (the default): unset RIPIENO_MODE.",
     ].join("\n")
   );
   process.exit(1);
@@ -42,12 +42,12 @@ if (mode === "hosted" && (!agentId || !environmentId)) {
 if (process.env.PORT && !token) {
   console.error(
     [
-      "Refusing to start: this looks like a hosted deployment (PORT is set) but MPA_TOKEN is empty.",
+      "Refusing to start: this looks like a hosted deployment (PORT is set) but RIPIENO_TOKEN is empty.",
       "",
       "Without it, anyone who finds the URL can join any room, read the transcript and post as anyone.",
-      "Set MPA_TOKEN to a long random string and give it to members alongside the relay URL.",
+      "Set RIPIENO_TOKEN to a long random string and give it to members alongside the relay URL.",
       "",
-      "  MPA_TOKEN=$(openssl rand -hex 24)",
+      "  RIPIENO_TOKEN=$(openssl rand -hex 24)",
     ].join("\n")
   );
   process.exit(1);

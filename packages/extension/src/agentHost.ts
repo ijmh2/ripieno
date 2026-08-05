@@ -14,15 +14,15 @@
 import * as vscode from "vscode";
 import { randomBytes } from "crypto";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { Member, RosterEntry, TranscriptEntry } from "@mpa/protocol";
-import { describeMembers } from "@mpa/protocol";
+import type { Member, RosterEntry, TranscriptEntry } from "@ripieno/protocol";
+import { describeMembers } from "@ripieno/protocol";
 import {
   answersEntry,
   nextUnanswered,
   type AgentIdentity,
   type SelfIdentity,
 } from "./addressing";
-import { RelayClient } from "@mpa/relay-client";
+import { RelayClient } from "@ripieno/relay-client";
 import type { ApprovalBridge } from "./approvals";
 import {
   ClaudeCodeRunner,
@@ -161,7 +161,7 @@ export class AgentHost implements vscode.Disposable {
   private roomAgentId: string | undefined;
 
   constructor(private readonly opts: AgentHostOptions) {
-    this.output = vscode.window.createOutputChannel(`Multiplayer Agent — ${opts.label}`);
+    this.output = vscode.window.createOutputChannel(`Ripieno — ${opts.label}`);
   }
 
   get id(): string {
@@ -270,7 +270,7 @@ export class AgentHost implements vscode.Disposable {
 
       wss.on("error", reject);
       wss.on("connection", (socket: WebSocket, req) => {
-        if (req.headers["x-mpa-token"] !== this.workspaceToken) {
+        if (req.headers["x-ripieno-token"] !== this.workspaceToken) {
           socket.close(4001, "bad token");
           return;
         }
@@ -496,8 +496,8 @@ export class AgentHost implements vscode.Disposable {
             args: [this.opts.workspaceServerPath],
             env: {
               ELECTRON_RUN_AS_NODE: "1",
-              MPA_WORKSPACE_URL: workspaceUrl,
-              MPA_WORKSPACE_TOKEN: this.workspaceToken,
+              RIPIENO_WORKSPACE_URL: workspaceUrl,
+              RIPIENO_WORKSPACE_TOKEN: this.workspaceToken,
             },
           },
           approvals: {
@@ -508,10 +508,10 @@ export class AgentHost implements vscode.Disposable {
             args: [this.opts.permissionServerPath],
             env: {
               ELECTRON_RUN_AS_NODE: "1",
-              MPA_APPROVAL_URL: bridge.url,
-              MPA_APPROVAL_TOKEN: bridge.token,
-              MPA_AGENT_ID: this.opts.id,
-              MPA_AGENT_LABEL: this.opts.label,
+              RIPIENO_APPROVAL_URL: bridge.url,
+              RIPIENO_APPROVAL_TOKEN: bridge.token,
+              RIPIENO_AGENT_ID: this.opts.id,
+              RIPIENO_AGENT_LABEL: this.opts.label,
             },
           },
         },
@@ -635,7 +635,7 @@ export class AgentHost implements vscode.Disposable {
  */
 export function permissionMode(): string {
   const mode = vscode.workspace
-    .getConfiguration("mpa")
+    .getConfiguration("ripieno")
     .get<string>("agentPermissions", "ask");
   return mode === "bypassPermissions" ? "bypassPermissions" : "default";
 }

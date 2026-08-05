@@ -8,14 +8,14 @@
  *
  * Deliberately a file per room rather than a database: a room's history is a
  * small append-mostly document, it is only ever read whole when the room is
- * recreated, and a JSON file needs no service to operate. Point MPA_DATA_DIR at
+ * recreated, and a JSON file needs no service to operate. Point RIPIENO_DATA_DIR at
  * a mounted volume and it survives redeploys too.
  */
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import type { ActionEntry, AgentUsage, Member, RoomRole, TranscriptEntry } from "@mpa/protocol";
+import type { ActionEntry, AgentUsage, Member, RoomRole, TranscriptEntry } from "@ripieno/protocol";
 
 export interface RoomSnapshot {
   transcript: TranscriptEntry[];
@@ -171,7 +171,7 @@ export class FileRoomStore implements RoomStore {
   }
 }
 
-/** File-backed when MPA_DATA_DIR is set, otherwise in memory. */
+/** File-backed when RIPIENO_DATA_DIR is set, otherwise in memory. */
 export function createRoomStore(dataDir: string | undefined): RoomStore {
   return dataDir ? new FileRoomStore(dataDir) : new MemoryRoomStore();
 }

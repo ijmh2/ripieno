@@ -15,7 +15,7 @@ import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import WebSocket = require("ws");
 import type { WebSocketServer } from "ws";
-import type { ActionEntry, ClientMsg, ServerMsg } from "@mpa/protocol";
+import type { ActionEntry, ClientMsg, ServerMsg } from "@ripieno/protocol";
 import { startServer } from "../src/server.js";
 
 const PORT = 8907;

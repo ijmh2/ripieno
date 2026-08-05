@@ -1,7 +1,7 @@
 {
-  "name": "multiplayer-agent",
-  "displayName": "Multiplayer Agent",
-  "description": "A shared AI agent room — one conversation, several people, several agents, each attributable.",
+  "name": "ripieno",
+  "displayName": "Ripieno",
+  "description": "A self-hosted shared workspace where several people and several AI agents work on one codebase, each attributable.",
   "version": "0.0.1",
   "publisher": "ijmh2",
   "license": "MIT",
@@ -23,136 +23,136 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "mpa",
-          "title": "Multiplayer Agent",
+          "id": "ripieno",
+          "title": "Ripieno",
           "icon": "media/room.svg"
         }
       ]
     },
     "views": {
-      "mpa": [
+      "ripieno": [
         {
-          "id": "mpa.rooms",
+          "id": "ripieno.rooms",
           "name": "Rooms & Agents"
         },
         {
-          "id": "mpa.room",
+          "id": "ripieno.room",
           "name": "Room",
           "type": "webview"
         },
         {
-          "id": "mpa.workspace",
+          "id": "ripieno.workspace",
           "name": "Shared Workspace",
-          "when": "mpa.hasSharedWorkspace"
+          "when": "ripieno.hasSharedWorkspace"
         }
       ]
     },
     "commands": [
       {
-        "command": "mpa.joinRoom",
-        "title": "Multiplayer Agent: Join Room"
+        "command": "ripieno.joinRoom",
+        "title": "Ripieno: Join Room"
       },
       {
-        "command": "mpa.leaveRoom",
-        "title": "Multiplayer Agent: Leave Room"
+        "command": "ripieno.leaveRoom",
+        "title": "Ripieno: Leave Room"
       },
       {
-        "command": "mpa.signIn",
-        "title": "Multiplayer Agent: Sign in to GitHub"
+        "command": "ripieno.signIn",
+        "title": "Ripieno: Sign in to GitHub"
       },
       {
-        "command": "mpa.attachAgent",
-        "title": "Multiplayer Agent: Attach an Agent",
+        "command": "ripieno.attachAgent",
+        "title": "Ripieno: Attach an Agent",
         "icon": "$(play)"
       },
       {
-        "command": "mpa.detachAgent",
-        "title": "Multiplayer Agent: Detach Agent",
+        "command": "ripieno.detachAgent",
+        "title": "Ripieno: Detach Agent",
         "icon": "$(debug-stop)"
       },
       {
-        "command": "mpa.addAgent",
-        "title": "Multiplayer Agent: Add Another Agent",
+        "command": "ripieno.addAgent",
+        "title": "Ripieno: Add Another Agent",
         "icon": "$(add)"
       },
       {
-        "command": "mpa.hostWorkspace",
-        "title": "Multiplayer Agent: Host / Release the Shared Workspace",
+        "command": "ripieno.hostWorkspace",
+        "title": "Ripieno: Host / Release the Shared Workspace",
         "icon": "$(root-folder)"
       },
       {
-        "command": "mpa.mountWorkspace",
-        "title": "Multiplayer Agent: Mount Shared Workspace in Explorer",
+        "command": "ripieno.mountWorkspace",
+        "title": "Ripieno: Mount Shared Workspace in Explorer",
         "icon": "$(root-folder-opened)"
       },
       {
-        "command": "mpa.proposeChange",
-        "title": "Multiplayer Agent: Propose Change to Host",
+        "command": "ripieno.proposeChange",
+        "title": "Ripieno: Propose Change to Host",
         "icon": "$(git-pull-request)"
       },
       {
-        "command": "mpa.copyInvite",
+        "command": "ripieno.copyInvite",
         "title": "Copy Invite Link",
-        "category": "Multiplayer Agent"
+        "category": "Ripieno"
       },
       {
-        "command": "mpa.setRole",
-        "title": "Change Role…",
-        "category": "Multiplayer Agent"
+        "command": "ripieno.setRole",
+        "title": "Change Role\u2026",
+        "category": "Ripieno"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "mpa.addAgent",
-          "when": "view == mpa.rooms",
+          "command": "ripieno.addAgent",
+          "when": "view == ripieno.rooms",
           "group": "navigation"
         },
         {
-          "command": "mpa.hostWorkspace",
-          "when": "view == mpa.rooms",
+          "command": "ripieno.hostWorkspace",
+          "when": "view == ripieno.rooms",
           "group": "navigation"
         },
         {
-          "command": "mpa.mountWorkspace",
-          "when": "view == mpa.workspace",
+          "command": "ripieno.mountWorkspace",
+          "when": "view == ripieno.workspace",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
-          "command": "mpa.attachAgent",
-          "when": "view == mpa.rooms && viewItem == mpaAgentDetached",
+          "command": "ripieno.attachAgent",
+          "when": "view == ripieno.rooms && viewItem == ripienoAgentDetached",
           "group": "inline"
         },
         {
-          "command": "mpa.detachAgent",
-          "when": "view == mpa.rooms && viewItem == mpaAgentAttached",
+          "command": "ripieno.detachAgent",
+          "when": "view == ripieno.rooms && viewItem == ripienoAgentAttached",
           "group": "inline"
         },
         {
-          "command": "mpa.setRole",
-          "when": "view == mpa.rooms && viewItem == mpaMemberManageable",
+          "command": "ripieno.setRole",
+          "when": "view == ripieno.rooms && viewItem == ripienoMemberManageable",
           "group": "inline"
         }
       ],
       "editor/title": [
         {
-          "command": "mpa.proposeChange",
-          "when": "mpa.hasSharedWorkspace",
+          "command": "ripieno.proposeChange",
+          "when": "ripieno.hasSharedWorkspace",
           "group": "navigation"
         }
       ]
     },
     "configuration": {
-      "title": "Multiplayer Agent",
+      "title": "Ripieno",
       "properties": {
-        "mpa.relayUrl": {
+        "ripieno.relayUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "WebSocket URL of the relay hosting the room.\n\n**Leave empty to work solo** — the extension runs a relay on this machine, so a room needs no server, no token and no second person. Set a URL when you want other people in the room with you."
+          "markdownDescription": "WebSocket URL of the relay hosting the room.\n\n**Leave empty to work solo** \u2014 the extension runs a relay on this machine, so a room needs no server, no token and no second person. Set a URL when you want other people in the room with you."
         },
-        "mpa.commandApproval": {
+        "ripieno.commandApproval": {
           "type": "string",
           "enum": [
             "always",
@@ -161,13 +161,13 @@
           ],
           "enumDescriptions": [
             "Confirm every command.",
-            "Run commands matching mpa.allowedCommands without asking; confirm the rest.",
+            "Run commands matching ripieno.allowedCommands without asking; confirm the rest.",
             "Run any command without asking. A shared room can then execute anything on your machine."
           ],
           "default": "always",
           "description": "When to confirm before the agent runs a shell command in your workspace."
         },
-        "mpa.allowedCommands": {
+        "ripieno.allowedCommands": {
           "type": "array",
           "items": {
             "type": "string"
@@ -178,35 +178,35 @@
             "npm test",
             "npm run build"
           ],
-          "description": "Command prefixes that run without confirmation when mpa.commandApproval is \"allowlist\". A command containing shell separators is never matched."
+          "description": "Command prefixes that run without confirmation when ripieno.commandApproval is \"allowlist\". A command containing shell separators is never matched."
         },
-        "mpa.agentPermissions": {
+        "ripieno.agentPermissions": {
           "type": "string",
           "enum": [
             "ask",
             "bypassPermissions"
           ],
           "enumDescriptions": [
-            "Your agent asks you before anything with side effects — running code, launching apps, git writes. The prompt appears in your editor, so it is a real decision rather than a stalled request.",
+            "Your agent asks you before anything with side effects \u2014 running code, launching apps, git writes. The prompt appears in your editor, so it is a real decision rather than a stalled request.",
             "Your agent runs everything without asking, like an ordinary Claude Code session. Remember the room steers it: anyone in the room can talk your agent into running things on your machine."
           ],
           "default": "ask",
           "markdownDescription": "What your own agents may do in a room. `ask` routes approvals to you in the editor and is the sane default; `bypassPermissions` is faster and only appropriate in a room you trust."
         },
-        "mpa.devIdentityOverride": {
+        "ripieno.devIdentityOverride": {
           "type": "string",
           "default": "",
           "description": "Development only. Join as this handle instead of your GitHub account, so a second window can act as another member. Leave empty in normal use."
         },
-        "mpa.devDisplayNameOverride": {
+        "ripieno.devDisplayNameOverride": {
           "type": "string",
           "default": "",
-          "description": "Development only. Display name to pair with mpa.devIdentityOverride."
+          "description": "Development only. Display name to pair with ripieno.devIdentityOverride."
         },
-        "mpa.roomToken": {
+        "ripieno.roomToken": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Shared secret required by a deployed relay. Leave empty for a local relay. This is a gate, not a login — a holder can still claim any handle, so treat it as the key to the whole room."
+          "markdownDescription": "Shared secret required by a deployed relay. Leave empty for a local relay. This is a gate, not a login \u2014 a holder can still claim any handle, so treat it as the key to the whole room."
         }
       }
     }
@@ -223,9 +223,9 @@
     "ws": "^8.18.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.23.0",
-    "@mpa/workspace-core": "*",
-    "@mpa/relay-client": "*",
-    "@mpa/relay": "*"
+    "@ripieno/workspace-core": "*",
+    "@ripieno/relay-client": "*",
+    "@ripieno/relay": "*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
@@ -237,13 +237,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/ijmh2/multiplayer-agent.git"
+    "url": "https://github.com/ijmh2/ripieno.git"
   },
   "keywords": [
     "ai",
     "agent",
     "collaboration",
-    "multiplayer",
-    "claude"
+    "provenance",
+    "attribution",
+    "self-hosted"
   ]
 }

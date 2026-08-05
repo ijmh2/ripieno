@@ -25,7 +25,7 @@ function fakeHost(handle) {
   const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   const seen = [];
   wss.on("connection", (socket, req) => {
-    if (req.headers["x-mpa-token"] !== TOKEN) {
+    if (req.headers["x-ripieno-token"] !== TOKEN) {
       socket.close(4001, "bad token");
       return;
     }
@@ -70,7 +70,7 @@ describe("workspace bridge", () => {
     await host.ready;
 
     const result = await callTool(
-      { MPA_WORKSPACE_URL: host.url(), MPA_WORKSPACE_TOKEN: TOKEN },
+      { RIPIENO_WORKSPACE_URL: host.url(), RIPIENO_WORKSPACE_TOKEN: TOKEN },
       "workspace_read_file",
       { path: "src/index.ts" }
     );
@@ -88,7 +88,7 @@ describe("workspace bridge", () => {
     const host = fakeHost(() => ({ content: "ok", isError: false }));
     await host.ready;
     const result = await callTool(
-      { MPA_WORKSPACE_URL: host.url(), MPA_WORKSPACE_TOKEN: TOKEN },
+      { RIPIENO_WORKSPACE_URL: host.url(), RIPIENO_WORKSPACE_TOKEN: TOKEN },
       "workspace_list_dir",
       {}
     );
@@ -110,7 +110,7 @@ describe("workspace bridge", () => {
     const host = fakeHost(() => ({ content: "The user declined.", isError: true }));
     await host.ready;
     const result = await callTool(
-      { MPA_WORKSPACE_URL: host.url(), MPA_WORKSPACE_TOKEN: TOKEN },
+      { RIPIENO_WORKSPACE_URL: host.url(), RIPIENO_WORKSPACE_TOKEN: TOKEN },
       "workspace_write_file",
       { path: "a.ts", content: "x" }
     );
@@ -121,7 +121,7 @@ describe("workspace bridge", () => {
 
   test("an unreachable bridge fails loudly rather than hanging", async () => {
     const result = await callTool(
-      { MPA_WORKSPACE_URL: "ws://127.0.0.1:1", MPA_WORKSPACE_TOKEN: TOKEN },
+      { RIPIENO_WORKSPACE_URL: "ws://127.0.0.1:1", RIPIENO_WORKSPACE_TOKEN: TOKEN },
       "workspace_read_file",
       { path: "a.ts" }
     );
@@ -133,7 +133,7 @@ describe("workspace bridge", () => {
     const host = fakeHost(() => ({ content: "should never be reached", isError: false }));
     await host.ready;
     const result = await callTool(
-      { MPA_WORKSPACE_URL: host.url(), MPA_WORKSPACE_TOKEN: "wrong" },
+      { RIPIENO_WORKSPACE_URL: host.url(), RIPIENO_WORKSPACE_TOKEN: "wrong" },
       "workspace_read_file",
       { path: "a.ts" }
     );
@@ -146,7 +146,7 @@ describe("workspace bridge", () => {
     const host = fakeHost(() => undefined);
     await host.ready;
     const pending = callTool(
-      { MPA_WORKSPACE_URL: host.url(), MPA_WORKSPACE_TOKEN: TOKEN },
+      { RIPIENO_WORKSPACE_URL: host.url(), RIPIENO_WORKSPACE_TOKEN: TOKEN },
       "workspace_run_command",
       { command: "npm test" }
     );

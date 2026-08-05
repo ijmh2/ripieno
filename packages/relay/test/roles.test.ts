@@ -6,7 +6,7 @@
  * server, so hiding a button is presentation and nothing more.
  *
  * Worth remembering: roles only *mean* something on a relay that verifies
- * identity. Without MPA_REQUIRE_GITHUB a handle is self-asserted, so a viewer
+ * identity. Without RIPIENO_REQUIRE_GITHUB a handle is self-asserted, so a viewer
  * can rejoin as somebody else. They are still enforced, because the alternative
  * is a permission system that exists only in the interface.
  */
@@ -15,8 +15,8 @@ import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import WebSocket = require("ws");
 import type { WebSocketServer } from "ws";
-import type { Member, ServerMsg } from "@mpa/protocol";
-import { WORKSPACE_HANDLE } from "@mpa/protocol";
+import type { Member, ServerMsg } from "@ripieno/protocol";
+import { WORKSPACE_HANDLE } from "@ripieno/protocol";
 import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
 import { startServer } from "../src/server.js";

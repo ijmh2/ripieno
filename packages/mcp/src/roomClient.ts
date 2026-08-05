@@ -13,7 +13,7 @@ import type {
   RosterEntry,
   ServerMsg,
   TranscriptEntry,
-} from "@mpa/protocol";
+} from "@ripieno/protocol";
 
 export interface RoomClientConfig {
   url: string;
@@ -26,7 +26,7 @@ export interface RoomClientConfig {
   /**
    * Proves this handle, on a relay that verifies identity.
    *
-   * Without it, MPA_REQUIRE_GITHUB=1 refuses this route at the door — so the
+   * Without it, RIPIENO_REQUIRE_GITHUB=1 refuses this route at the door — so the
    * documented `.mcp.json` path broke the moment identity verification was
    * turned on, which is the same moment attribution starts meaning anything.
    * `read:user` scope; the same token the editor already holds.

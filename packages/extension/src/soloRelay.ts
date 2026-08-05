@@ -14,7 +14,7 @@
  * change of model.
  */
 
-import { startServer, type Relay } from "@mpa/relay";
+import { startServer, type Relay } from "@ripieno/relay";
 
 /**
  * A relay bound to loopback on an ephemeral port.

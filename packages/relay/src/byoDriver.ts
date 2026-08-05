@@ -12,7 +12,7 @@
  * beyond each member's own subscription.
  */
 
-import type { Member, RosterEntry } from "@mpa/protocol";
+import type { Member, RosterEntry } from "@ripieno/protocol";
 import type { RoomDriver } from "./driver.js";
 
 export class ByoDriver implements RoomDriver {

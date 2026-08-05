@@ -6,8 +6,8 @@
  * line — the menu item simply never renders, or the extension never activates,
  * and the feature looks like it was never built.
  *
- * That is not hypothetical. `mpa.setRole` shipped with `view == mpaRooms` where
- * the view's id is `mpa.rooms`, so the only way to change anybody's role never
+ * That is not hypothetical. `ripieno.setRole` shipped with `view == mpaRooms` where
+ * the view's id is `ripieno.rooms`, so the only way to change anybody's role never
  * appeared for anyone; and `activationEvents` was empty, so a click on an invite
  * link did nothing at all unless the extension happened to be running already —
  * which is the one path that matters most, since an invite arrives from someone

@@ -11,8 +11,8 @@
 
 const WebSocket = require("ws");
 
-const URL = process.env.MPA_RELAY_URL || "ws://localhost:8787";
-const ROOM = process.argv[2] || process.env.MPA_ROOM || "demo";
+const URL = process.env.RIPIENO_RELAY_URL || "ws://localhost:8787";
+const ROOM = process.argv[2] || process.env.RIPIENO_ROOM || "demo";
 const SAM = { handle: "swhitfield", displayName: "Sam Whitfield", repo: "ijmh2/tgtbt" };
 
 function connect(role, onEntry) {

@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import type { Member, RosterEntry } from "@mpa/protocol";
+import type { Member, RosterEntry } from "@ripieno/protocol";
 import {
   SeenEvents,
   classify,

@@ -71,7 +71,7 @@ export class ApprovalBridge implements vscode.Disposable {
       wss.on("connection", (socket, req) => {
         // A shared secret as well as loopback: another local process should not
         // be able to answer, or ask, on the member's behalf.
-        if (req.headers["x-mpa-token"] !== this.token) {
+        if (req.headers["x-ripieno-token"] !== this.token) {
           socket.close(4001, "bad token");
           return;
         }

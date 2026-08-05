@@ -1,6 +1,6 @@
-// Multiplayer Agent room webview. Plain script (not bundled/type-checked —
+// Ripieno room webview. Plain script (not bundled/type-checked —
 // esbuild.js only bundles src/extension.ts), so a couple of tiny helpers
-// that exist in @mpa/protocol are duplicated here by hand; keep them in
+// that exist in @ripieno/protocol are duplicated here by hand; keep them in
 // sync manually if the protocol package changes.
 (function () {
   "use strict";
@@ -32,7 +32,7 @@
   const liveDeltaText = new Map();
 
   /* ---------------------------------------------------------------- */
-  /* Mirrors colorIndexFor() from @mpa/protocol — kept identical so    */
+  /* Mirrors colorIndexFor() from @ripieno/protocol — kept identical so    */
   /* every client (including this one) picks the same hue per handle. */
   /* ---------------------------------------------------------------- */
   function colorIndexFor(handle) {
@@ -119,7 +119,7 @@
     const owned = kind === "agent" && authorHandle !== "agent";
     if (kind === "human" || owned) {
       const hue = colorIndexFor(authorHandle);
-      bubble.style.setProperty("--mpa-hue", `var(--mpa-hue-${hue})`);
+      bubble.style.setProperty("--ripieno-hue", `var(--ripieno-hue-${hue})`);
     }
     if (owned) {
       bubble.classList.add("owned");
@@ -192,7 +192,7 @@
     for (const member of roster) {
       const chip = document.createElement("div");
       chip.className = "chip" + (member.present ? "" : " absent");
-      chip.style.background = `hsl(var(--mpa-hue-${member.color}) 70% 42%)`;
+      chip.style.background = `hsl(var(--ripieno-hue-${member.color}) 70% 42%)`;
       chip.title = member.displayName + (member.present ? "" : " (away)");
       chip.textContent = initials(member.displayName || member.handle);
       if (member.present) {
@@ -422,7 +422,7 @@
 
       const who = document.createElement("span");
       who.className = "action-who";
-      who.style.color = `hsl(var(--mpa-hue-${colorIndexFor(entry.agentId || entry.agentLabel)}) 75% 55%)`;
+      who.style.color = `hsl(var(--ripieno-hue-${colorIndexFor(entry.agentId || entry.agentLabel)}) 75% 55%)`;
       who.textContent = entry.agentLabel;
       row.appendChild(who);
 
@@ -616,7 +616,7 @@
 
       const swatch = document.createElement("span");
       swatch.className = "mention-swatch";
-      swatch.style.background = `hsl(var(--mpa-hue-${c.color}) 70% 42%)`;
+      swatch.style.background = `hsl(var(--ripieno-hue-${c.color}) 70% 42%)`;
       swatch.textContent = c.kind === "agent" ? "\u2699" : initials(c.label);
       row.appendChild(swatch);
 

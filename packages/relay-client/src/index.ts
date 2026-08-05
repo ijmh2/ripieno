@@ -4,7 +4,7 @@
 // the UI just renders whatever `getState()` says.
 
 import WebSocket = require("ws");
-import type { ClientMsg, ConnectionRole, JoinMsg, Member, ServerMsg } from "@mpa/protocol";
+import type { ClientMsg, ConnectionRole, JoinMsg, Member, ServerMsg } from "@ripieno/protocol";
 
 export type ConnectionState = "connecting" | "online" | "offline";
 
@@ -126,7 +126,7 @@ export class RelayClient {
       // and hammers the relay.
       if (code === UNAUTHORISED_CODE) {
         this.disposed = true;
-        this.opts.onEvicted?.("the relay rejected this connection — check mpa.roomToken");
+        this.opts.onEvicted?.("the relay rejected this connection — check ripieno.roomToken");
         return;
       }
 
