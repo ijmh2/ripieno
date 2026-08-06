@@ -74,12 +74,20 @@ running Claude Code); another checks the extension manifest against itself.
 Nothing to deploy, no account, no token.
 
 ```bash
-npm ci && npm run package        # → dist/ripieno-0.0.1.vsix
+npm run setup
 ```
 
-Install the `.vsix` (Extensions → `…` → Install from VSIX), then run
-**Ripieno: Join Room** and type any room code. Leave `ripieno.relayUrl`
-empty and the extension runs a relay on this machine.
+That installs dependencies, builds, packages the extension and installs it into
+your editor — VS Code, Insiders, Cursor, Windsurf, Antigravity, VSCodium or
+Positron, found on `PATH` or inside the application bundle, because the `code`
+command is not on `PATH` by default on macOS and most people never add it.
+
+Two steps are left and both are genuinely manual: reload the window, then
+**Ripieno: Join Room** and type any room code. Leave `ripieno.relayUrl` empty
+and the extension runs a relay on this machine.
+
+If no editor is found, setup prints the absolute path to the `.vsix` and the two
+clicks that install it by hand.
 
 It is deliberately the *same* relay a team shares, not a reduced imitation —
 same rooms, same attributed transcript, same tool routing, same action log, and

@@ -2,7 +2,7 @@
   "name": "ripieno-workspace",
   "private": true,
   "version": "0.0.0",
-  "description": "A shared AI agent room — one conversation, multiple people, one agent that knows who said what.",
+  "description": "A shared AI agent room \u2014 one conversation, multiple people, one agent that knows who said what.",
   "workspaces": [
     "packages/protocol",
     "packages/relay-client",
@@ -14,7 +14,8 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "_comment": "test and typecheck build first: relay-client and mcp have no test script of their own, so nothing else builds them, and both the extension's bundler and its typechecker resolve @ripieno/relay-client through its dist. In a working copy that dist is usually lying around from an earlier build, so the missing step only shows up in a fresh clone — which is exactly who it has to work for.",
+    "setup": "node scripts/setup.js",
+    "_comment": "test and typecheck build first: relay-client and mcp have no test script of their own, so nothing else builds them, and both the extension's bundler and its typechecker resolve @ripieno/relay-client through its dist. In a working copy that dist is usually lying around from an earlier build, so the missing step only shows up in a fresh clone \u2014 which is exactly who it has to work for.",
     "test": "npm run build && npm run test --workspaces --if-present",
     "typecheck": "npm run build && npm run typecheck --workspaces --if-present",
     "build:relay": "npm run build -w @ripieno/protocol && npm run build -w @ripieno/relay",
