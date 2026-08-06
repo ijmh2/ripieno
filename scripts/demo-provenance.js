@@ -54,6 +54,14 @@ async function seed(base) {
 
 async function main() {
   const keep = process.argv.includes("--keep");
+  // Filming mode: the setup narration is useful at a terminal and is dead
+  // weight in a twenty-second video, where the author column is the only thing
+  // on screen worth reading. Suppresses everything except the command and its
+  // output — the work itself is identical either way.
+  const quiet = process.argv.includes("--quiet");
+  const say = (line = "") => {
+    if (!quiet) console.log(line);
+  };
   const base = await mkdtemp(path.join(tmpdir(), "mpa-demo-"));
   const origin = await seed(base);
   const work = path.join(base, "workspace");
@@ -79,9 +87,9 @@ async function main() {
     serialise: (fn) => git.exclusive(fn),
   });
 
-  console.log(`Three agents, two people, one repository — writing at the same time.\n`);
+  say(`Three agents, two people, one repository — writing at the same time.\n`);
   for (const w of WORK) {
-    console.log(`  ${w.agent.padEnd(16)} writes ${w.file}`);
+    say(`  ${w.agent.padEnd(16)} writes ${w.file}`);
   }
 
   // Concurrently, on purpose. Serialised writes would prove nothing: git
@@ -109,7 +117,8 @@ async function main() {
   // still genuinely git's output and not something this script did to it.
   const FORMAT = "%<(16)%an  %s";
   const log = (await run(`git log --pretty='${FORMAT}' -${WORK.length}`, { cwd: work })).stdout;
-  console.log(`\n$ git log --pretty='${FORMAT}' -${WORK.length}\n`);
+  say();
+  console.log(`$ git log --pretty='${FORMAT}' -${WORK.length}\n`);
   console.log(
     log
       .trimEnd()
@@ -119,7 +128,7 @@ async function main() {
   );
 
   const dirty = (await run("git status --porcelain", { cwd: work })).stdout.trim();
-  console.log(
+  if (!quiet) console.log(
     `\n${dirty === "" ? "Everything committed" : `UNCOMMITTED:\n${dirty}`} — and the committer is this machine, ` +
       `so each agent authored its own work without being able to claim anyone else's.`
   );
