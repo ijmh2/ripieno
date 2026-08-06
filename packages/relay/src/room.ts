@@ -682,6 +682,48 @@ export class Room {
 
     const conn = this.connections.get(handle);
     if (!conn || text.trim() === "") return;
+
+    // The shared workspace is a container, not a person.
+    //
+    // `describeMembers` already keeps kind "workspace" out of the roster so no
+    // agent is ever told the container is somebody to address. This is the same
+    // principle on the transcript path, which was missed: a workspace-role
+    // `say` fell through to the human branch and was appended as kind "human",
+    // so every member's AgentHost ran `answersEntry`, saw a human message with
+    // nobody named in it, and fired the primary-agent fallback. "Cloned
+    // ijmh2/ripieno (main)." woke every primary agent in the room, each
+    // spending a turn on an announcement addressed to no one.
+    //
+    // "system" is the kind agents do not answer at all — `answersEntry`
+    // considers only "human" and "agent" — and the webview already renders it
+    // as a centred note rather than a bubble with an author, which is what a
+    // container announcement is. It keeps its author, because provenance is
+    // the one thing this project does not throw away: the entry still records
+    // which connection said it, it is only addressed to nobody.
+    //
+    // `trim()` discards system entries first when the transcript is full, so a
+    // container announcement is evicted before anything a person said. That is
+    // the right trade here rather than a loss: what the container actually did
+    // is recorded in the action log, which is separate from the transcript and
+    // is what other agents read to avoid redoing work. The transcript line is a
+    // courtesy to whoever is watching.
+    //
+    // It also stops the container clearing chainDepth below. A person speaking
+    // is what restarts every agent chain; a container reporting a clone is not,
+    // and letting it reset the bound would put the count back within reach of
+    // something an agent can cause.
+    if (role === "workspace") {
+      this.append({
+        id: randomUUID(),
+        kind: "system",
+        authorHandle: conn.member.handle,
+        authorName: conn.member.displayName,
+        text,
+        ts: Date.now(),
+      });
+      return;
+    }
+
     // A person speaking restarts every chain. That is the whole shape of the
     // bound: agents may carry something a short way between two human messages,
     // and a human is what makes it a conversation again rather than a loop.

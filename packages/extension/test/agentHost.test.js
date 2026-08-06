@@ -39,15 +39,30 @@ after(async () => {
   for (const fn of cleanup.reverse()) await fn();
 });
 
-/** A relay, and a file the fake CLI appends every prompt to. */
-async function room(code, replies = []) {
-  const relay = new SoloRelay();
+/**
+ * A relay, and a file the fake CLI appends every prompt to.
+ *
+ * `config` reaches `startServer` for the paths a solo relay cannot express —
+ * the workspace role is gated by its own secret, so a room with no
+ * workspaceToken has no way to let a container in at all.
+ */
+async function room(code, replies = [], config) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mpa-agent-"));
-  const url = await relay.start(dir);
+  const relay = config ? configured(dir, config) : new SoloRelay();
+  const url = config
+    ? `ws://127.0.0.1:${await relay.whenListening()}`
+    : await relay.start(dir);
   const record = path.join(dir, "prompts.jsonl");
   process.env.RIPIENO_TEST_RECORD = record;
   process.env.RIPIENO_TEST_REPLIES = JSON.stringify(replies);
-  cleanup.push(() => relay.stop());
+  cleanup.push(() =>
+    config
+      ? new Promise((resolve) => {
+          for (const client of relay.clients) client.terminate();
+          relay.close(() => resolve());
+        })
+      : relay.stop()
+  );
   return {
     url,
     code,
@@ -57,6 +72,12 @@ async function room(code, replies = []) {
       return raw.split("\n").filter(Boolean).map((line) => JSON.parse(line));
     },
   };
+}
+
+/** The same relay `SoloRelay` runs, with the options it does not expose. */
+function configured(dir, config) {
+  const { startServer } = require("@ripieno/relay");
+  return startServer({ port: 0, mode: "byo", host: "127.0.0.1", dataDir: dir, ...config });
 }
 
 function agent(r, { id, label, handle, displayName, primary = true }) {
@@ -268,6 +289,91 @@ describe("what an agent may do without being asked", () => {
     // fail towards being asked.
     assert.equal(withSetting("acceptEdits", permissionMode), "default");
     assert.equal(withSetting("", permissionMode), "default");
+  });
+});
+
+describe("the shared workspace is not a person", () => {
+  // The container announces its own work into the room — "Cloned … (main).",
+  // "wrote src/relay.ts" — over a `role: "workspace"` connection. `Room.say`
+  // special-cased agents and let everything else fall through to the human
+  // branch, so those announcements were appended as kind "human". Every
+  // member's AgentHost then ran `answersEntry`, saw a human message naming
+  // nobody, and fired the primary-agent fallback: one container announcement,
+  // one turn from every primary agent in the room, none of them asked.
+  //
+  // Run end to end because both halves passed on their own. The relay's own
+  // tests assert the container is never described to an agent as a person, and
+  // the addressing tests assert an agent answers only humans and agents — and
+  // between them sat a container appending human messages.
+  const { WORKSPACE_HANDLE } = require("@ripieno/protocol");
+
+  /** The container's connection: the reserved handle, its own secret. */
+  async function container(r, workspaceToken) {
+    const ws = new WebSocket(r.url);
+    await new Promise((resolve) => ws.on("open", resolve));
+    const entries = [];
+    ws.on("message", (raw) => {
+      const msg = JSON.parse(String(raw));
+      if (msg.t === "entry") entries.push(msg.entry);
+    });
+    ws.send(
+      JSON.stringify({
+        t: "join",
+        room: r.code,
+        role: "workspace",
+        workspaceToken,
+        member: { handle: WORKSPACE_HANDLE, displayName: "Shared workspace" },
+      })
+    );
+    await wait(300);
+    cleanup.push(() => ws.terminate());
+    return { say: (text) => ws.send(JSON.stringify({ t: "say", text })), entries };
+  }
+
+  test("a workspace announcement wakes nobody, and a person still does", async () => {
+    const workspaceToken = "container-secret";
+    const r = await room("workspace-says", [], { workspaceToken });
+    agent(r, {
+      id: "mira:coder",
+      label: "Mira's coder",
+      handle: "mellery",
+      displayName: "Mira",
+    });
+    const mira = await member(r, "mellery", "Mira");
+    const box = await container(r, workspaceToken);
+    await wait(400);
+
+    box.say("Cloned mellery/ripieno (main).");
+    // Comfortably longer than the debounce plus a turn, so a turn that was
+    // going to happen has happened.
+    await wait(5000);
+    assert.deepEqual(
+      await r.prompts(),
+      [],
+      "the container announcing its own work must not cost every primary agent a turn"
+    );
+
+    // The control. Without it this test passes just as well against an agent
+    // that never answers anything at all.
+    mira.say("does this build?");
+    await wait(5000);
+    assert.equal(
+      (await r.prompts()).length,
+      1,
+      "and a person asking the same room a question still gets exactly one turn"
+    );
+
+    const announcement = box.entries.find((e) => e.text.includes("Cloned"));
+    assert.ok(announcement, "the announcement should still reach the room");
+    assert.equal(
+      announcement.kind,
+      "system",
+      "a kind agents do not answer — they consider only 'human' and 'agent'"
+    );
+    // Provenance survives being unaddressable: the entry still records which
+    // connection said it, it is only addressed to nobody.
+    assert.equal(announcement.authorHandle, WORKSPACE_HANDLE);
+    assert.equal(announcement.authorName, "Shared workspace");
   });
 });
 
