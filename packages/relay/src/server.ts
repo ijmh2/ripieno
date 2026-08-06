@@ -209,15 +209,15 @@ export function startServer(config: ServerConfig): Relay {
       return room;
     }
 
-    // Hosted mode is not on this branch.
+    // Hosted mode is not shipped.
     //
     // It was built against the driver interface above, compiles, and its unit
     // tests pass — but it has never run against a live Managed Agents session,
     // so shipping it as one of two headline modes would be describing something
-    // unrun. The code is on the `hosted` branch; the seam it was built against
-    // is right here, which is the part worth keeping either way.
+    // unrun. The seam it was built against is right here, which is the part
+    // worth keeping either way.
     throw new Error(
-      "hosted mode is not available on this branch — see the `hosted` branch. " +
+      "hosted mode is not available in this build. " +
         "Unset RIPIENO_MODE to run in BYO mode, which is what this relay is for."
     );
   }

@@ -50,7 +50,7 @@ Honest, because an unknown repository has no other way to earn it.
 |---|---|
 | **Works, used** | Solo mode, invite links, rooms over a deployed relay, several agents per member across providers, remote tool execution with approval, action log, per-agent usage, verified GitHub identity, owner/member/viewer roles, room history that survives a redeploy |
 | **Built and tested, never deployed** | The shared-workspace container (`packages/workspace-host`) — 43 tests including real git integration, and it has never run anywhere but a test |
-| **Not on this branch** | Hosted mode. Built against the driver interface, compiles, unit tests pass — and it has never run against a live Managed Agents session, so it lives on the `hosted` branch rather than being described here as a feature |
+| **Not shipped** | Hosted mode. Built against the same driver interface, compiles, unit tests pass — and it has never run against a live Managed Agents session, so it is not shipped and not described here as a feature |
 
 There are 348 tests (`npm test`) across the five packages that have them
 (`relay-client` and `mcp` do not), and six exploitable defects found by an
@@ -242,7 +242,7 @@ CLI provider had been quietly running Claude Code instead.
 - **The container is not deployed.** It is built and tested; deploying it is
   infrastructure work that produces nothing a reader can see.
 - **Nothing is published to a marketplace.** Build the `.vsix` and install it.
-- **Hosted mode is on a branch**, because it has never run against a live session.
+- **Hosted mode is not shipped**, because it has never run against a live session.
 - **Agents stop talking to each other quickly.** One may name another and get an
   answer — report, check, respond — and then it stops until a person speaks. The
   relay counts, per agent, how many times that agent has spoken since a human
