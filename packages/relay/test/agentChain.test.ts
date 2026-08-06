@@ -29,7 +29,7 @@ import { MAX_AGENT_HOPS } from "@ripieno/protocol";
 import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
 
-const mira: Member = { handle: "ijmh2", displayName: "Mira" };
+const mira: Member = { handle: "mellery", displayName: "Mira" };
 const sam: Member = { handle: "swhitfield", displayName: "Sam" };
 
 class Socket implements SocketLike {
@@ -73,10 +73,10 @@ async function room(): Promise<{ room: Room; watcher: Socket }> {
 describe("how deep a chain is, is the relay's answer and not the client's", () => {
   test("an agent's first contribution after a person speaks is depth 1", async () => {
     const { room: r, watcher } = await room();
-    await r.say("ijmh2", "does this build?");
+    await r.say("mellery", "does this build?");
     assert.equal(watcher.entries().at(-1)?.hops, undefined, "a human message carries no depth");
 
-    await r.say("ijmh2", "It does.", "agent", "mira:coder");
+    await r.say("mellery", "It does.", "agent", "mira:coder");
     assert.equal(watcher.entries().at(-1)?.hops, 1);
   });
 
@@ -86,8 +86,8 @@ describe("how deep a chain is, is the relay's answer and not the client's", () =
     // first replies, and counting them as deepening would silence a wide room
     // for no reason.
     const { room: r, watcher } = await room();
-    await r.say("ijmh2", "does this build?");
-    await r.say("ijmh2", "Yes.", "agent", "mira:coder");
+    await r.say("mellery", "does this build?");
+    await r.say("mellery", "Yes.", "agent", "mira:coder");
     await r.say("swhitfield", "Agreed.", "agent", "sam:reviewer");
 
     const [coder, reviewer] = watcher.entries().slice(-2);
@@ -97,10 +97,10 @@ describe("how deep a chain is, is the relay's answer and not the client's", () =
 
   test("speaking twice without a person in between is what deepens", async () => {
     const { room: r, watcher } = await room();
-    await r.say("ijmh2", "does this build?");
-    await r.say("ijmh2", "It does. Sam's reviewer, check me.", "agent", "mira:coder");
+    await r.say("mellery", "does this build?");
+    await r.say("mellery", "It does. Sam's reviewer, check me.", "agent", "mira:coder");
     await r.say("swhitfield", "Checked.", "agent", "sam:reviewer");
-    await r.say("ijmh2", "Then I will fix it.", "agent", "mira:coder");
+    await r.say("mellery", "Then I will fix it.", "agent", "mira:coder");
 
     assert.equal(watcher.entries().at(-1)?.hops, 2, "the coder's second turn in one exchange");
   });
@@ -112,9 +112,9 @@ describe("how deep a chain is, is the relay's answer and not the client's", () =
     // could point at the original human message and be handed depth 1 forever.
     // There is now nothing in a say frame that touches the count at all.
     const { room: r, watcher } = await room();
-    await r.say("ijmh2", "does this build?");
+    await r.say("mellery", "does this build?");
     for (let i = 0; i < 4; i++) {
-      await r.say("ijmh2", `turn ${i}`, "agent", "mira:coder");
+      await r.say("mellery", `turn ${i}`, "agent", "mira:coder");
     }
     assert.deepEqual(
       watcher.entries().slice(-4).map((e) => e.hops),
@@ -125,13 +125,13 @@ describe("how deep a chain is, is the relay's answer and not the client's", () =
 
   test("a person speaking restarts every count", async () => {
     const { room: r, watcher } = await room();
-    await r.say("ijmh2", "does this build?");
-    await r.say("ijmh2", "Yes.", "agent", "mira:coder");
-    await r.say("ijmh2", "And again.", "agent", "mira:coder");
+    await r.say("mellery", "does this build?");
+    await r.say("mellery", "Yes.", "agent", "mira:coder");
+    await r.say("mellery", "And again.", "agent", "mira:coder");
     assert.equal(watcher.entries().at(-1)?.hops, 2);
 
-    await r.say("ijmh2", "hang on — what about the tests?");
-    await r.say("ijmh2", "Running them now.", "agent", "mira:coder");
+    await r.say("mellery", "hang on — what about the tests?");
+    await r.say("mellery", "Running them now.", "agent", "mira:coder");
     assert.equal(watcher.entries().at(-1)?.hops, 1, "a human message makes it a conversation again");
   });
 
@@ -140,10 +140,10 @@ describe("how deep a chain is, is the relay's answer and not the client's", () =
     // other; both reach MAX_AGENT_HOPS and from then on everything they say
     // wakes nobody, whatever it says.
     const { room: r, watcher } = await room();
-    await r.say("ijmh2", "go");
+    await r.say("mellery", "go");
     const said: number[] = [];
     for (let i = 0; i < 6; i++) {
-      await r.say("ijmh2", "you check", "agent", "mira:coder");
+      await r.say("mellery", "you check", "agent", "mira:coder");
       await r.say("swhitfield", "no you", "agent", "sam:reviewer");
     }
     for (const e of watcher.entries()) if (e.hops !== undefined) said.push(e.hops);
@@ -155,7 +155,7 @@ describe("how deep a chain is, is the relay's answer and not the client's", () =
 
   test("a human message is never given a depth at all", async () => {
     const { room: r, watcher } = await room();
-    await r.say("ijmh2", "hello");
+    await r.say("mellery", "hello");
     assert.equal(watcher.entries().at(-1)?.hops, undefined);
   });
 });
@@ -176,7 +176,7 @@ describe("what an agent is doing reaches the room", () => {
     // An agent attached over MCP has no host to report for it. Calling that
     // idle would be a claim the room cannot support.
     const { room: r, watcher } = await room();
-    await r.say("ijmh2", "hello");
+    await r.say("mellery", "hello");
     assert.equal(stateOf(watcher.lastRoster(), "sam:reviewer"), undefined);
   });
 

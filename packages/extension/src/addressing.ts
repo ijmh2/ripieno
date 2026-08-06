@@ -14,7 +14,7 @@ import { MAX_AGENT_HOPS } from "@ripieno/protocol";
 export interface AgentIdentity {
   /** Transcript label, e.g. "Mira Ellery's reviewer". */
   label: string;
-  /** Owner's handle, e.g. "ijmh2". */
+  /** Owner's handle, e.g. "mellery". */
   handle: string;
 }
 
@@ -51,7 +51,7 @@ export function mentions(text: string, agent: AgentIdentity): boolean {
   if (haystack.includes(normalise(agent.label))) return true;
   if (containsName(haystack, normalise(agent.handle))) return true;
 
-  // "Mira Ellery's reviewer" → owner "mira hart", role "reviewer".
+  // "Mira Ellery's reviewer" → owner "mira ellery", role "reviewer".
   const [owner, role] = splitLabel(agent.label);
 
   // The role word alone is the common shorthand, but only when distinctive:

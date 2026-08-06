@@ -19,7 +19,7 @@ import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
 import { FileRoomStore } from "../src/roomStore.js";
 
-const mira: Member = { handle: "ijmh2", displayName: "Mira" };
+const mira: Member = { handle: "mellery", displayName: "Mira" };
 const sam: Member = { handle: "swhitfield", displayName: "Sam" };
 
 class Socket implements SocketLike {
@@ -58,11 +58,11 @@ describe("room history survives a restart", () => {
     const store = new FileRoomStore(dir);
     const first = new Room("demo", new Driver());
     await first.join(mira, new Socket());
-    await first.say("ijmh2", "the sharpe is 1.42");
+    await first.say("mellery", "the sharpe is 1.42");
     first.recordAction({
       agentId: "s:1",
       agentLabel: "Sam's agent",
-      targetHandle: "ijmh2",
+      targetHandle: "mellery",
       verb: "wrote",
       target: "src/a.ts",
       ok: true,
@@ -97,7 +97,7 @@ describe("room history survives a restart", () => {
     const revived = new Room("presence", new Driver());
     revived.hydrate((await store.load("presence"))!);
 
-    const entry = revived.roster.find((r) => r.handle === "ijmh2");
+    const entry = revived.roster.find((r) => r.handle === "mellery");
     assert.ok(entry, "the member should still be known");
     assert.equal(entry?.present, false, "but not present");
     assert.equal(entry?.agents.length, 0, "and their agents are gone with the process");
@@ -127,7 +127,7 @@ describe("room history survives a restart", () => {
     const store = new FileRoomStore(dir);
     const room = new Room("big", new Driver());
     await room.join(mira, new Socket());
-    for (let i = 0; i < 50; i++) await room.say("ijmh2", "x".repeat(200_000));
+    for (let i = 0; i < 50; i++) await room.say("mellery", "x".repeat(200_000));
     await store.save("big", room.snapshot());
 
     const { size } = await stat(path.join(dir, "big.json"));
@@ -148,7 +148,7 @@ describe("room history survives a restart", () => {
         {
           id: "big",
           kind: "human",
-          authorHandle: "ijmh2",
+          authorHandle: "mellery",
           authorName: "Mira",
           text: "y".repeat(3_000_000),
           ts: 0,
@@ -186,7 +186,7 @@ describe("room history survives a restart", () => {
     const entry = (text: string): TranscriptEntry => ({
       id: text,
       kind: "human",
-      authorHandle: "ijmh2",
+      authorHandle: "mellery",
       authorName: "Mira",
       text,
       ts: 0,

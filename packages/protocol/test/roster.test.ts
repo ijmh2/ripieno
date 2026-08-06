@@ -43,10 +43,10 @@ const agent = (id: string, owner: string, label: string, state?: "idle" | "think
 describe("the roster names people as people", () => {
   test("everyone is listed with their handle and whether they are here", () => {
     const text = describeMembers([
-      entry("ijmh2", "Mira", true, [], { repo: "ijmh2/tgtbt" }),
+      entry("mellery", "Mira", true, [], { repo: "mellery/tgtbt" }),
       entry("swhitfield", "Sam", false),
     ]);
-    assert.match(text, /@ijmh2 \(Mira, working in ijmh2\/tgtbt\) — present/);
+    assert.match(text, /@mellery \(Mira, working in mellery\/tgtbt\) — present/);
     assert.match(text, /@swhitfield \(Sam\) — OFFLINE/);
   });
 
@@ -55,7 +55,7 @@ describe("the roster names people as people", () => {
     // an agent with no roster has nothing to check that against but the name.
     const text = describeMembers([
       entry("reviewer", "Reviewer", true),
-      entry("ijmh2", "Mira", true, [agent("a1", "ijmh2", "Mira's coder")]),
+      entry("mellery", "Mira", true, [agent("a1", "mellery", "Mira's coder")]),
     ]);
     assert.match(text, /@reviewer \(Reviewer\) — present/);
     assert.match(text, /not listed as an agent is a person/i);
@@ -73,9 +73,9 @@ describe("the roster names people as people", () => {
 describe("agents are named, and attributed to their owner", () => {
   test("a member's agents are listed against them", () => {
     const text = describeMembers([
-      entry("ijmh2", "Mira", true, [
-        agent("a1", "ijmh2", "Mira's coder"),
-        agent("a2", "ijmh2", "Mira's reviewer"),
+      entry("mellery", "Mira", true, [
+        agent("a1", "mellery", "Mira's coder"),
+        agent("a2", "mellery", "Mira's reviewer"),
       ]),
     ]);
     assert.match(text, /runs "Mira's coder" and "Mira's reviewer"/);
@@ -92,18 +92,18 @@ describe("agents are named, and attributed to their owner", () => {
 
   test("an idle agent is not decorated, and an unreported one is not called idle", () => {
     const idle = describeMembers([
-      entry("ijmh2", "Mira", true, [agent("a1", "ijmh2", "Mira's coder", "idle")]),
+      entry("mellery", "Mira", true, [agent("a1", "mellery", "Mira's coder", "idle")]),
     ]);
     assert.match(idle, /runs "Mira's coder"$/m);
 
     const unknown = describeMembers([
-      entry("ijmh2", "Mira", true, [agent("a1", "ijmh2", "Mira's coder")]),
+      entry("mellery", "Mira", true, [agent("a1", "mellery", "Mira's coder")]),
     ]);
     assert.match(unknown, /runs "Mira's coder"$/m);
   });
 
   test("a room with no agents omits the note about them", () => {
-    const text = describeMembers([entry("ijmh2", "Mira", true)]);
+    const text = describeMembers([entry("mellery", "Mira", true)]);
     assert.ok(!/agent/i.test(text), text);
   });
 });
@@ -114,8 +114,8 @@ describe("the shared workspace is not described as a person", () => {
   test("it is left out of the member list", () => {
     // Listing it invites the agent to address it as one, and to attribute work
     // to "workspace" rather than to the agent that did it.
-    const text = describeMembers([entry("ijmh2", "Mira", true), container]);
-    assert.match(text, /@ijmh2/);
+    const text = describeMembers([entry("mellery", "Mira", true), container]);
+    assert.match(text, /@mellery/);
     assert.ok(!text.includes("@workspace"), text);
   });
 

@@ -13,7 +13,7 @@ export interface Member {
   handle: string;
   displayName: string;
   avatarUrl?: string;
-  /** Repo the member has open, e.g. "ijmh2/tgtbt". Helps the agent address correctly. */
+  /** Repo the member has open, e.g. "mellery/tgtbt". Helps the agent address correctly. */
   repo?: string;
 }
 

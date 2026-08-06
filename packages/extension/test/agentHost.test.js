@@ -98,10 +98,10 @@ describe("the agent is told who is in the room", () => {
     agent(r, {
       id: "mira:coder",
       label: "Mira's coder",
-      handle: "ijmh2",
+      handle: "mellery",
       displayName: "Mira",
     });
-    const mira = await member(r, "ijmh2", "Mira");
+    const mira = await member(r, "mellery", "Mira");
     await wait(300);
 
     mira.say("who is here?");
@@ -109,7 +109,7 @@ describe("the agent is told who is in the room", () => {
 
     const first = (await r.prompts()).at(-1);
     assert.ok(first, "the agent should have run a turn");
-    assert.match(first, /@ijmh2 \(Mira\) — present/);
+    assert.match(first, /@mellery \(Mira\) — present/);
     assert.match(first, /runs "Mira's coder"/);
 
     // Somebody joins mid-session, which is the case a roster in the system
@@ -122,7 +122,7 @@ describe("the agent is told who is in the room", () => {
     const second = (await r.prompts()).at(-1);
     assert.notEqual(second, first, "a second turn should have run");
     assert.match(second, /@swhitfield \(Sam\) — present/, "the newcomer must be in this turn");
-    assert.match(second, /@ijmh2 \(Mira\)/, "and so must everyone who was already here");
+    assert.match(second, /@mellery \(Mira\)/, "and so must everyone who was already here");
   });
 
   test("a member's own name is never rendered as one of their agents", async () => {
@@ -133,10 +133,10 @@ describe("the agent is told who is in the room", () => {
     agent(r, {
       id: "mira:coder",
       label: "Mira's coder",
-      handle: "ijmh2",
+      handle: "mellery",
       displayName: "Mira",
     });
-    const mira = await member(r, "ijmh2", "Mira");
+    const mira = await member(r, "mellery", "Mira");
     await member(r, "reviewer", "Reviewer");
     await wait(300);
 
@@ -159,7 +159,7 @@ describe("an agent does not answer a message that names nobody", () => {
     agent(r, {
       id: "mira:coder",
       label: "Mira's coder",
-      handle: "ijmh2",
+      handle: "mellery",
       displayName: "Mira",
     });
     agent(r, {
@@ -168,7 +168,7 @@ describe("an agent does not answer a message that names nobody", () => {
       handle: "swhitfield",
       displayName: "Sam",
     });
-    const mira = await member(r, "ijmh2", "Mira");
+    const mira = await member(r, "mellery", "Mira");
     await wait(400);
 
     mira.say("does this build?");
@@ -195,7 +195,7 @@ describe("an agent does not answer a message that names nobody", () => {
     agent(r, {
       id: "mira:coder",
       label: "Mira's coder",
-      handle: "ijmh2",
+      handle: "mellery",
       displayName: "Mira",
     });
     agent(r, {
@@ -205,7 +205,7 @@ describe("an agent does not answer a message that names nobody", () => {
       displayName: "Sam",
       primary: false,
     });
-    const mira = await member(r, "ijmh2", "Mira");
+    const mira = await member(r, "mellery", "Mira");
     await wait(400);
 
     mira.say("does this build?");

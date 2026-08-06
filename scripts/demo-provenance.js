@@ -31,9 +31,9 @@ const { ContainerGate } = require(path.join(root, "packages/workspace-host/dist/
 
 /** Who writes what. Two people, three agents, one repository. */
 const WORK = [
-  { agent: "Mira's coder", handle: "ijmh2", file: "src/relay.ts", message: "Add rate limit to relay" },
+  { agent: "Mira's coder", handle: "mellery", file: "src/relay.ts", message: "Add rate limit to relay" },
   { agent: "Sam's reviewer", handle: "swhitfield", file: "test/relay.test.ts", message: "Cover the rate limit" },
-  { agent: "Mira's coder", handle: "ijmh2", file: "src/room.ts", message: "Bound the transcript" },
+  { agent: "Mira's coder", handle: "mellery", file: "src/room.ts", message: "Bound the transcript" },
   { agent: "Sam's reviewer", handle: "swhitfield", file: "docs/limits.md", message: "Write down both limits" },
   { agent: "Alex's agent", handle: "alexr", file: "README.md", message: "Mention the limits in the README" },
 ];

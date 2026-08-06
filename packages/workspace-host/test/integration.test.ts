@@ -133,7 +133,7 @@ describe("a container hosts the room's workspace", () => {
   });
 
   test("an agent reads a file it has no access to itself", async () => {
-    const out = await Agent.join("shared", "ijmh2", "Mira's coder").then((a) =>
+    const out = await Agent.join("shared", "mellery", "Mira's coder").then((a) =>
       a.callRoom("read_file", { path: "README.md" })
     );
     assert.match(out, /# shared/);
@@ -150,19 +150,19 @@ describe("a container hosts the room's workspace", () => {
   test("the commit names the agent, not the container", async () => {
     // If this fails, provenance has collapsed into one identity the moment work
     // became shared — the exact failure the design exists to avoid.
-    const agent = await Agent.join("shared", "ijmh2", "Mira's reviewer");
+    const agent = await Agent.join("shared", "mellery", "Mira's reviewer");
     await agent.callRoom("write_file", { path: "review.md", content: "looks fine" });
     await wait(300);
     const { stdout } = await execAsync(`git log -1 --format='%an|%ae|%cn'`, { cwd: checkout });
     const [authorName, authorEmail, committerName] = stdout.trim().split("|");
     assert.equal(authorName, "Mira's reviewer");
-    assert.equal(authorEmail, "ijmh2+agent@users.noreply.github.com");
+    assert.equal(authorEmail, "mellery+agent@users.noreply.github.com");
     assert.equal(committerName, "Shared workspace", "the committer is the machine that ran it");
     agent.close();
   });
 
   test("two agents from different members both write, both attributed", async () => {
-    const a = await Agent.join("shared", "ijmh2", "Mira's coder");
+    const a = await Agent.join("shared", "mellery", "Mira's coder");
     const b = await Agent.join("shared", "swhitfield", "Sam's coder");
     await a.callRoom("write_file", { path: "from-mira.txt", content: "i" });
     await b.callRoom("write_file", { path: "from-sam.txt", content: "s" });
@@ -179,7 +179,7 @@ describe("a container hosts the room's workspace", () => {
 
   test("a write is broadcast so every member's cache drops that path", async () => {
     const watcher = await Agent.join("shared", "watcher", "Watcher");
-    const writer = await Agent.join("shared", "ijmh2", "Mira's coder");
+    const writer = await Agent.join("shared", "mellery", "Mira's coder");
     await writer.callRoom("write_file", { path: "watched.txt", content: "changed" });
     await wait(500);
     const invalidated = watcher.seen.find((m) => m.t === "workspaceInvalidated");
@@ -211,7 +211,7 @@ describe("a container hosts the room's workspace", () => {
   });
 
   test("the confinement boundary holds in the container too", async () => {
-    const agent = await Agent.join("shared", "ijmh2", "Mira's coder");
+    const agent = await Agent.join("shared", "mellery", "Mira's coder");
     const out = await agent.callRoom("read_file", { path: "../../etc/passwd" });
     assert.match(out, /outside the workspace/);
     agent.close();
@@ -221,7 +221,7 @@ describe("a container hosts the room's workspace", () => {
     // The claim the whole phase rests on. Before this, the shared workspace was
     // a member's laptop: everyone closing their editor took the room's codebase
     // with it, mid-turn.
-    const first = await Agent.join("shared", "ijmh2", "Mira's coder");
+    const first = await Agent.join("shared", "mellery", "Mira's coder");
     await first.callRoom("write_file", { path: "outlives.txt", content: "still here" });
     first.close();
 
@@ -240,14 +240,14 @@ describe("a container hosts the room's workspace", () => {
   });
 
   test("an unlisted command does not run", async () => {
-    const agent = await Agent.join("shared", "ijmh2", "Mira's coder");
+    const agent = await Agent.join("shared", "mellery", "Mira's coder");
     const out = await agent.callRoom("run_command", { command: "rm -rf /" });
     assert.match(out, /declined/);
     agent.close();
   });
 
   test("an allowed command does run", async () => {
-    const agent = await Agent.join("shared", "ijmh2", "Mira's coder");
+    const agent = await Agent.join("shared", "mellery", "Mira's coder");
     const out = await agent.callRoom("run_command", { command: "echo hello-from-container" });
     assert.match(out, /hello-from-container/);
     agent.close();

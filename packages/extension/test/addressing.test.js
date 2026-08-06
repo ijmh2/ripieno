@@ -11,8 +11,8 @@ const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const { shouldAnswer, mentions } = require("../dist/addressing.js");
 
-const mirasAgent = { label: "Mira Ellery's agent", handle: "ijmh2", primary: true };
-const mirasReviewer = { label: "Mira Ellery's reviewer", handle: "ijmh2", primary: false };
+const mirasAgent = { label: "Mira Ellery's agent", handle: "mellery", primary: true };
+const mirasReviewer = { label: "Mira Ellery's reviewer", handle: "mellery", primary: false };
 const samsAgent = { label: "Sam Whitfield's agent", handle: "swhitfield", primary: true };
 
 describe("an unaddressed question gets exactly one reply per member", () => {
@@ -160,15 +160,15 @@ describe("people drop apostrophes, and it must still route", () => {
   });
 
   test("a longer name starting the same way is still not a match", () => {
-    assert.equal(mentions("miraka wants a look", mirasAgent), false);
+    assert.equal(mentions("miranda wants a look", mirasAgent), false);
   });
 });
 
 describe("naming one of somebody's agents does not wake the others", () => {
-  // Seen in a live room: "Mira Ellery's agent you should be thinking now" woke the
-  // reviewer as well, because the text contains "mira" and the word "agent".
-  // Only the first name was left to go on by that point, and it cannot tell one
-  // of a person's agents from another.
+  // Seen in a live room: "Mira Ellery's agent you should be thinking now" woke
+  // the reviewer as well, because the text contains "mira" and the word
+  // "agent". Only the first name was left to go on by that point, and it cannot
+  // tell one of a person's agents from another.
   test("the generic agent is the one a first name reaches", () => {
     const text = "Mira Ellery's agent you should be thinking now";
     assert.equal(shouldAnswer(text, mirasAgent, [mirasReviewer, samsAgent]), true);

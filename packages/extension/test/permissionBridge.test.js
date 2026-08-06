@@ -97,7 +97,7 @@ describe("approval bridge", () => {
     await askPermission({
       RIPIENO_APPROVAL_URL: bridge.url(),
       RIPIENO_APPROVAL_TOKEN: TOKEN,
-      RIPIENO_AGENT_ID: "ijmh2::reviewer",
+      RIPIENO_AGENT_ID: "mellery::reviewer",
       RIPIENO_AGENT_LABEL: "Mira's reviewer",
     });
     const last = bridge.seen.at(-1);
@@ -105,7 +105,7 @@ describe("approval bridge", () => {
     assert.deepEqual(last.input, { command: "rm -rf /" });
     // Which agent is asking matters: a member with several should know which.
     assert.equal(last.agentLabel, "Mira's reviewer");
-    assert.equal(last.agentId, "ijmh2::reviewer");
+    assert.equal(last.agentId, "mellery::reviewer");
   });
 
   test("an approval from the member becomes an allow verdict", async () => {

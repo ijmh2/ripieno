@@ -17,7 +17,7 @@ Provenance is the refusal to throw it away.
 
 **Attribution** is inbound. Every message the agent receives carries its author.
 Not as a courtesy prefix the model may ignore, but as structure the room core
-maintains: `Mira Ellery (@ijmh2): …`. The agent is instructed never to merge two
+maintains: `@ijmh2: …`. The agent is instructed never to merge two
 members' statements into one anonymous "the team thinks". If two people disagree,
 that disagreement survives into the agent's reasoning intact.
 

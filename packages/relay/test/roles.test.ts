@@ -21,7 +21,7 @@ import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
 import { startServer } from "../src/server.js";
 
-const mira: Member = { handle: "ijmh2", displayName: "Mira" };
+const mira: Member = { handle: "mellery", displayName: "Mira" };
 const sam: Member = { handle: "swhitfield", displayName: "Sam" };
 
 class Socket implements SocketLike {
@@ -55,7 +55,7 @@ describe("a room has an owner from the moment it exists", () => {
     // first arrival takes it — otherwise a room can never start.
     const room = new Room("r", new Driver());
     await room.join(mira, new Socket());
-    assert.equal(room.roleOf("ijmh2"), "owner");
+    assert.equal(room.roleOf("mellery"), "owner");
   });
 
   test("everyone after that is an ordinary member", async () => {
@@ -75,7 +75,7 @@ describe("a room has an owner from the moment it exists", () => {
       "workspace"
     );
     await room.join(mira, new Socket());
-    assert.equal(room.roleOf("ijmh2"), "owner");
+    assert.equal(room.roleOf("mellery"), "owner");
     assert.equal(
       room.roster.find((r) => r.handle === WORKSPACE_HANDLE)?.role,
       undefined,
@@ -87,18 +87,18 @@ describe("a room has an owner from the moment it exists", () => {
     const first = new Room("r", new Driver());
     await first.join(mira, new Socket());
     await first.join(sam, new Socket());
-    first.setRole("ijmh2", "swhitfield", "viewer");
+    first.setRole("mellery", "swhitfield", "viewer");
 
     const revived = new Room("r", new Driver());
     revived.hydrate(first.snapshot());
-    assert.equal(revived.roleOf("ijmh2"), "owner");
+    assert.equal(revived.roleOf("mellery"), "owner");
     assert.equal(revived.roleOf("swhitfield"), "viewer");
   });
 
   test("a snapshot written before roles existed still loads", async () => {
     const room = new Room("r", new Driver());
     room.hydrate({ transcript: [], actions: [], members: [mira] });
-    assert.equal(room.roleOf("ijmh2"), "member");
+    assert.equal(room.roleOf("mellery"), "member");
   });
 });
 
@@ -118,8 +118,8 @@ describe("only the owner changes roles", () => {
     const room = new Room("r", new Driver());
     await room.join(mira, new Socket());
     await room.join(sam, new Socket());
-    room.setRole("swhitfield", "ijmh2", "viewer");
-    assert.equal(room.roleOf("ijmh2"), "owner");
+    room.setRole("swhitfield", "mellery", "viewer");
+    assert.equal(room.roleOf("mellery"), "owner");
   });
 
   test("the owner cannot demote themselves and strand the room", async () => {
@@ -128,8 +128,8 @@ describe("only the owner changes roles", () => {
     const room = new Room("r", new Driver());
     const socket = new Socket();
     await room.join(mira, socket);
-    room.setRole("ijmh2", "ijmh2", "viewer");
-    assert.equal(room.roleOf("ijmh2"), "owner");
+    room.setRole("mellery", "mellery", "viewer");
+    assert.equal(room.roleOf("mellery"), "owner");
     assert.match(socket.systems(), /cannot change your own role/);
   });
 
@@ -141,7 +141,7 @@ describe("only the owner changes roles", () => {
     await room.join(sam, samSocket);
 
     const before = miraSocket.sent.length;
-    room.setRole("swhitfield", "ijmh2", "viewer");
+    room.setRole("swhitfield", "mellery", "viewer");
     assert.equal(miraSocket.sent.length, before, "an ordinary mistake is not public");
     assert.match(samSocket.systems(), /Only the room's owner/);
   });
@@ -150,9 +150,9 @@ describe("only the owner changes roles", () => {
     const room = new Room("r", new Driver());
     await room.join(mira, new Socket());
     await room.join(sam, new Socket());
-    room.setRole("ijmh2", "swhitfield", "viewer");
+    room.setRole("mellery", "swhitfield", "viewer");
     assert.equal(room.canAct("swhitfield"), false);
-    room.setRole("ijmh2", "swhitfield", "member");
+    room.setRole("mellery", "swhitfield", "member");
     assert.equal(room.canAct("swhitfield"), true);
   });
 });

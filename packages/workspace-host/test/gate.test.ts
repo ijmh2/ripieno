@@ -94,7 +94,7 @@ describe("the gate applies writes and tells the room", () => {
     abs: path.join(root, rel),
     proposed: content,
     existed,
-    requester: { label: "Mira's coder", handle: "ijmh2" },
+    requester: { label: "Mira's coder", handle: "mellery" },
     report: () => {},
   });
 
@@ -138,15 +138,15 @@ describe("the gate applies writes and tells the room", () => {
 
 describe("repository binding", () => {
   test("owner/name parses, with or without .git", () => {
-    assert.deepEqual(parseRepo("ijmh2/tgtbt", "main"), {
-      owner: "ijmh2",
+    assert.deepEqual(parseRepo("mellery/tgtbt", "main"), {
+      owner: "mellery",
       name: "tgtbt",
       branch: "main",
       url: undefined,
     });
-    assert.equal(parseRepo("ijmh2/tgtbt", "main", "https://git.example/x.git")?.url,
+    assert.equal(parseRepo("mellery/tgtbt", "main", "https://git.example/x.git")?.url,
       "https://git.example/x.git");
-    assert.equal(parseRepo("ijmh2/tgtbt.git", "main")?.name, "tgtbt");
+    assert.equal(parseRepo("mellery/tgtbt.git", "main")?.name, "tgtbt");
   });
 
   test("anything that is not owner/name is refused rather than guessed", () => {

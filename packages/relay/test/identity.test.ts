@@ -36,17 +36,17 @@ function fakeGithub(byToken: Record<string, { login: string; name?: string } | n
 
 describe("the relay decides who you are", () => {
   test("the handle comes from GitHub, not from the client", async () => {
-    const verifier = new GithubVerifier(fakeGithub({ "tok-mira": { login: "ijmh2", name: "Mira" } }));
+    const verifier = new GithubVerifier(fakeGithub({ "tok-mira": { login: "mellery", name: "Mira" } }));
     const result = await verifier.verify("tok-mira");
     assert.equal(result.ok, true);
-    assert.equal(result.ok && result.identity.handle, "ijmh2");
+    assert.equal(result.ok && result.identity.handle, "mellery");
     assert.equal(result.ok && result.identity.displayName, "Mira");
   });
 
   test("a login with no display name falls back to the login", async () => {
-    const verifier = new GithubVerifier(fakeGithub({ t: { login: "ijmh2" } }));
+    const verifier = new GithubVerifier(fakeGithub({ t: { login: "mellery" } }));
     const result = await verifier.verify("t");
-    assert.equal(result.ok && result.identity.displayName, "ijmh2");
+    assert.equal(result.ok && result.identity.displayName, "mellery");
   });
 
   test("a rejected token is refused", async () => {
@@ -78,7 +78,7 @@ describe("the relay decides who you are", () => {
     let calls = 0;
     const counting = ((...args: unknown[]) => {
       calls++;
-      return fakeGithub({ tok: { login: "ijmh2" } })(...(args as Parameters<typeof fetch>));
+      return fakeGithub({ tok: { login: "mellery" } })(...(args as Parameters<typeof fetch>));
     }) as unknown as typeof fetch;
 
     const verifier = new GithubVerifier(counting);
@@ -121,7 +121,7 @@ describe("a relay that requires identity", () => {
   }
 
   test("a join with no proof of identity is refused", async () => {
-    const seen = await join({ member: { handle: "ijmh2", displayName: "Mira" } });
+    const seen = await join({ member: { handle: "mellery", displayName: "Mira" } });
     const errors = seen.filter((m) => m.t === "error").map((m) => (m as { message: string }).message);
     assert.match(errors.join(" "), /identity refused/);
     assert.equal(seen.some((m) => m.t === "joined"), false, "the join must not succeed");
@@ -129,7 +129,7 @@ describe("a relay that requires identity", () => {
 
   test("a bad token is refused rather than trusted", async () => {
     const seen = await join({
-      member: { handle: "ijmh2", displayName: "Mira" },
+      member: { handle: "mellery", displayName: "Mira" },
       githubToken: "not-a-real-token",
     });
     assert.equal(seen.some((m) => m.t === "joined"), false);
@@ -140,7 +140,7 @@ describe("a relay that requires identity", () => {
     // Refusing the join would be adequate; taking the handle from GitHub is
     // better, because there is then no path by which a client's claim matters.
     const seen = await join({
-      member: { handle: "ijmh2", displayName: "Mira Ellery" },
+      member: { handle: "mellery", displayName: "Mira Ellery" },
       githubToken: "tok-mallory",
     });
     const joined = seen.find((m) => m.t === "joined") as

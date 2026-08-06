@@ -113,7 +113,7 @@ describe("byo room end-to-end", () => {
     mira.send({
       t: "join",
       room: "e2e-1",
-      member: { handle: "ijmh2", displayName: "Mira" },
+      member: { handle: "mellery", displayName: "Mira" },
     });
     sam.send({
       t: "join",
@@ -128,7 +128,7 @@ describe("byo room end-to-end", () => {
 
     const seen = await sam.waitForEntry((e) => e.text === "can you check the backtest?");
     assert.equal(seen.kind, "human");
-    assert.equal(seen.authorHandle, "ijmh2");
+    assert.equal(seen.authorHandle, "mellery");
 
     mira.close();
     sam.close();
@@ -139,13 +139,13 @@ describe("byo room end-to-end", () => {
     const sam = await TestClient.connect();
     const mirasAgent = await TestClient.connect();
 
-    mira.send({ t: "join", room: "e2e-2", member: { handle: "ijmh2", displayName: "Mira" } });
+    mira.send({ t: "join", room: "e2e-2", member: { handle: "mellery", displayName: "Mira" } });
     sam.send({ t: "join", room: "e2e-2", member: { handle: "swhitfield", displayName: "Sam" } });
     mirasAgent.send({
       t: "join",
       room: "e2e-2",
       role: "agent",
-      member: { handle: "ijmh2", displayName: "Mira" },
+      member: { handle: "mellery", displayName: "Mira" },
     });
     await sam.waitForEntry((e) => e.text.includes("Mira's agent joined"));
 
@@ -158,7 +158,7 @@ describe("byo room end-to-end", () => {
     const seenBySam = await sam.waitForEntry((e) => e.text === "1.42 on the latest run.");
     assert.equal(seenBySam.kind, "agent");
     assert.equal(seenBySam.authorName, "Mira's agent");
-    assert.equal(seenBySam.authorHandle, "ijmh2");
+    assert.equal(seenBySam.authorHandle, "mellery");
 
     // Mira's own editor sees his agent's reply too — one conversation, not two.
     await mira.waitForEntry((e) => e.text === "1.42 on the latest run.");
@@ -176,11 +176,11 @@ describe("byo room end-to-end", () => {
     const mira = await TestClient.connect();
     // Exactly what RelayClient does on reconnect: join, then immediately flush
     // whatever was queued while offline — including tool results.
-    mira.send({ t: "join", room: "e2e-race", member: { handle: "ijmh2", displayName: "Mira" } });
+    mira.send({ t: "join", room: "e2e-race", member: { handle: "mellery", displayName: "Mira" } });
     mira.send({ t: "say", text: "queued while offline" });
 
     const seen = await sam.waitForEntry((e) => e.text === "queued while offline");
-    assert.equal(seen.authorHandle, "ijmh2");
+    assert.equal(seen.authorHandle, "mellery");
 
     mira.close();
     sam.close();
@@ -206,14 +206,14 @@ describe("byo room end-to-end", () => {
   test("two people and four agents share one conversation", async () => {
     const mira = await TestClient.connect();
     const sam = await TestClient.connect();
-    mira.send({ t: "join", room: "e2e-many", member: { handle: "ijmh2", displayName: "Mira" } });
+    mira.send({ t: "join", room: "e2e-many", member: { handle: "mellery", displayName: "Mira" } });
     sam.send({ t: "join", room: "e2e-many", member: { handle: "swhitfield", displayName: "Sam" } });
     await sam.waitForJoined();
 
     // Two agents each, all under their owners' handles.
     const fleet = [
-      { handle: "ijmh2", name: "Mira", id: "i:coder", label: "Mira's coder" },
-      { handle: "ijmh2", name: "Mira", id: "i:reviewer", label: "Mira's reviewer" },
+      { handle: "mellery", name: "Mira", id: "i:coder", label: "Mira's coder" },
+      { handle: "mellery", name: "Mira", id: "i:reviewer", label: "Mira's reviewer" },
       { handle: "swhitfield", name: "Sam", id: "s:coder", label: "Sam's coder" },
       { handle: "swhitfield", name: "Sam", id: "s:reviewer", label: "Sam's reviewer" },
     ];
@@ -251,7 +251,7 @@ describe("byo room end-to-end", () => {
     const late = await TestClient.connect();
     late.send({ t: "join", room: "e2e-many", member: { handle: "kate", displayName: "Kate" } });
     const joined = await late.waitForJoined();
-    const miraEntry = joined.roster.find((r) => r.handle === "ijmh2");
+    const miraEntry = joined.roster.find((r) => r.handle === "mellery");
     const samEntry = joined.roster.find((r) => r.handle === "swhitfield");
     assert.equal(miraEntry?.agents.length, 2);
     assert.equal(samEntry?.agents.length, 2);
@@ -274,7 +274,7 @@ describe("byo room end-to-end", () => {
       role: "agent",
       agentId: "local:default",
       agentLabel: "Mira's agent",
-      member: { handle: "ijmh2", displayName: "Mira" },
+      member: { handle: "mellery", displayName: "Mira" },
     });
     await mira.waitForJoined();
     sam.send({
@@ -296,7 +296,7 @@ describe("byo room end-to-end", () => {
     const joined = await observer.waitForJoined();
 
     // Both agents present at once, under their own owners.
-    assert.equal(joined.roster.find((r) => r.handle === "ijmh2")?.agents.length, 1);
+    assert.equal(joined.roster.find((r) => r.handle === "mellery")?.agents.length, 1);
     assert.equal(joined.roster.find((r) => r.handle === "swhitfield")?.agents.length, 1);
     // And their ids differ despite both clients asking for "local:default".
     const ids = joined.roster.flatMap((r) => r.agents.map((a) => a.id));
@@ -309,7 +309,7 @@ describe("byo room end-to-end", () => {
 
   test("a joiner receives the conversation so far", async () => {
     const mira = await TestClient.connect();
-    mira.send({ t: "join", room: "e2e-3", member: { handle: "ijmh2", displayName: "Mira" } });
+    mira.send({ t: "join", room: "e2e-3", member: { handle: "mellery", displayName: "Mira" } });
     await mira.waitForEntry((e) => e.text.includes("Mira joined"));
     mira.send({ t: "say", text: "earlier decision: we use GQA" });
     await mira.waitForEntry((e) => e.text.includes("GQA"));

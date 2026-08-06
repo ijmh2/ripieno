@@ -17,7 +17,7 @@ import { Room, type SocketLike } from "../src/room.js";
 import { rosterPrompt } from "../src/roomCore.js";
 import type { RoomDriver } from "../src/driver.js";
 
-const mira: Member = { handle: "ijmh2", displayName: "Mira" };
+const mira: Member = { handle: "mellery", displayName: "Mira" };
 const container: Member = { handle: WORKSPACE_HANDLE, displayName: "Shared workspace" };
 
 class Socket implements SocketLike {
@@ -68,7 +68,7 @@ describe("the shared workspace is never mistaken for a person", () => {
     await room.leave(WORKSPACE_HANDLE, "workspace", workspace);
 
     const prompt = rosterPrompt(room.roster);
-    assert.match(prompt, /@ijmh2/);
+    assert.match(prompt, /@mellery/);
     assert.ok(!prompt.includes(`@${WORKSPACE_HANDLE}`), `described as a member:\n${prompt}`);
   });
 
@@ -89,7 +89,7 @@ describe("a room that never empties does not grow without limit", () => {
   test("the transcript is capped, and a joiner is sent the cap", async () => {
     const room = new Room("r", new Driver());
     await room.join(mira, new Socket());
-    for (let i = 0; i < 700; i++) await room.say("ijmh2", `message ${i}`);
+    for (let i = 0; i < 700; i++) await room.say("mellery", `message ${i}`);
 
     const joiner = new Socket();
     await room.join({ handle: "sam", displayName: "Sam" }, joiner);
@@ -111,7 +111,7 @@ describe("a room that never empties does not grow without limit", () => {
     // record of people arriving to have it.
     const room = new Room("r", new Driver());
     await room.join(mira, new Socket());
-    await room.say("ijmh2", "the message that matters");
+    await room.say("mellery", "the message that matters");
 
     // Churn: every connect and disconnect appends a system entry.
     for (let i = 0; i < 900; i++) {
@@ -136,7 +136,7 @@ describe("a room that never empties does not grow without limit", () => {
     // keeping them forever.
     const room = new Room("r", new Driver());
     await room.join(mira, new Socket());
-    for (let i = 0; i < 700; i++) await room.say("ijmh2", `message ${i}`);
+    for (let i = 0; i < 700; i++) await room.say("mellery", `message ${i}`);
 
     const joiner = new Socket();
     await room.join({ handle: "sam", displayName: "Sam" }, joiner);
@@ -154,7 +154,7 @@ describe("a room that never empties does not grow without limit", () => {
       room.recordAction({
         agentId: "a1",
         agentLabel: "Mira's coder",
-        targetHandle: "ijmh2",
+        targetHandle: "mellery",
         verb: "wrote",
         target: `file-${i}.ts`,
         ok: true,
@@ -174,7 +174,7 @@ describe("one member cannot fill everyone else's memory", () => {
     const room = new Room("r", new Driver());
     const socket = new Socket();
     await room.join(mira, socket);
-    await room.say("ijmh2", "x".repeat(500_000));
+    await room.say("mellery", "x".repeat(500_000));
 
     const entry = socket.sent
       .filter((m): m is Extract<ServerMsg, { t: "entry" }> => m.t === "entry")
@@ -189,7 +189,7 @@ describe("one member cannot fill everyone else's memory", () => {
     const socket = new Socket();
     await room.join(mira, socket);
     const text = "here is a stack trace\n".repeat(50);
-    await room.say("ijmh2", text);
+    await room.say("mellery", text);
     const entry = socket.sent
       .filter((m): m is Extract<ServerMsg, { t: "entry" }> => m.t === "entry")
       .map((m) => m.entry)
@@ -216,7 +216,7 @@ describe("a failing driver degrades the room rather than corrupting it", () => {
     const socket = new Socket();
     await room.join(mira, socket);
 
-    assert.equal(entryFor(room.roster, "ijmh2")?.present, true);
+    assert.equal(entryFor(room.roster, "mellery")?.present, true);
     assert.equal(room.isEmpty, false);
 
     // And the room says so, rather than looking healthy.
@@ -227,7 +227,7 @@ describe("a failing driver degrades the room rather than corrupting it", () => {
     assert.match(said, /could not be told who is in the room/);
 
     // Leaving still works, so the room can be reaped.
-    await room.leave("ijmh2", "human", socket);
+    await room.leave("mellery", "human", socket);
     assert.equal(room.isEmpty, true);
   });
 });

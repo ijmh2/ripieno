@@ -95,10 +95,10 @@ describe("a tool result is only accepted from the member it was sent to", () => 
 
   /** Mira hosting a workspace, with his agent attached, in a fresh room. */
   async function room(code: string): Promise<{ host: Client; agent: Client }> {
-    const host = await join(code, { member: { handle: "ijmh2", displayName: "Mira" } });
+    const host = await join(code, { member: { handle: "mellery", displayName: "Mira" } });
     host.send({ t: "claimWorkspace", claim: true });
     const agent = await join(code, {
-      member: { handle: "ijmh2", displayName: "Mira" },
+      member: { handle: "mellery", displayName: "Mira" },
       role: "agent",
       agentId: "coder",
       agentLabel: "Mira's coder",
@@ -146,10 +146,10 @@ describe("a tool result is only accepted from the member it was sent to", () => 
     // and `fs_0` from Sam's are different calls that used to share a map entry:
     // one agent received the other's file, and the action log named the wrong
     // agent as having read it.
-    const host = await join("collide", { member: { handle: "ijmh2", displayName: "Mira" } });
+    const host = await join("collide", { member: { handle: "mellery", displayName: "Mira" } });
     host.send({ t: "claimWorkspace", claim: true });
     const miras = await join("collide", {
-      member: { handle: "ijmh2", displayName: "Mira" },
+      member: { handle: "mellery", displayName: "Mira" },
       role: "agent",
       agentId: "coder",
       agentLabel: "Mira's coder",
@@ -215,6 +215,6 @@ describe("a tool result is only accepted from the member it was sent to", () => 
     const reply = agent.replies().find((r) => r.requestId === "fs_9");
     assert.ok(reply, "the agent must be told, not left to time out after five minutes");
     assert.equal(reply?.isError, true);
-    assert.match(reply!.content, /ijmh2/);
+    assert.match(reply!.content, /mellery/);
   });
 });

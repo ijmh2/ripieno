@@ -96,14 +96,14 @@
     waitingOn: undefined,
     room: "tgtbt-review",
     roster: [
-      { handle: "ijmh2", displayName: "Mira", present: true, color: 5, agentAttached: true },
+      { handle: "mellery", displayName: "Mira", present: true, color: 5, agentAttached: true },
       { handle: "swhitfield", displayName: "Sam Whitfield", present: true, color: 0 },
       { handle: "kate", displayName: "Kate Ellery", present: false, color: 3 },
     ],
     transcript: [
       { id: "s1", kind: "system", authorHandle: "system", authorName: "system",
         text: "Sam Whitfield joined the room.", ts: t(14) },
-      { id: "h1", kind: "human", authorHandle: "ijmh2", authorName: "Mira",
+      { id: "h1", kind: "human", authorHandle: "mellery", authorName: "Mira",
         text: "can you check the sharpe on the latest tgtbt run?", ts: t(12) },
       { id: "h2", kind: "human", authorHandle: "swhitfield", authorName: "Sam Whitfield",
         text: "^ and compare it against last week's — mine looked off after the resampling change", ts: t(11) },
@@ -124,9 +124,9 @@
         text: "Confirmed from Kate's calendar file: 2026-07-18 is flagged `early_close`.", ts: t(3) },
     ],
     actions: [
-      { id: "x1", agentId: "i:coder", agentLabel: "Mira's coder", targetHandle: "ijmh2",
+      { id: "x1", agentId: "i:coder", agentLabel: "Mira's coder", targetHandle: "mellery",
         verb: "wrote", target: "packages/relay/src/room.ts", detail: "+41 −6", ok: true, ts: Date.now() },
-      { id: "x2", agentId: "s:rev", agentLabel: "Sam's reviewer", targetHandle: "ijmh2",
+      { id: "x2", agentId: "s:rev", agentLabel: "Sam's reviewer", targetHandle: "mellery",
         verb: "ran", target: "npm test", detail: "failed", ok: false, ts: Date.now() },
       { id: "x3", agentId: "k:1", agentLabel: "Kate's agent", targetHandle: "swhitfield",
         verb: "read", target: "results/latest.json", ok: true, ts: Date.now() },

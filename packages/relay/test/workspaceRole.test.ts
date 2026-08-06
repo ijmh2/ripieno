@@ -118,7 +118,7 @@ describe("only the container may be the workspace", () => {
     impostor.send({
       t: "join",
       room: "r2",
-      member: { handle: "ijmh2", displayName: "Mira" },
+      member: { handle: "mellery", displayName: "Mira" },
       role: "workspace",
       token: ROOM_TOKEN,
       workspaceToken: "guessed",
@@ -135,7 +135,7 @@ describe("only the container may be the workspace", () => {
       room: "r3",
       // Deliberately claiming to be someone else: the relay assigns the handle,
       // it never takes it from the client.
-      member: { handle: "ijmh2", displayName: "Mira" },
+      member: { handle: "mellery", displayName: "Mira" },
       role: "workspace",
       token: ROOM_TOKEN,
       workspaceToken: WORKSPACE_TOKEN,
@@ -152,7 +152,7 @@ describe("only the container may be the workspace", () => {
     member.send({
       t: "join",
       room: "r4",
-      member: { handle: "ijmh2", displayName: "Mira" },
+      member: { handle: "mellery", displayName: "Mira" },
       token: ROOM_TOKEN,
     });
     await settle();
@@ -192,7 +192,7 @@ describe("only the container may be the workspace", () => {
     member.send({
       t: "join",
       room: "r5",
-      member: { handle: "ijmh2", displayName: "Mira" },
+      member: { handle: "mellery", displayName: "Mira" },
       token: ROOM_TOKEN,
     });
     const container = await connect();
@@ -224,7 +224,7 @@ describe("the container is not described to the agent as a person", () => {
     // Listing it as a member invites the agent to address it as one, and to
     // attribute work to "workspace" rather than to the agent that did it.
     const prompt = rosterPrompt([
-      toRosterEntry({ handle: "ijmh2", displayName: "Mira" }, true),
+      toRosterEntry({ handle: "mellery", displayName: "Mira" }, true),
       toRosterEntry(
         { handle: WORKSPACE_HANDLE, displayName: "Shared workspace" },
         true,
@@ -232,7 +232,7 @@ describe("the container is not described to the agent as a person", () => {
         "workspace"
       ),
     ]);
-    assert.match(prompt, /@ijmh2/);
+    assert.match(prompt, /@mellery/);
     assert.ok(!prompt.includes("@workspace"), "the container is reached with the room target");
   });
 

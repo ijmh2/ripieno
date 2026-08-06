@@ -18,7 +18,7 @@ import path from "node:path";
 import { GitWorkspace } from "../src/git.js";
 
 const execAsync = promisify(exec);
-const MIRA = { label: "Mira's coder", handle: "ijmh2" };
+const MIRA = { label: "Mira's coder", handle: "mellery" };
 
 async function seedOrigin(base: string): Promise<string> {
   const origin = path.join(base, "origin.git");
@@ -87,7 +87,7 @@ describe("the workspace as a repository", () => {
     const { stdout } = await execAsync(`git log -1 --format='%an|%ae|%cn'`, { cwd: root });
     const [an, ae, cn] = stdout.trim().split("|");
     assert.equal(an, "Mira's coder");
-    assert.equal(ae, "ijmh2+agent@users.noreply.github.com");
+    assert.equal(ae, "mellery+agent@users.noreply.github.com");
     assert.equal(cn, "Shared workspace");
   });
 

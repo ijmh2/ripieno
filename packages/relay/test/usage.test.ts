@@ -15,7 +15,7 @@ import type { Member, ServerMsg } from "@ripieno/protocol";
 import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
 
-const mira: Member = { handle: "ijmh2", displayName: "Mira" };
+const mira: Member = { handle: "mellery", displayName: "Mira" };
 const sam: Member = { handle: "swhitfield", displayName: "Sam" };
 
 class Socket implements SocketLike {
@@ -59,7 +59,7 @@ describe("spend accumulates per agent", () => {
     assert.equal(entry?.inputTokens, 150);
     assert.equal(entry?.outputTokens, 30);
     assert.equal(entry?.agentLabel, "Mira's coder");
-    assert.equal(entry?.owner, "ijmh2");
+    assert.equal(entry?.owner, "mellery");
     assert.equal(watcher.usage()?.agents.length, 1, "the room hears about it");
   });
 

@@ -216,9 +216,9 @@ describe("the tools", () => {
 
 describe("git authorship follows the acting agent", () => {
   test("a requester sets the author but never the committer", () => {
-    const env = commandEnv({ label: "Mira's reviewer", handle: "ijmh2" });
+    const env = commandEnv({ label: "Mira's reviewer", handle: "mellery" });
     assert.equal(env.GIT_AUTHOR_NAME, "Mira's reviewer");
-    assert.equal(env.GIT_AUTHOR_EMAIL, "ijmh2+agent@users.noreply.github.com");
+    assert.equal(env.GIT_AUTHOR_EMAIL, "mellery+agent@users.noreply.github.com");
     assert.equal(env.GIT_COMMITTER_NAME, undefined);
   });
 

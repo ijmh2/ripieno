@@ -13,7 +13,7 @@ const WebSocket = require("ws");
 
 const URL = process.env.RIPIENO_RELAY_URL || "ws://localhost:8787";
 const ROOM = process.argv[2] || process.env.RIPIENO_ROOM || "demo";
-const SAM = { handle: "swhitfield", displayName: "Sam Whitfield", repo: "ijmh2/tgtbt" };
+const SAM = { handle: "swhitfield", displayName: "Sam Whitfield", repo: "mellery/tgtbt" };
 
 function connect(role, onEntry) {
   const ws = new WebSocket(URL);

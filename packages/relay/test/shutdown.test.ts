@@ -54,7 +54,7 @@ describe("a graceful shutdown keeps the history it just took", () => {
   });
 
   test("flush() persists what the debounce has not written yet", async () => {
-    const member = await say("urgent", "ijmh2", "this must survive the redeploy");
+    const member = await say("urgent", "mellery", "this must survive the redeploy");
 
     // Deliberately inside the 1s debounce window: nothing is on disk yet.
     const before: string[] = await readdir(dir).catch(() => [] as string[]);
@@ -98,7 +98,7 @@ describe("two saves of one room cannot destroy each other", () => {
     const entry = (text: string): TranscriptEntry => ({
       id: text,
       kind: "human",
-      authorHandle: "ijmh2",
+      authorHandle: "mellery",
       authorName: "Mira",
       text,
       ts: 0,

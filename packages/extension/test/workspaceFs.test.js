@@ -68,7 +68,7 @@ describe("the action log invalidates exactly what changed", () => {
       id: "a",
       agentId: "s:1",
       agentLabel: "Sam's agent",
-      targetHandle: "ijmh2",
+      targetHandle: "mellery",
       verb,
       target,
       ok: true,
