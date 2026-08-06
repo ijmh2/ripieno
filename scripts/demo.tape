@@ -17,11 +17,15 @@ Output dist/demo.mp4
 Output dist/demo.gif
 
 Set Shell "bash"
-Set FontFamily "SF Mono"
-Set FontSize 30
-Set Width 1080
-Set Height 1080
-Set Padding 50
+# A fallback chain, not a single name. "SF Mono" alone silently fell back to a
+# proportional face inside the headless terminal VHS renders in — every line
+# wrapped, and the column alignment that is the entire point of the shot went
+# with it. Menlo ships with every macOS; the rest cover Linux and Windows.
+Set FontFamily "JetBrains Mono,Menlo,DejaVu Sans Mono,Consolas,monospace"
+Set FontSize 26
+Set Width 1000
+Set Height 400
+Set Padding 40
 Set TypingSpeed 60ms
 Set Framerate 60
 
@@ -37,7 +41,7 @@ Show
 
 # Beat one: the command lands, and nothing happens yet. This pause is where the
 # "watch the author column" overlay goes in the edit — it needs air.
-Type "npm run demo:provenance --silent -- --quiet"
+Type "node scripts/demo-provenance.js --quiet"
 Sleep 1500ms
 Enter
 
