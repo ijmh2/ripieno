@@ -21,20 +21,12 @@ const requireGithub = resolveRequireGithub(process.env.RIPIENO_REQUIRE_GITHUB, h
 // environment, no credit balance. Members attach their own agents instead.
 // Hosted mode needs both IDs from the one-time `ant beta:… create` step, and
 // failing loudly here beats a confusing 404 on the first join.
-if (mode === "hosted" && (!agentId || !environmentId)) {
-  console.error(
-    [
-      "Hosted mode needs both resource IDs.",
-      "",
-      "  RIPIENO_AGENT_ID        from: ant beta:agents create < infra/agent.yaml --transform id -r",
-      "  RIPIENO_ENVIRONMENT_ID  from: ant beta:environments create < infra/env.yaml --transform id -r",
-      "",
-      "Credentials resolve automatically from ANTHROPIC_API_KEY or an `ant auth login` profile.",
-      "To run without any of that, use BYO mode (the default): unset RIPIENO_MODE.",
-    ].join("\n")
-  );
-  process.exit(1);
-}
+// Nothing here about hosted mode's resource IDs any more. It used to print
+// instructions for provisioning them — `ant beta:agents create < infra/agent.yaml`
+// — which named a directory that no longer exists in this repository, for a mode
+// startServer refuses a few lines later regardless. Telling someone how to
+// prepare for a door that is bolted shut is worse than saying it is shut, so
+// the single accurate refusal in server.ts is the only thing that speaks now.
 
 // Refuse to serve the public internet with no gate at all. The token is not
 // authentication — a holder can still claim any handle — but without it the
