@@ -53,15 +53,27 @@ module.exports = {
   },
   window: {
     // AgentHost logs its whole turn here. Collected rather than discarded, so a
-    // test that fails can show what the agent was actually told.
-    createOutputChannel: (name) => ({
-      name,
-      lines: [],
-      appendLine(line) {
-        this.lines.push(line);
-      },
-      dispose() {},
-    }),
+    // test that fails can show what the agent was actually told — and so a test
+    // can assert that a refused agent said so somewhere a person would look.
+    channels: [],
+    createOutputChannel(name) {
+      const channel = {
+        name,
+        lines: [],
+        appendLine(line) {
+          this.lines.push(line);
+        },
+        dispose() {},
+      };
+      this.channels.push(channel);
+      return channel;
+    },
+    /** Recorded, not shown. Returns a promise because callers may await it. */
+    errors: [],
+    showErrorMessage(message) {
+      this.errors.push(message);
+      return Promise.resolve(undefined);
+    },
   },
   commands: {},
 };

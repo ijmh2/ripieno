@@ -39,7 +39,15 @@ const DEBOUNCE_MS = 1500;
 /** How much of the transcript a brand-new session is given as context. */
 const HISTORY = 25;
 
-export type AgentState = "detached" | "attaching" | "idle" | "thinking";
+/**
+ * "refused" is terminal and is not the same as "detached".
+ *
+ * The relay closes an agent connection it will not accept — a bad room token, a
+ * viewer trying to attach one — and `RelayClient` stops rather than retrying.
+ * Without a state for that the agent sat on "attaching" forever, which reads as
+ * slow rather than as refused, and the person had nothing to act on.
+ */
+export type AgentState = "detached" | "attaching" | "refused" | "idle" | "thinking";
 
 export interface AgentSpec {
   /** Unique within the room; several agents may share an owner. */
@@ -159,6 +167,19 @@ export class AgentHost implements vscode.Disposable {
   private roster: RosterEntry[] = [];
   /** This agent's id *as the room knows it*, told to us on joining. */
   private roomAgentId: string | undefined;
+  /**
+   * The last `{t:"error"}` the relay sent this connection.
+   *
+   * Kept because the refusal arrives in two parts: the relay sends the reason
+   * ("invalid or missing room token", "viewers cannot attach agents to this
+   * room") and *then* closes with 4003, whose own reason is a generic
+   * "unauthorised". Holding the last error is what lets the refusal say which
+   * of those it was, which is the difference between fixing a token and asking
+   * for a role.
+   */
+  private lastRelayError: string | undefined;
+  /** Why this agent will never attach, once the relay has said so. */
+  private refusalReason: string | undefined;
 
   constructor(private readonly opts: AgentHostOptions) {
     this.output = vscode.window.createOutputChannel(`Ripieno — ${opts.label}`);
@@ -176,11 +197,18 @@ export class AgentHost implements vscode.Disposable {
     return this.state;
   }
 
+  /** Set only while `currentState` is "refused"; the tree shows it verbatim. */
+  get refusal(): string | undefined {
+    return this.refusalReason;
+  }
+
   attach(): void {
     if (this.relay) return;
     this.setState("attaching");
     this.transcript.length = 0;
     this.fed = 0;
+    this.lastRelayError = undefined;
+    this.refusalReason = undefined;
     // A fresh attach is a fresh conversation: drop the runner so its session
     // (or message history) starts clean rather than carrying over a chat about
     // a room this agent is no longer in.
@@ -196,7 +224,26 @@ export class AgentHost implements vscode.Disposable {
       agentLabel: this.opts.label,
       token: this.opts.token,
       githubToken: this.opts.githubToken,
-      onStateChange: (s) => this.setState(s === "online" ? "idle" : "attaching"),
+      onStateChange: (s) => {
+        // A refusal is terminal, and the close that carries it also reports
+        // "offline" first. Letting that overwrite "refused" would put the agent
+        // back on "attaching…" — the exact lie this is here to stop.
+        if (this.state === "refused") return;
+        this.setState(s === "online" ? "idle" : "attaching");
+      },
+      // The relay closed this connection and will not take it back: a bad room
+      // token, an unverifiable identity, a viewer attaching an agent. The human
+      // connection in extension.ts has always shown this; the agent path threw
+      // it away, so an agent that would never attach was indistinguishable from
+      // one still trying.
+      onEvicted: (reason) => {
+        this.refusalReason = this.lastRelayError ?? reason;
+        this.log(`refused by the relay: ${this.refusalReason}`);
+        this.setState("refused");
+        void vscode.window.showErrorMessage(
+          `Ripieno: ${this.opts.label} could not attach — ${this.refusalReason}`
+        );
+      },
       onMessage: (msg) => {
         if (msg.t === "joined") {
           // The relay namespaces agent ids by owner, so ours is not something
@@ -212,6 +259,14 @@ export class AgentHost implements vscode.Disposable {
           this.consider(msg.entry);
         } else if (msg.t === "roster") {
           this.noteRoster(msg.roster);
+        } else if (msg.t === "error") {
+          // Logged, not raised as a dialog: `Room.onError` broadcasts to every
+          // connection, so a single room-wide failure would otherwise open one
+          // modal per attached agent on top of the one the person already gets.
+          // A refusal is different — it is aimed at this connection alone, and
+          // `onEvicted` above raises that.
+          this.lastRelayError = msg.message;
+          this.log(`relay error: ${msg.message}`);
         } else if (msg.t === "remoteToolReply") {
           const waiting = this.remoteCalls.get(msg.requestId);
           if (waiting) {

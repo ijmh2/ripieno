@@ -204,6 +204,7 @@ export function activate(context: vscode.ExtensionContext): void {
       id: spec.id,
       label: labelFor(spec.label),
       state: agents.get(spec.id)?.currentState ?? "detached",
+      refusal: agents.get(spec.id)?.refusal,
       folder: spec.cwd ? spec.cwd.split("/").pop() : undefined,
       model: spec.model,
       // The first agent answers anything not addressed to someone specific.
@@ -663,7 +664,17 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.window.showInformationMessage("Ripieno: join a room first.");
       return;
     }
-    if (agents.has(spec.id)) return;
+    const existing = agents.get(spec.id);
+    if (existing) {
+      // A refused agent keeps its host, because that host is what remembers why
+      // and shows it in the tree — but the host itself is finished, since
+      // RelayClient does not retry a 4003. Attaching again therefore has to
+      // build a new one; returning here would make the tree offer an action
+      // that silently does nothing.
+      if (existing.currentState !== "refused") return;
+      existing.dispose();
+      agents.delete(spec.id);
+    }
 
     // The first agent a member creates answers anything not addressed to
     // someone specific; the rest speak only when named. Exactly one primary per

@@ -33,6 +33,8 @@ export interface MyAgent {
   capability?: "workspace" | "conversation";
   /** Which provider runs it — claude-code, grok, kimi, ollama… */
   provider?: string;
+  /** Why the relay refused it, when `state` is "refused". */
+  refusal?: string;
 }
 
 type Node =
@@ -141,8 +143,13 @@ export class RoomsTreeProvider
           ? { kind: "room", code: this.room, mode: this.mode, connected: this.connected }
           : { kind: "hint", text: "Not in a room — click to join", command: "ripieno.joinRoom" }
       );
-      // Detached agents live outside the room, ready to be dragged in.
-      for (const agent of this.myAgents.filter((a) => a.state === "detached")) {
+      // Agents outside the room live here, ready to be dragged in. "Refused"
+      // belongs alongside "detached" and not only for tidiness: an agent that
+      // is neither detached nor in the roster appears *nowhere*, so a refused
+      // agent used to vanish from the tree entirely rather than say why.
+      for (const agent of this.myAgents.filter(
+        (a) => a.state === "detached" || a.state === "refused"
+      )) {
         roots.push({ kind: "myAgent", agent });
       }
       roots.push({ kind: "hint", text: "Add another agent…", command: "ripieno.addAgent" });
@@ -239,11 +246,19 @@ export class RoomsTreeProvider
 
       case "myAgent": {
         const item = new vscode.TreeItem(node.agent.label);
-        item.description = `${describeAgent(node.agent.state)}${detailSuffix(node.agent)}`;
-        item.iconPath = new vscode.ThemeIcon("robot");
+        // The relay's own words, verbatim: "invalid or missing room token" and
+        // "viewers cannot attach agents to this room" need different fixes, and
+        // a generic "could not attach" tells the person neither.
+        const refused = node.agent.state === "refused";
+        item.description = refused
+          ? `refused — ${node.agent.refusal ?? "the relay would not accept it"}`
+          : `${describeAgent(node.agent.state)}${detailSuffix(node.agent)}`;
+        item.iconPath = new vscode.ThemeIcon(refused ? "error" : "robot");
         item.contextValue = "ripienoAgentDetached";
         item.id = `detached:${node.agent.id}`;
-        item.tooltip = "Drag onto the room to attach it, or use the attach action.";
+        item.tooltip = refused
+          ? `The relay refused this agent: ${node.agent.refusal ?? "no reason given"}`
+          : "Drag onto the room to attach it, or use the attach action.";
         return item;
       }
 
@@ -319,6 +334,9 @@ function describeAgent(state: AgentState): string {
       return "detached — drag into the room";
     case "attaching":
       return "attaching…";
+    case "refused":
+      // The caller that can show the reason overrides this; this is the floor.
+      return "refused";
     case "thinking":
       return "thinking…";
     default:

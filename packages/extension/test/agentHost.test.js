@@ -270,3 +270,76 @@ describe("what an agent may do without being asked", () => {
     assert.equal(withSetting("", permissionMode), "default");
   });
 });
+
+describe("an agent the relay refuses says so", () => {
+  // The likeliest first-run failure there is. A shared relay refuses an agent
+  // connection for several ordinary reasons — a room token that is wrong or
+  // missing, an identity it cannot verify, a viewer trying to attach one — and
+  // closes with 4003, which RelayClient treats as terminal and never retries.
+  //
+  // AgentHost handled joined/entry/roster/remoteToolReply and nothing else, so
+  // every `{t:"error"}` went on the floor and `onEvicted` was never passed at
+  // all. The result was an agent that would never attach, presenting exactly
+  // like one that was still trying.
+  //
+  // A real relay, a real AgentHost and a real refusal, because the two halves
+  // arrive on different channels: the *reason* comes in an error frame and the
+  // *finality* comes in the close code, and either half alone is still a
+  // silent failure.
+  const { startServer } = require("@ripieno/relay");
+  const vscode = require("./vscode-stub.js");
+
+  test("a bad room token is reported in the relay's own words", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mpa-refused-"));
+    const relay = startServer({
+      port: 0,
+      mode: "byo",
+      host: "127.0.0.1",
+      dataDir: dir,
+      token: "the-right-token",
+    });
+    const port = await relay.whenListening();
+    cleanup.push(
+      () =>
+        new Promise((resolve) => {
+          for (const client of relay.clients) client.terminate();
+          relay.close(() => resolve());
+        })
+    );
+
+    // Distinct from every other label in this file, so the output channel this
+    // asserts on cannot be an earlier agent's.
+    const label = "Mira's auditor";
+    const seenBefore = vscode.window.errors.length;
+    // No `token`, against a relay that requires one.
+    const host = agent(
+      { url: `ws://127.0.0.1:${port}`, code: "refused" },
+      { id: "mira:auditor", label, handle: "mellery", displayName: "Mira" }
+    );
+
+    for (let i = 0; i < 40 && host.currentState !== "refused"; i++) await wait(100);
+
+    assert.equal(
+      host.currentState,
+      "refused",
+      "an agent that will never attach must not still read as attaching"
+    );
+    // The close code's own reason is a generic "unauthorised"; this text exists
+    // only in the error frame, so matching it proves that frame was read.
+    assert.ok(host.refusal, "the refusal should carry a reason");
+    assert.match(host.refusal, /invalid or missing room token/);
+
+    const channel = vscode.window.channels.find((c) => c.name === `Ripieno — ${label}`);
+    assert.ok(channel, "the agent should have an output channel");
+    assert.ok(
+      channel.lines.some((line) => /invalid or missing room token/.test(line)),
+      `the reason should be in the agent's own log, got: ${channel.lines.join(" | ")}`
+    );
+    assert.ok(
+      vscode.window.errors
+        .slice(seenBefore)
+        .some((m) => m.includes(label) && /invalid or missing room token/.test(m)),
+      "and the person should be told which agent was refused, and why"
+    );
+  });
+});
