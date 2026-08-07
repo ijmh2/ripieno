@@ -35,7 +35,7 @@ as a variable. Held, then the voices scene follows.
 
 ```
 n people.
-n agents.
+m agents.
 ```
 
 **VO:** "Everyone's building one developer with many agents. This is the other n."
@@ -48,10 +48,15 @@ would be saying the same thing twice.
 > - "Put three people behind one AI session and watch what happens."
 > - "This is the bug nobody talks about in AI pair programming."
 >
-> The `n` framing is doing real work here, so don't lose it in the alternates:
-> every competitor scales one developer across many agents. This scales the
-> other axis, and the audience is precisely the audience that reads `n` as a
-> variable rather than a typo.
+> The variable framing is doing real work here, so don't lose it in the
+> alternates: every competitor scales one developer across many agents. This
+> scales the other axis, and the audience is precisely the audience that reads
+> `n` as a variable rather than a typo.
+>
+> **Two letters, not one.** `n people, n agents` says the two are equal, and
+> they are not — a member runs a coder and a reviewer at once, which is the
+> point of half the addressing code. The same audience that reads `n` correctly
+> will read the repetition as a claim and notice it is false.
 
 ### 4–12s · The problem, concretely
 
