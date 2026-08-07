@@ -30,10 +30,15 @@ Hard cut at the end. No sign-off, no "if you liked this".
 
 ### 0–4s · Hook
 
-**Visual:** a chat panel where every message is grey and unattributed — no
-names, no colours. Scroll it slowly.
+**Visual:** black, then two lines of type, the `n` set in monospace so it reads
+as a variable. Held, then the voices scene follows.
 
-**VO:** "Your AI coding agent thinks your entire team is one person."
+```
+n people.
+n agents.
+```
+
+**VO:** "Everyone's building one developer with many agents. This is the other n."
 
 **Text:** `your agent thinks you're all one person`
 

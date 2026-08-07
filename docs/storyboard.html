@@ -100,6 +100,20 @@
   }
   h1 em { font-style: normal; color: var(--voice-a); }
   .statement { font-size: 76px; line-height: 1.15; letter-spacing: -0.03em; font-weight: 600; margin: 0; text-wrap: balance; }
+
+  /* The opening is a statement about scale, so `n` has to read as a variable
+     rather than a typo. Setting it in the mono face does that on its own —
+     and it is the same rule the rest of the film follows, where monospace is
+     the machine's voice and the sans is a person's. Here the two sit in one
+     sentence because the sentence is about both.
+     Everyone else's product is 1 person, n agents. This is the other n. */
+  .statement .n {
+    font-family: var(--mono);
+    color: var(--voice-a);
+    letter-spacing: 0;
+    font-weight: 500;
+    padding-right: 0.06em;
+  }
   .sub { font-size: 40px; line-height: 1.45; color: var(--quiet); margin: 0; max-width: 21ch; }
 
   /* --- voices ------------------------------------------------------- */
@@ -204,8 +218,8 @@
   <div class="film" id="film">
 
     <section class="scene" data-s="open">
-      <p class="statement" id="open1" style="opacity:0; transition: opacity 1100ms var(--ease)">Three people.</p>
-      <p class="statement" id="open2" style="opacity:0; transition: opacity 1100ms var(--ease); color: var(--quiet)">One agent.</p>
+      <p class="statement" id="open1" style="opacity:0; transition: opacity 1100ms var(--ease)"><span class="n">n</span> people.</p>
+      <p class="statement" id="open2" style="opacity:0; transition: opacity 1100ms var(--ease)"><span class="n">n</span> agents.</p>
     </section>
 
     <section class="scene" data-s="voices">
