@@ -69,6 +69,21 @@ file to."
 
 **Text:** `whose file? whose preference? whose machine?`
 
+### 20–28s · Bring your own
+
+**Visual:** two member rows with empty dashed slots, and a tray of agents below —
+Claude Code, Codex, Gemini, Ollama. One is picked up and arcs into `@mellery`'s
+slot; a *different* one arcs into `@swhitfield`'s. Each takes its owner's colour
+on landing.
+
+**VO:** "Everyone brings their own. Different vendors, different subscriptions,
+same room — and each one runs on its owner's machine, under their permissions."
+
+**Text:** `bring your own`
+
+> Names, not logos: accurate, and it keeps other people's trademarks out of an
+> advert. The gesture is real — you drag an agent onto the room in the tree.
+
 ### 12–18s · The turn
 
 **Visual:** the Ripieno room. Two members in the roster, each with an agent,

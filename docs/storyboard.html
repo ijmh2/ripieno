@@ -142,6 +142,62 @@
   .film.merged .who { opacity: 0; }
   .film.merged .said { color: var(--quiet); }
 
+  /* --- bring your own ------------------------------------------------
+     The one scene that animates a gesture rather than a state. Drag-and-drop
+     onto the room is a real affordance in the tree, and the providers named
+     are the ones that actually ship — text rather than logos, which is both
+     accurate and keeps other people's trademarks out of an advert.
+
+     Everything is positioned inside .byo so offsetLeft/offsetTop are measured
+     in unscaled film pixels against a common parent. Reading getBoundingClientRect
+     here would return the stage's *scaled* geometry and every flight path would
+     be wrong by the preview's zoom factor. */
+  .byo { position: relative; height: 880px; }
+
+  .slot {
+    position: absolute; left: 0; right: 0;
+    display: flex; align-items: center; gap: 26px;
+    background: var(--raised); border: 1px solid var(--line);
+    border-radius: 18px; padding: 30px 34px;
+  }
+  .slot[data-owner="a"] { top: 0; }
+  .slot[data-owner="b"] { top: 190px; }
+  .slot .owner { font-family: var(--mono); font-size: 30px; color: var(--who); white-space: nowrap; }
+  /* The target. Dashed until something lands in it, which is what makes the
+     empty state read as "put something here" rather than as a missing thing. */
+  .landing {
+    flex: 1; height: 74px;
+    border: 2px dashed var(--line); border-radius: 999px;
+    transition: border-color 500ms var(--ease), background 500ms var(--ease);
+  }
+  .slot.filled .landing { border-color: transparent; background: transparent; }
+
+  .tray {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    display: flex; flex-wrap: wrap; gap: 20px;
+  }
+  .tray-label {
+    position: absolute; left: 0; bottom: 130px;
+    font-family: var(--mono); font-size: 24px; color: var(--quiet);
+    letter-spacing: 0.14em; text-transform: uppercase;
+  }
+
+  .agent {
+    font-family: var(--mono); font-size: 27px;
+    padding: 16px 26px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--ground); color: var(--ink);
+    white-space: nowrap; position: relative;
+  }
+  /* X and Y are carried by two nested elements on different easings, which is
+     what bends a straight translate into an arc — one transform cannot ease
+     its axes independently. */
+  .agent { transition: transform 1150ms cubic-bezier(0.4, 0, 0.2, 1); }
+  .agent .lift { display: block; transition: transform 1150ms cubic-bezier(0.5, -0.35, 0.3, 1); }
+  .agent.fly { transform: translateX(var(--dx)); z-index: 3; }
+  .agent.fly .lift { transform: translateY(var(--dy)); }
+  .agent.lifted { border-color: var(--quiet); box-shadow: 0 30px 60px rgba(0, 0, 0, 0.55); }
+  .agent.landed { border-color: var(--who); color: var(--who); box-shadow: none; }
+
   /* --- room --------------------------------------------------------- */
   .room {
     background: var(--raised); border: 1px solid var(--line); border-radius: 20px;
@@ -241,6 +297,26 @@
       <p class="sub">It can't tell agreement from disagreement. Or whose machine to write the file to.</p>
     </section>
 
+    <section class="scene" data-s="byo">
+      <h1>Bring <em>your own</em>.</h1>
+      <div class="byo">
+        <div class="slot" data-owner="a" id="slot-a" style="--who: var(--voice-a)">
+          <span class="owner">@mellery</span><span class="landing"></span>
+        </div>
+        <div class="slot" data-owner="b" id="slot-b" style="--who: var(--voice-b)">
+          <span class="owner">@swhitfield</span><span class="landing"></span>
+        </div>
+        <div class="tray-label">your agents</div>
+        <div class="tray">
+          <span class="agent" id="ag-claude" style="--who: var(--voice-a)"><span class="lift">Claude&nbsp;Code</span></span>
+          <span class="agent" id="ag-codex" style="--who: var(--voice-b)"><span class="lift">Codex</span></span>
+          <span class="agent"><span class="lift">Gemini</span></span>
+          <span class="agent"><span class="lift">Ollama</span></span>
+        </div>
+      </div>
+      <p class="sub">Each on its own subscription, running on its own machine.</p>
+    </section>
+
     <section class="scene" data-s="room">
       <div class="room">
         <div class="roster">
@@ -290,7 +366,7 @@
   const stage = document.getElementById("stage");
   const scenes = Object.fromEntries([...document.querySelectorAll(".scene")].map((s) => [s.dataset.s, s]));
   const COMMAND = "git log --pretty='%<(16)%an  %s' -5";
-  const RUNTIME = 52000;
+  const RUNTIME = 60000;
 
   const show = (n) => scenes[n].classList.add("on");
   const hide = (n) => scenes[n].classList.remove("on");
@@ -316,26 +392,55 @@
   cue(14000, () => show("problem"));
   cue(19200, () => hide("problem"));
 
-  cue(20000, () => { film.classList.remove("merged"); show("room"); });
-  stagger(".scene[data-s=room] .chip", 260, 20300);
-  stagger(".scene[data-s=room] .msg", 900, 21800);
-  cue(28000, () => hide("room"));
+  // Bring your own: the gesture the tree actually supports, with two different
+  // vendors landing on two different people. Flight paths are measured on the
+  // first frame the scene is visible, because a hidden element has no layout.
+  cue(20000, () => show("byo"));
+  cue(20600, () => drag("ag-claude", "slot-a"));
+  cue(23400, () => drag("ag-codex", "slot-b"));
+  cue(27600, () => hide("byo"));
 
-  cue(29000, () => show("term"));
+  cue(28400, () => { film.classList.remove("merged"); show("room"); });
+  stagger(".scene[data-s=room] .chip", 260, 28700);
+  stagger(".scene[data-s=room] .msg", 900, 30200);
+  cue(36400, () => hide("room"));
+
+  cue(37200, () => show("term"));
   // Typed a character at a time, because watching it typed is what makes it
   // read as a real terminal rather than a picture of one.
+  const TYPE_AT = 38400;
   for (let i = 0; i <= COMMAND.length; i++) {
-    cue(30200 + i * 52, () => (document.getElementById("typed").textContent = COMMAND.slice(0, i)));
+    cue(TYPE_AT + i * 52, () => (document.getElementById("typed").textContent = COMMAND.slice(0, i)));
   }
-  cue(30200 + COMMAND.length * 52 + 900, () => document.getElementById("caret").classList.add("off"));
-  stagger(".logline", 420, 30200 + COMMAND.length * 52 + 1300);
-  cue(37200, () => film.classList.add("sweep"));
-  cue(39000, () => (document.getElementById("termline").style.opacity = 1));
-  cue(43800, () => hide("term"));
+  const TYPED = TYPE_AT + COMMAND.length * 52;
+  cue(TYPED + 900, () => document.getElementById("caret").classList.add("off"));
+  stagger(".logline", 420, TYPED + 1300);
+  cue(TYPED + 3600, () => film.classList.add("sweep"));
+  cue(TYPED + 5400, () => (document.getElementById("termline").style.opacity = 1));
+  cue(51600, () => hide("term"));
 
-  cue(44600, () => show("close"));
+  cue(52400, () => show("close"));
 
   cues.sort((a, b) => a.at - b.at);
+
+  /* Fly a tray chip into a member's empty slot.
+     offsetLeft/offsetTop rather than getBoundingClientRect: both elements sit
+     inside .byo, so these are unscaled film pixels against a common parent,
+     and the path stays correct whatever zoom the preview happens to be at. */
+  function drag(chipId, slotId) {
+    const chip = document.getElementById(chipId);
+    const slot = document.getElementById(slotId);
+    const target = slot.querySelector(".landing");
+    chip.style.setProperty("--dx", `${target.offsetLeft - chip.offsetLeft}px`);
+    chip.style.setProperty("--dy", `${target.offsetTop - chip.offsetTop}px`);
+    chip.classList.add("lifted");
+    requestAnimationFrame(() => chip.classList.add("fly"));
+    setTimeout(() => {
+      chip.classList.remove("lifted");
+      chip.classList.add("landed");
+      slot.classList.add("filled");
+    }, 1150);
+  }
 
   /* --- transport ---------------------------------------------------- */
   let t = 0, playing = false, last = 0, next = 0;
@@ -345,6 +450,12 @@
     film.classList.remove("merged", "sweep");
     document.querySelectorAll(".scene").forEach((s) => s.classList.remove("on"));
     document.querySelectorAll(".in").forEach((e) => e.classList.remove("in"));
+    document.querySelectorAll(".agent").forEach((a) => {
+      a.classList.remove("fly", "lifted", "landed");
+      a.style.removeProperty("--dx");
+      a.style.removeProperty("--dy");
+    });
+    document.querySelectorAll(".slot").forEach((s) => s.classList.remove("filled"));
     document.getElementById("typed").textContent = "";
     document.getElementById("caret").classList.remove("off");
     ["open1", "open2", "termline"].forEach((id) => (document.getElementById(id).style.opacity = 0));
