@@ -40,13 +40,18 @@ n agents.
 
 **VO:** "Everyone's building one developer with many agents. This is the other n."
 
-**Text:** `your agent thinks you're all one person`
+**Text:** none. The two lines *are* the text, and an overlay on top of them
+would be saying the same thing twice.
 
-> Three alternates, in case the first tests badly. Shoot all of them, they're
-> one line each:
-> - "Put three people behind one Claude session and watch what happens."
-> - "Everyone's building one developer with many agents. Nobody built many developers."
+> Two alternates, in case the first tests badly. Shoot both, they're one line
+> each and they run over the same visual:
+> - "Put three people behind one AI session and watch what happens."
 > - "This is the bug nobody talks about in AI pair programming."
+>
+> The `n` framing is doing real work here, so don't lose it in the alternates:
+> every competitor scales one developer across many agents. This scales the
+> other axis, and the audience is precisely the audience that reads `n` as a
+> variable rather than a typo.
 
 ### 4–12s · The problem, concretely
 
