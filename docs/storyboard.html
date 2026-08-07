@@ -148,11 +148,11 @@
      are the ones that actually ship — text rather than logos, which is both
      accurate and keeps other people's trademarks out of an advert.
 
-     Everything is positioned inside .byo so offsetLeft/offsetTop are measured
-     in unscaled film pixels against a common parent. Reading getBoundingClientRect
-     here would return the stage's *scaled* geometry and every flight path would
-     be wrong by the preview's zoom factor. */
-  .byo { position: relative; height: 880px; }
+     Flight paths are measured by walking the offsetParent chain up to .byo —
+     see offsetWithin. Both .tray and .slot are absolutely positioned, so each
+     is its own offsetParent and a single offsetLeft from either is measured
+     against a different origin. */
+  .byo { position: relative; height: 600px; }
 
   .slot {
     position: absolute; left: 0; right: 0;
@@ -177,26 +177,38 @@
     display: flex; flex-wrap: wrap; gap: 20px;
   }
   .tray-label {
-    position: absolute; left: 0; bottom: 130px;
+    position: absolute; left: 0; bottom: 116px;
     font-family: var(--mono); font-size: 24px; color: var(--quiet);
     letter-spacing: 0.14em; text-transform: uppercase;
   }
 
+  /* X and Y ride two nested elements on different easings, because one
+     transform cannot ease its axes independently and a straight translate
+     between two points reads as a slide rather than a throw.
+
+     The visible pill therefore has to live on the INNER element. The first
+     version put border, background and padding on the outer one and only the
+     text inside — so the box travelled sideways while the text flew up, and
+     the chip's own outline stayed behind in the tray, overlapping the agents
+     that had not moved. Whatever carries the paint must carry both axes. */
   .agent {
+    position: relative;
+    transition: transform 1150ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .agent .lift {
+    display: block;
     font-family: var(--mono); font-size: 27px;
     padding: 16px 26px; border-radius: 999px;
     border: 1px solid var(--line); background: var(--ground); color: var(--ink);
-    white-space: nowrap; position: relative;
+    white-space: nowrap;
+    transition: transform 1150ms cubic-bezier(0.5, -0.35, 0.3, 1),
+                border-color 500ms var(--ease), color 500ms var(--ease),
+                box-shadow 500ms var(--ease);
   }
-  /* X and Y are carried by two nested elements on different easings, which is
-     what bends a straight translate into an arc — one transform cannot ease
-     its axes independently. */
-  .agent { transition: transform 1150ms cubic-bezier(0.4, 0, 0.2, 1); }
-  .agent .lift { display: block; transition: transform 1150ms cubic-bezier(0.5, -0.35, 0.3, 1); }
   .agent.fly { transform: translateX(var(--dx)); z-index: 3; }
   .agent.fly .lift { transform: translateY(var(--dy)); }
-  .agent.lifted { border-color: var(--quiet); box-shadow: 0 30px 60px rgba(0, 0, 0, 0.55); }
-  .agent.landed { border-color: var(--who); color: var(--who); box-shadow: none; }
+  .agent.lifted .lift { border-color: var(--quiet); box-shadow: 0 30px 60px rgba(0, 0, 0, 0.55); }
+  .agent.landed .lift { border-color: var(--who); color: var(--who); box-shadow: none; }
 
   /* --- room --------------------------------------------------------- */
   .room {
@@ -423,16 +435,37 @@
 
   cues.sort((a, b) => a.at - b.at);
 
-  /* Fly a tray chip into a member's empty slot.
-     offsetLeft/offsetTop rather than getBoundingClientRect: both elements sit
-     inside .byo, so these are unscaled film pixels against a common parent,
-     and the path stays correct whatever zoom the preview happens to be at. */
+  /* Where an element sits relative to an ancestor, in unscaled film pixels.
+     offsetLeft is measured against the nearest *positioned* ancestor, and both
+     .tray and .slot are absolutely positioned — so a chip's offset is measured
+     inside the tray and a landing's inside its slot, two different origins.
+     Subtracting them compared unrelated numbers: dy came out near zero and the
+     chips slid sideways instead of arcing up. Walking the chain to a shared
+     root is what the earlier version only claimed to do.
+
+     Still not getBoundingClientRect: the stage is scaled by a CSS transform to
+     fit the preview, so client rects would be off by that zoom factor — right
+     on one screen and wrong on the next. */
+  function offsetWithin(el, root) {
+    let x = 0, y = 0;
+    for (let n = el; n && n !== root; n = n.offsetParent) {
+      x += n.offsetLeft;
+      y += n.offsetTop;
+    }
+    return { x, y };
+  }
+
+  /* Fly a tray chip into a member's empty slot. */
   function drag(chipId, slotId) {
     const chip = document.getElementById(chipId);
     const slot = document.getElementById(slotId);
     const target = slot.querySelector(".landing");
-    chip.style.setProperty("--dx", `${target.offsetLeft - chip.offsetLeft}px`);
-    chip.style.setProperty("--dy", `${target.offsetTop - chip.offsetTop}px`);
+    const root = document.querySelector(".byo");
+    const from = offsetWithin(chip, root);
+    const to = offsetWithin(target, root);
+    // Land centred on the slot rather than flush to its left edge.
+    chip.style.setProperty("--dx", `${to.x - from.x + (target.offsetWidth - chip.offsetWidth) / 2}px`);
+    chip.style.setProperty("--dy", `${to.y - from.y + (target.offsetHeight - chip.offsetHeight) / 2}px`);
     chip.classList.add("lifted");
     requestAnimationFrame(() => chip.classList.add("fly"));
     setTimeout(() => {
