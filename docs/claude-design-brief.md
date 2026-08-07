@@ -24,6 +24,38 @@ happened to run it.
 The name: in a concerto grosso, the *ripieno* is the full ensemble, as against
 the soloists — several parts sounding together, each still its own line.
 
+### What it actually is, in front of you
+
+Picture a chat panel docked in the sidebar of your code editor, and beside it a
+small tree listing who is in the room and which agents belong to whom. You type
+a question into the panel. Everyone else in the room sees it, and so does every
+agent — each of which belongs to a specific person and runs on that person's own
+machine. One agent per member answers. Every line in that panel is colour-coded
+by who said it, and an agent's reply is labelled with the agent's name, not its
+owner's, so "Sam's reviewer thinks X" is never mistaken for "Sam thinks X".
+
+The part that makes it more than a group chat is what happens when an agent
+needs to touch a file. It cannot reach across the network to somebody else's
+disk, so the request travels: the agent asks the relay, the relay routes it to
+the machine that owns the file, and that person gets a diff to approve before
+anything is written. The work happens on their computer, under their
+permissions, with their sign-off — and the room's log records which agent asked.
+
+### Why it exists
+
+Every other tool in this space scales **one developer across many agents**. VS
+Code, Cursor, Copilot and Claude Code all move that axis. Nobody moved the other
+one. The naive way to put a team on an agent is a shared login, and that gives
+the agent a single anonymous view of a group of people: it cannot tell agreement
+from disagreement, cannot know whose preferences to honour, and has no idea
+whose filesystem the next write should land on. Three people behind one session
+produce a transcript that reads like one very confused user.
+
+So the fix is that authorship stops being something a client asserts and becomes
+structure the server maintains. That is the whole product in a sentence, and the
+`git log` shot at the end is the proof: if attribution were decorative, that
+column would hold one name.
+
 Facts you may use:
 
 - **Each person brings their own agent**, on their own subscription, on their own
