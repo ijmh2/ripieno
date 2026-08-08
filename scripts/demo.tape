@@ -35,7 +35,10 @@ Set Framerate 60
 Set Theme { "background": "#0F1115", "foreground": "#E6E3DD", "cursor": "#7EE787", "black": "#0F1115", "white": "#E6E3DD" }
 
 Hide
-Type "cd ~/code/multiplayer-agent && clear" Enter
+# No `cd`: vhs inherits the shell's working directory, so running this from the
+# repository root is enough. The earlier version hard-coded an absolute path,
+# which worked on exactly one machine and published its username.
+Type "clear" Enter
 Sleep 1s
 Show
 
