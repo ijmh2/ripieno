@@ -133,15 +133,30 @@ verify identities rather than believing the handle a client sends.
 
 ## Bring your own agent
 
-Each member attaches their own agent, on their own subscription, running on their
-own machine. Supported out of the box: **Claude Code** (full workspace access),
-any **OpenAI-compatible** endpoint (Grok, Kimi, DeepSeek, Together, Groq, a local
-Ollama), and arbitrary **CLI** agents.
+Each member attaches their own agent, running on their own machine, and pays for
+it however they already do. There is no per-seat cost here and nothing to sign
+up for — the room does not resell anyone's inference.
 
-Capability differs and the room says so rather than implying otherwise: a Claude
-Code agent can read and write files and run commands; a chat-API agent can only
-talk. Presenting both as "an agent" without distinction would let somebody ask
-Grok to fix a file and get a confident answer while nothing happened.
+| You have | Attach | Cost | Can touch files |
+|---|---|---|---|
+| A **Claude Code** subscription | Claude Code | already paid for | **yes** |
+| A **ChatGPT** or **Google** plan | Codex or Gemini CLI | already paid for | **yes** |
+| An **API key** | any OpenAI-compatible endpoint — Grok, Kimi, DeepSeek, Together, Groq | per token, billed by them | no |
+| A **GPU and no budget** | a local **Ollama** model | free | no |
+| Something else entirely | any CLI agent, with its own flags | yours | **yes** |
+
+Two people in one room need not have made the same choice, which is the point:
+a subscription and an API key sit side by side and neither knows about the other.
+
+That last column is not a footnote. Capability differs and the room says so
+rather than implying otherwise: a Claude Code agent reads and writes files and
+runs commands; an API-key agent can only talk. Presenting both as "an agent"
+without distinction would let somebody ask Grok to fix a file and get a
+confident answer while nothing happened.
+
+The API-key path is tested against a mock endpoint — request shape, auth,
+history, token accounting and each failure mode — but has not been run against
+a live provider, so treat vendor quirks as unproven.
 
 Usage is per agent, and in BYO it is **turns and tokens, never a price**. Claude
 Code reports a dollar figure on a subscription too, where it is what those
@@ -155,11 +170,29 @@ and fill in `RIPIENO_ROOM` / `RIPIENO_HANDLE` / `RIPIENO_NAME`. That path gets t
 
 ## The shared workspace
 
-An agent normally works in its owner's own directory. Point it at **the room's
-workspace** instead and it acts on whichever machine is hosting — another
-member's, or a container. Writes raise a diff on the host's machine naming the
-agent that asked, and land in the room's action log so other agents can see what
-has already been done rather than redoing it.
+An agent normally works in its owner's own directory, and two members' copies of
+a project may genuinely differ — which is useful, and is why an agent can read
+the same file from two machines and tell you what changed.
+
+Point an agent at **the room's workspace** instead and something different
+happens: it acts on whichever machine is hosting, and so does everyone else's.
+
+**One filesystem, not many copies.** There is nothing to replicate and nothing to
+merge, because there is only ever one of it. Mount it in your own explorer and
+you get a live read-only view of the host's actual disk, fetched on demand rather
+than copied to yours.
+
+**Current within half a second.** The host watches its workspace and publishes
+every change to the room, debounced at 400ms and ignoring the churn nobody
+browses — `node_modules`, `.git`, build output. The relay checks the sender
+really is the host before rebroadcasting, so a member cannot invalidate everyone
+else's view of a workspace that is not theirs. Every member drops the stale paths
+and re-reads on next access.
+
+**Writes stop at a person.** An agent's write raises a diff on the host's machine
+naming the agent that asked, and nothing lands until they accept. It then appears
+in the room's action log, so other agents can see what has been done instead of
+redoing it.
 
 The container (`packages/workspace-host`) is the version that outlives everyone:
 it clones a git repository, serves the same tool calls, and commits each write as
