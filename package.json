@@ -23,6 +23,7 @@
     "build:workspace": "npm run build -w @ripieno/protocol && npm run build -w @ripieno/relay-client && npm run build -w @ripieno/workspace-core && npm run build -w @ripieno/workspace-host",
     "start:workspace": "node packages/workspace-host/dist/src/index.js",
     "demo:provenance": "npm run build:workspace --silent && node scripts/demo-provenance.js",
+    "screenshots": "node scripts/screenshots.js",
     "package": "npm run build && npm run package -w ripieno"
   },
   "engines": {

@@ -10,6 +10,19 @@ bringing their own agent** on their own subscription, from **any vendor**.
 Everything is attributed to a named actor: a specific agent belonging to a
 specific person, rather than whoever's machine happened to run it.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/room-dark.png" />
+    <img src="docs/images/room-light.png" alt="The room panel: three people in different colours, an agent reply citing files from two different members' workspaces, an action log naming which agent did what on whose machine, and an approval card asking permission to run a command." width="420" />
+  </picture>
+</p>
+
+Three people, three agents, one conversation. Note the last two blocks: the
+**action log** records that Mira's coder wrote to `room.ts` *on @mellery* while
+Kate's agent read a file *on @swhitfield* — the machine is part of the record,
+not an assumption. And the **approval card** is how a write reaches somebody
+else's disk at all: it does not, until they say so.
+
 The naive version of this is a shared login, which gives the agent one anonymous
 view of a team: it cannot tell agreement from disagreement, whose preferences to
 honour, or whose filesystem the next write lands on. Here every message the agent
@@ -24,6 +37,10 @@ run none at all — solo mode needs no relay, no account and no token. See
 
 Two agents belonging to two different people can write to the same repository
 concurrently, and `git log` names each of them correctly:
+
+<p align="center">
+  <img src="docs/images/provenance.gif" alt="Running npm run demo:provenance: three agents write to one repository concurrently, and git log's author column holds three different names." width="620" />
+</p>
 
 ```
 $ npm run demo:provenance
