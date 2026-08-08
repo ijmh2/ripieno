@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "description": "A shared AI agent room \u2014 one conversation, multiple people, one agent that knows who said what.",
+  "author": "Ivan Hart (@ijmh2)",
   "workspaces": [
     "packages/protocol",
     "packages/relay-client",

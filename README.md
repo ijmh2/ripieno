@@ -265,3 +265,12 @@ CLI provider had been quietly running Claude Code instead.
   relay counts, per agent, how many times that agent has spoken since a human
   last did; nothing in a message influences the number, so with N agents the
   worst case is 2N messages whatever they say to each other.
+
+---
+
+Built by **Ivan Hart** ([@ijmh2](https://github.com/ijmh2)). MIT licensed.
+
+The names in the tests and screenshots — Mira Ellery, Sam Whitfield, Kate
+Nakamura, Alex — are fictional. Addressing is decided by matching a first name
+against a role word against an `@handle`, and those three have to stay distinct
+for the tests to mean anything, so the fixtures use people who do not exist.

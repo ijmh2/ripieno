@@ -2,6 +2,7 @@
   "name": "ripieno",
   "displayName": "Ripieno",
   "description": "A self-hosted shared workspace where several people and several AI agents work on one codebase, each attributable.",
+  "author": "Ivan Hart (@ijmh2)",
   "version": "0.0.1",
   "publisher": "ijmh2",
   "license": "MIT",
