@@ -22,9 +22,16 @@ Set Shell "bash"
 # wrapped, and the column alignment that is the entire point of the shot went
 # with it. Menlo ships with every macOS; the rest cover Linux and Windows.
 Set FontFamily "JetBrains Mono,Menlo,DejaVu Sans Mono,Consolas,monospace"
-Set FontSize 26
-Set Width 1000
-Set Height 400
+# 1200x560 is 2.14:1 — inside LinkedIn's 2.4:1 ceiling, which the earlier
+# 1000x400 (2.5:1) was not, so it was rejected or letterboxed on upload. The
+# width is set by the longest log line, not by the aspect: at 1080 the README
+# subject wrapped onto a second row and took the column alignment — the one
+# thing the shot exists for — with it. Still
+# a tight block that sits mid-frame in a 9:16 canvas for vertical platforms, so
+# one render serves both rather than maintaining two.
+Set FontSize 30
+Set Width 1200
+Set Height 560
 Set Padding 40
 Set TypingSpeed 60ms
 Set Framerate 60
