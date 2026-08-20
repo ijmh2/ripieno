@@ -13,7 +13,7 @@ specific person, rather than whoever's machine happened to run it.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/room-dark.png" />
-    <img src="docs/images/room-light.png" alt="The room panel: three people in different colours, an agent reply citing files from two different members' workspaces, an action log naming which agent did what on whose machine, and an approval card asking permission to run a command." width="420" />
+    <img src="docs/images/room-light.png" alt="The room panel: three people in different colours, an agent reply citing files from two different members' workspaces, an action log naming which agent did what on whose machine, and an approval card asking permission to run a command." width="320" />
   </picture>
 </p>
 
@@ -69,7 +69,7 @@ Honest, because an unknown repository has no other way to earn it.
 | **Built and tested, never deployed** | The shared-workspace container (`packages/workspace-host`) — 43 tests including real git integration, and it has never run anywhere but a test |
 | **Not shipped** | Hosted mode. Built against the same driver interface, compiles, unit tests pass — and it has never run against a live Managed Agents session, so it is not shipped and not described here as a feature |
 
-There are 357 tests (`npm test`) across the five packages that have them
+There are 368 tests (`npm test`) across the five packages that have them
 (`relay-client` and `mcp` do not), and six exploitable defects found by an
 adversarial audit have been fixed, each with a regression test written from the
 exploit.

@@ -54,29 +54,36 @@
     --vscode-inputValidation-warningForeground: #7a6a00;
   }
 </style>
-<link rel="stylesheet" href="../media/main.css" />
+<link rel="stylesheet" href="../media/main.css?v=4" />
 </head>
 <body>
-<!-- Markup below is copied verbatim from roomView.ts so the preview exercises
-     the real stylesheet and the real script, not a mockup. -->
-<div id="header" class="header">
-  <div id="roomLabel" class="room-label">Not connected</div>
-  <div id="roster" class="roster"></div>
-  <div id="statusPill" class="status-pill idle">idle</div>
+<!-- Markup below mirrors roomView.ts so this exercises the shipped webview. -->
+<header id="header" class="header">
+  <div class="room-meta">
+    <div id="roomLabel" class="room-label">Not connected</div>
+    <span id="modeBadge" class="mode-badge" hidden></span>
+  </div>
+  <div id="statusPill" class="status-pill idle" role="status" aria-live="polite">idle</div>
+  <div id="roster" class="roster" role="list" aria-label="People in this room"></div>
+</header>
+<div class="transcript-wrap">
+  <div id="transcript" class="transcript" role="log" aria-live="polite" aria-label="Room conversation"></div>
+  <button id="jumpLatest" class="jump-latest" type="button" hidden>Latest <span aria-hidden="true">↓</span></button>
 </div>
-<div id="transcript" class="transcript" role="log" aria-live="polite"></div>
 <details id="actions" class="actions" hidden>
   <summary id="actionsSummary" class="actions-summary">Work</summary>
   <div id="actionsList" class="actions-list"></div>
 </details>
+<div id="approvalStack" class="approval-stack" aria-live="assertive"></div>
 <div id="composerBar" class="composer-bar">
-  <textarea id="composer" class="composer" rows="1" placeholder="Message the room…"></textarea>
+  <div id="mentions" class="mentions" role="listbox" aria-label="Message suggestions" hidden></div>
+  <textarea id="composer" class="composer" rows="1" aria-label="Message the room" aria-controls="mentions" aria-expanded="false" aria-autocomplete="list" placeholder="Message the room…"></textarea>
   <button id="sendButton" class="send-button" type="button">Send</button>
 </div>
 
 <script>
-  document.documentElement.dataset.theme =
-    new URLSearchParams(location.search).get("theme") === "light" ? "light" : "dark";
+  const params = new URLSearchParams(location.search);
+  document.documentElement.dataset.theme = params.get("theme") === "light" ? "light" : "dark";
 
   // Stand in for the VS Code webview bridge.
   window.acquireVsCodeApi = () => ({
@@ -85,7 +92,7 @@
     setState: () => undefined,
   });
 </script>
-<script src="../media/main.js"></script>
+<script src="../media/main.js?v=4"></script>
 <script>
   const t = (n) => Date.now() - n * 60000;
 
@@ -95,10 +102,15 @@
     status: "thinking",
     waitingOn: undefined,
     room: "tgtbt-review",
+    mode: "byo",
+    you: { handle: "mellery", displayName: "Mira", present: true, color: 5, role: "owner",
+      agents: [{ id: "i:coder", owner: "mellery", label: "Mira's coder", state: "thinking" }] },
     roster: [
-      { handle: "mellery", displayName: "Mira", present: true, color: 5, agentAttached: true },
-      { handle: "swhitfield", displayName: "Sam Whitfield", present: true, color: 0 },
-      { handle: "kate", displayName: "Kate Nakamura", present: false, color: 3 },
+      { handle: "mellery", displayName: "Mira", present: true, color: 5, role: "owner",
+        agents: [{ id: "i:coder", owner: "mellery", label: "Mira's coder", state: "thinking" }] },
+      { handle: "swhitfield", displayName: "Sam Whitfield", present: true, color: 0, role: "member", agents: [] },
+      { handle: "kate", displayName: "Kate Nakamura", present: false, color: 3, role: "member",
+        agents: [{ id: "k:1", owner: "kate", label: "Kate's agent", state: "idle" }] },
     ],
     transcript: [
       { id: "s1", kind: "system", authorHandle: "system", authorName: "system",
@@ -131,29 +143,33 @@
       { id: "x3", agentId: "k:1", agentLabel: "Kate's agent", targetHandle: "swhitfield",
         verb: "read", target: "results/latest.json", ok: true, ts: Date.now() },
     ],
+    approvals: [{
+      id: "ap_preview",
+      agentLabel: "Mira Ellery's agent",
+      toolName: "Bash",
+      summary: 'command: npm test -- --runInBand\n(plus description)',
+    }],
     liveDeltas: [["a3", "Good catch, Kate. Re-running Sam's with Mira's resampling and an explicit half-day mask"]],
   };
 
+  if (params.get("viewer") === "1") {
+    snapshot.you.role = "viewer";
+    snapshot.roster[0].role = "viewer";
+  }
+
+  document.getElementById("actions").open = params.get("work") === "1";
   window.dispatchEvent(new MessageEvent("message", { data: snapshot }));
 
-  document.getElementById("actions").open = true;
-
-  // Render a permission request so the inline approval card can be reviewed
-  // without needing an agent to actually ask for something.
-  window.dispatchEvent(
-    new MessageEvent("message", {
-      data: {
-        type: "approval",
-        id: "ap_preview",
-        agentLabel: "Mira Ellery's agent",
-        toolName: "Bash",
-        summary: 'command: npm test -- --runInBand\n(plus description)',
-      },
-    })
-  );
+  if (params.get("final") === "1") {
+    window.dispatchEvent(new MessageEvent("message", { data: {
+      type: "entry",
+      entry: { id: "a3", kind: "agent", authorHandle: "mellery", authorName: "Mira's coder",
+        text: "Re-run complete with the half-day mask. Sharpe: **1.39**.", ts: Date.now() }
+    }}));
+  }
 
   // ?diag=1 — measure what is overflowing, instead of guessing at it.
-  if (new URLSearchParams(location.search).get("diag") === "1") {
+  if (params.get("diag") === "1") {
     setTimeout(() => {
       const rows = [];
       const push = (name, el) =>

@@ -45,27 +45,49 @@ body {
 /* -------------------------------------------------------------- */
 
 .header {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--ripieno-gap);
+  gap: 6px var(--ripieno-gap);
   padding: 8px 10px;
   border-bottom: 1px solid var(--vscode-panel-border);
   flex-shrink: 0;
-  flex-wrap: wrap;
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+
+.room-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .room-label {
   font-weight: 600;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.mode-badge {
+  flex: 0 0 auto;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 999px;
+  padding: 1px 5px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .roster {
+  grid-column: 1 / -1;
   display: flex;
   gap: 4px;
-  flex-wrap: wrap;
-  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .chip {
@@ -77,7 +99,9 @@ body {
   justify-content: center;
   font-size: 10px;
   font-weight: 700;
-  color: #fff;
+  color: var(--vscode-foreground);
+  background: hsl(var(--ripieno-hue) 70% 50% / 0.16);
+  border: 1px solid hsl(var(--ripieno-hue) 70% 50%);
   position: relative;
   flex-shrink: 0;
 }
@@ -85,6 +109,15 @@ body {
 .chip.absent {
   opacity: 0.35;
   filter: grayscale(0.6);
+}
+
+.chip.roster-overflow {
+  width: auto;
+  min-width: 22px;
+  padding-inline: 4px;
+  border-color: var(--vscode-panel-border);
+  background: var(--vscode-editorWidget-background, transparent);
+  color: var(--vscode-descriptionForeground);
 }
 
 .chip .dot {
@@ -98,7 +131,27 @@ body {
   border: 1.5px solid var(--vscode-editor-background);
 }
 
+.chip .agent-badge {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  min-width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  padding: 0 2px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-foreground);
+  font-size: 7px;
+  line-height: 1;
+}
+
 .status-pill {
+  max-width: min(46vw, 170px);
+  overflow: hidden;
+  text-overflow: ellipsis;
   border-radius: 999px;
   padding: 2px 10px;
   font-size: 11px;
@@ -106,6 +159,10 @@ body {
   white-space: nowrap;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
+}
+
+.status-pill[hidden] {
+  display: none;
 }
 
 .status-pill.thinking {
@@ -137,12 +194,35 @@ body {
 /* -------------------------------------------------------------- */
 
 .transcript {
-  flex: 1;
+  height: 100%;
   overflow-y: auto;
   padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.transcript-wrap {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.jump-latest {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 4;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 999px;
+  padding: 4px 9px;
+  box-shadow: 0 3px 10px rgb(0 0 0 / 24%);
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
 }
 
 .row {
@@ -193,21 +273,40 @@ body {
 }
 
 .row.agent .bubble.owned .author {
-  color: hsl(var(--ripieno-hue) 75% 45%);
+  color: var(--vscode-foreground);
+}
+
+.author-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 2px;
 }
 
 .author {
   font-size: 11px;
   font-weight: 700;
-  margin-bottom: 2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .row.human .author {
-  color: hsl(var(--ripieno-hue) 75% 45%);
+  color: var(--vscode-foreground);
 }
 
 .row.agent .author {
   color: var(--vscode-descriptionForeground);
+}
+
+.timestamp {
+  margin-left: auto;
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
+  font-weight: 400;
+  white-space: nowrap;
 }
 
 .text {
@@ -273,6 +372,7 @@ body {
 
 .composer {
   flex: 1;
+  min-width: 0;
   resize: none;
   max-height: 160px;
   min-height: 28px;
@@ -310,6 +410,15 @@ body {
   background: var(--vscode-button-hoverBackground);
 }
 
+.send-button:focus-visible,
+.approval-button:focus-visible,
+.mention:focus-visible,
+.jump-latest:focus-visible,
+.actions-summary:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
 .send-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -327,6 +436,15 @@ body {
   color: var(--vscode-descriptionForeground);
   font-size: 12px;
   padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  line-height: 1.45;
+}
+
+.empty-state strong {
+  color: var(--vscode-foreground);
+  font-size: 13px;
 }
 
 /* -------------------------------------------------------------- */
@@ -335,6 +453,17 @@ body {
 
 /* Sits directly above the composer: close to where attention already is,
    without covering the conversation that explains why the agent is asking. */
+.approval-stack {
+  flex: 0 1 auto;
+  max-height: min(38vh, 220px);
+  overflow-y: auto;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+}
+
+.approval-stack:empty {
+  display: none;
+}
+
 .approval {
   border-top: 1px solid var(--vscode-panel-border);
   /* A warning *edge*, not a warning fill. The solid validation background is
@@ -407,8 +536,8 @@ body {
    material you consult, not a feed you read. */
 .actions {
   border-top: 1px solid var(--vscode-panel-border);
-  flex-shrink: 0;
-  max-height: 40vh;
+  flex: 0 1 auto;
+  max-height: min(32vh, 180px);
   overflow: auto;
 }
 
@@ -429,11 +558,36 @@ body {
 }
 
 .action-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 5px;
   font-size: 11px;
+  line-height: 1.35;
+  padding: 3px 0;
+}
+
+.action-result {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--vscode-testing-iconPassed, #3fb950);
+  color: var(--vscode-editor-background);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.action-row.failed .action-result {
+  background: var(--vscode-testing-iconFailed, var(--vscode-inputValidation-errorForeground, #f48771));
+}
+
+.action-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--vscode-editor-font-family, monospace);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .action-row.failed .action-detail {
@@ -447,6 +601,12 @@ body {
 .action-detail,
 .action-where {
   color: var(--vscode-descriptionForeground);
+}
+
+.action-time {
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
+  white-space: nowrap;
 }
 
 /* ------------------------------------------------------------------ */
@@ -506,7 +666,9 @@ body {
   place-items: center;
   font-size: 10px;
   font-weight: 600;
-  color: #fff;
+  color: var(--vscode-foreground);
+  background: hsl(var(--ripieno-hue) 70% 50% / 0.16);
+  border: 1px solid hsl(var(--ripieno-hue) 70% 50%);
 }
 
 .mention-name {
@@ -523,4 +685,70 @@ body {
   opacity: 0.65;
   font-size: 0.85em;
   white-space: nowrap;
+}
+
+@media (max-width: 300px) {
+  .header {
+    padding: 7px 8px;
+  }
+
+  .transcript {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .row.human .bubble {
+    max-width: 96%;
+  }
+
+  .approval {
+    padding: 7px 8px;
+  }
+
+  .approval-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .approval-button:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .approval-button {
+    padding-inline: 7px;
+  }
+
+  .actions-list {
+    padding-inline: 8px;
+  }
+
+  .mention-detail {
+    display: none;
+  }
+}
+
+@media (max-height: 480px) {
+  .approval-stack {
+    max-height: 38vh;
+  }
+
+  .actions {
+    max-height: 22vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-pill.thinking,
+  .caret {
+    animation: none;
+  }
+}
+
+.vscode-high-contrast .bubble,
+.vscode-high-contrast-light .bubble,
+.vscode-high-contrast .approval,
+.vscode-high-contrast-light .approval,
+.vscode-high-contrast .chip,
+.vscode-high-contrast-light .chip {
+  border-color: var(--vscode-contrastBorder, currentColor);
 }

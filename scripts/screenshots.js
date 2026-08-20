@@ -51,8 +51,8 @@ if (!chrome) {
 
 mkdirSync(out, { recursive: true });
 
-// 480 wide is a realistic sidebar; the panel is built for that column and
-// screenshotting it at desktop width would show a layout nobody ever sees.
+// 320 wide is representative of the secondary sidebars used by VS Code forks;
+// wider screenshots hide the exact wrapping and stacking this UI must survive.
 for (const theme of ["dark", "light"]) {
   const file = path.join(out, `room-${theme}.png`);
   execFileSync(
@@ -61,7 +61,7 @@ for (const theme of ["dark", "light"]) {
       "--headless=new",
       "--disable-gpu",
       "--hide-scrollbars",
-      "--window-size=480,940",
+      "--window-size=320,820",
       "--virtual-time-budget=4000",
       `--screenshot=${file}`,
       `file://${preview}?theme=${theme}`,

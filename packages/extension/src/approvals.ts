@@ -9,6 +9,7 @@
 import * as vscode from "vscode";
 import { randomBytes } from "crypto";
 import { WebSocketServer, type WebSocket } from "ws";
+import { approvalInputHash } from "./approvalScope";
 
 interface Request {
   id: string;
@@ -97,7 +98,10 @@ export class ApprovalBridge implements vscode.Disposable {
   }
 
   private async decide(request: Request): Promise<{ allow: boolean; message?: string }> {
-    const key = `${request.agentId}:${request.toolName}:${summarise(request.input)}`;
+    // Standing approvals are a trust boundary, so identity must come from the
+    // full request rather than the truncated, human-readable summary. Two long
+    // commands with the same first 600 characters must never share consent.
+    const key = `${request.agentId}:${request.toolName}:${approvalInputHash(request.input)}`;
     if (this.standing.has(key)) {
       return { allow: true };
     }

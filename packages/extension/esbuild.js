@@ -12,7 +12,7 @@ async function main() {
     // agentHost is emitted separately so the turn it builds can be tested
     // against a real relay and a real subprocess, rather than by opening two
     // editor windows and reading the output channel.
-    entryPoints: ["src/extension.ts", "src/permissionServer.ts", "src/workspaceFs.ts", "src/workspaceServer.ts", "src/addressing.ts", "src/soloRelay.ts", "src/invite.ts", "src/agentHost.ts", "src/runners.ts"],
+    entryPoints: ["src/extension.ts", "src/permissionServer.ts", "src/workspaceFs.ts", "src/workspaceServer.ts", "src/addressing.ts", "src/soloRelay.ts", "src/invite.ts", "src/agentHost.ts", "src/runners.ts", "src/approvalScope.ts"],
     bundle: true,
     format: "cjs",
     platform: "node",

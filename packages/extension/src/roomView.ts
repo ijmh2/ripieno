@@ -26,6 +26,13 @@ interface RoomState {
   connection: ConnectionState;
 }
 
+interface PendingApproval {
+  id: string;
+  agentLabel: string;
+  toolName: string;
+  summary: string;
+}
+
 function emptyState(connection: ConnectionState): RoomState {
   return { roster: [], transcript: [], actions: [], liveDeltas: new Map(), status: "idle", connection };
 }
@@ -45,12 +52,13 @@ type ToWebview =
       status: RoomStatus;
       waitingOn?: string;
       connection: ConnectionState;
+      approvals: PendingApproval[];
     }
   | { type: "entry"; entry: TranscriptEntry }
   | { type: "action"; entry: ActionEntry }
   | { type: "delta"; entryId: string; text: string }
   | { type: "deltaCancel"; entryId: string }
-  | { type: "roster"; roster: RosterEntry[] }
+  | { type: "roster"; roster: RosterEntry[]; you?: RosterEntry }
   | { type: "status"; status: RoomStatus; waitingOn?: string }
   | { type: "connection"; state: ConnectionState }
   | {
@@ -73,7 +81,10 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private state: RoomState = emptyState("offline");
   /** Approval cards awaiting an answer from the webview. */
-  private readonly pendingApprovals = new Map<string, (choice: ApprovalChoice) => void>();
+  private readonly pendingApprovals = new Map<
+    string,
+    { request: PendingApproval; resolve: (choice: ApprovalChoice | undefined) => void }
+  >();
   private nextApprovalId = 0;
 
   constructor(
@@ -95,7 +106,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       } else if (msg.type === "send") {
         this.onComposerSend(msg.text);
       } else if (msg.type === "approvalVerdict") {
-        this.pendingApprovals.get(msg.id)?.(msg.choice);
+        this.pendingApprovals.get(msg.id)?.resolve(msg.choice);
         this.pendingApprovals.delete(msg.id);
       }
     });
@@ -104,6 +115,13 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       if (webviewView.visible) {
         this.postSnapshot();
       }
+    });
+
+    webviewView.onDidDispose(() => {
+      if (this.view === webviewView) {
+        this.view = undefined;
+      }
+      this.resolvePendingApprovals();
     });
   }
 
@@ -142,7 +160,9 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
 
   setRoster(roster: RosterEntry[]): void {
     this.state.roster = roster;
-    this.post({ type: "roster", roster });
+    const youHandle = this.state.you?.handle;
+    this.state.you = youHandle ? roster.find((member) => member.handle === youHandle) : undefined;
+    this.post({ type: "roster", roster, you: this.state.you });
   }
 
   addEntry(entry: TranscriptEntry): void {
@@ -189,13 +209,21 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     toolName: string;
     summary: string;
   }): Promise<ApprovalChoice | undefined> {
-    if (!this.view?.visible) {
+    const view = this.view;
+    if (!view?.visible) {
       return Promise.resolve(undefined);
     }
     const id = `ap_${this.nextApprovalId++}`;
+    const pending: PendingApproval = { id, ...request };
     return new Promise<ApprovalChoice | undefined>((resolve) => {
-      this.pendingApprovals.set(id, resolve);
-      this.post({ type: "approval", id, ...request });
+      this.pendingApprovals.set(id, { request: pending, resolve });
+      void view.webview.postMessage({ type: "approval", ...pending }).then((delivered) => {
+        const current = this.pendingApprovals.get(id);
+        if (!delivered && current) {
+          this.pendingApprovals.delete(id);
+          current.resolve(undefined);
+        }
+      });
       // If the view is hidden or reloaded before an answer arrives, the card is
       // gone; give up so the modal can take over instead of stalling.
       const check = setInterval(() => {
@@ -212,8 +240,16 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
 
   /** Called on ripieno.leaveRoom: clears the transcript and returns to idle. */
   reset(): void {
-    this.state = emptyState(this.state.connection);
+    this.resolvePendingApprovals();
+    this.state = emptyState("offline");
     this.postSnapshot();
+  }
+
+  private resolvePendingApprovals(): void {
+    for (const pending of this.pendingApprovals.values()) {
+      pending.resolve(undefined);
+    }
+    this.pendingApprovals.clear();
   }
 
   private post(msg: ToWebview): void {
@@ -233,6 +269,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       status: this.state.status,
       waitingOn: this.state.waitingOn,
       connection: this.state.connection,
+      approvals: [...this.pendingApprovals.values()].map(({ request }) => request),
     });
   }
 
@@ -265,19 +302,26 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
 <title>Ripieno</title>
 </head>
 <body>
-<div id="header" class="header">
-  <div id="roomLabel" class="room-label">Not connected</div>
-  <div id="roster" class="roster"></div>
-  <div id="statusPill" class="status-pill idle">idle</div>
+<header id="header" class="header">
+  <div class="room-meta">
+    <div id="roomLabel" class="room-label">Not connected</div>
+    <span id="modeBadge" class="mode-badge" hidden></span>
+  </div>
+  <div id="statusPill" class="status-pill idle" role="status" aria-live="polite">idle</div>
+  <div id="roster" class="roster" role="list" aria-label="People in this room"></div>
+</header>
+<div class="transcript-wrap">
+  <div id="transcript" class="transcript" role="log" aria-live="polite" aria-label="Room conversation"></div>
+  <button id="jumpLatest" class="jump-latest" type="button" hidden>Latest <span aria-hidden="true">↓</span></button>
 </div>
-<div id="transcript" class="transcript" role="log" aria-live="polite"></div>
 <details id="actions" class="actions" hidden>
   <summary id="actionsSummary" class="actions-summary">Work</summary>
   <div id="actionsList" class="actions-list"></div>
 </details>
+<div id="approvalStack" class="approval-stack" aria-live="assertive"></div>
 <div id="composerBar" class="composer-bar">
-  <div id="mentions" class="mentions" hidden></div>
-  <textarea id="composer" class="composer" rows="1" placeholder="Message the room… (@ to address someone)"></textarea>
+  <div id="mentions" class="mentions" role="listbox" aria-label="Message suggestions" hidden></div>
+  <textarea id="composer" class="composer" rows="1" aria-label="Message the room" aria-controls="mentions" aria-expanded="false" aria-autocomplete="list" placeholder="Message the room…"></textarea>
   <button id="sendButton" class="send-button" type="button">Send</button>
 </div>
 <script nonce="${csp}" src="${scriptUri}"></script>

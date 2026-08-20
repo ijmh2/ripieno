@@ -16,27 +16,28 @@
   .panes { display: flex; gap: 24px; flex-wrap: wrap; }
   .pane { display: flex; flex-direction: column; gap: 8px; }
   .label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #8b919b; }
-  /* Sidebar width: the room lives in a VS Code view container, not a full editor tab. */
-  iframe { width: 420px; height: 640px; border: 1px solid #2b2f36; border-radius: 8px; }
+  /* Real VS Code forks commonly give secondary sidebars 260–360px. */
+  iframe { height: 700px; border: 1px solid #2b2f36; border-radius: 8px; }
+  iframe.narrow { width: 300px; }
+  iframe.comfortable { width: 360px; }
 </style>
 </head>
 <body>
 <h1>Room webview — rendered</h1>
 <p class="note">
   The real <code>media/main.css</code> and <code>media/main.js</code>, with the same markup
-  <code>roomView.ts</code> emits and VS Code's theme variables supplied by the harness. Sized to
-  the sidebar width the view actually gets. Human messages carry their author's hue as a tint plus
-  a full-strength left bar; the agent is full-width and neutral so it reads as the room's shared
-  voice. The last bubble is mid-stream — note the caret.
+  <code>roomView.ts</code> emits and VS Code's theme variables supplied by the harness. These fixtures
+  use fork-realistic 300px and 360px sidebars rather than a desktop-width mock. The last bubble is
+  mid-stream and the approval queue is visible.
 </p>
 <div class="panes">
   <div class="pane">
-    <div class="label">Dark+</div>
-    <iframe src="room.html?theme=dark" title="Room preview, dark theme"></iframe>
+    <div class="label">300px sidebar · Dark+</div>
+    <iframe class="narrow" src="room.html?theme=dark&amp;work=1" title="Room preview, 300 pixel dark theme"></iframe>
   </div>
   <div class="pane">
-    <div class="label">Light+</div>
-    <iframe src="room.html?theme=light" title="Room preview, light theme"></iframe>
+    <div class="label">360px sidebar · Light+</div>
+    <iframe class="comfortable" src="room.html?theme=light&amp;work=1" title="Room preview, 360 pixel light theme"></iframe>
   </div>
 </div>
 </body>
