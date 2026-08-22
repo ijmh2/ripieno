@@ -9,6 +9,11 @@ const {
   parseCodexModelCatalog,
   shouldStartAddAgentForAttach,
   needsSharedRoomAgentConsent,
+  decideOnboarding,
+  effectiveResponseMode,
+  orderDetectedProviderIds,
+  responseModeForNewAgent,
+  safestUsablePermission,
 } = require("../dist/agentSetup.js");
 
 describe("first-run agent migration", () => {
@@ -97,6 +102,87 @@ describe("quick agent names", () => {
   test("fills the first available normal name", () => {
     assert.equal(nextAgentLabel(["reviewer", "agent 2"]), "agent");
     assert.equal(nextAgentLabel(["agent", "agent 3"]), "agent 2");
+  });
+});
+
+describe("streamlined onboarding decisions", () => {
+  test("starts with joining and then distinguishes setup from an existing detached agent", () => {
+    const beforeJoin = decideOnboarding({ configuredAgents: [] });
+    assert.equal(beforeJoin.action.kind, "joinRoom");
+    assert.deepEqual(beforeJoin.steps.map((step) => step.status), ["current", "pending", "pending"]);
+
+    const needsSetup = decideOnboarding({
+      room: "review",
+      role: "member",
+      configuredAgents: [],
+    });
+    assert.equal(needsSetup.action.kind, "addAgent");
+    assert.equal(needsSetup.steps[1].label, "Agent needs setup");
+    assert.equal(needsSetup.showAgentHelp, true);
+
+    const existing = decideOnboarding({
+      room: "review",
+      role: "member",
+      configuredAgents: [{ id: "local:agent", state: "detached" }],
+    });
+    assert.equal(existing.action.kind, "attachAgent");
+    assert.equal(existing.steps[1].label, "Agent ready");
+  });
+
+  test("uses local and relay-authoritative attachment state to finish progress", () => {
+    for (const input of [
+      {
+        configuredAgents: [{ id: "local:agent", state: "attaching" }],
+      },
+      {
+        configuredAgents: [{ id: "local:agent", state: "detached" }],
+        attachedAgentIds: ["ivan::local:agent"],
+      },
+    ]) {
+      const decision = decideOnboarding({ room: "review", role: "owner", ...input });
+      assert.equal(decision.complete, true);
+      assert.equal(decision.action, undefined);
+      assert.deepEqual(decision.steps.map((step) => step.status), [
+        "complete",
+        "complete",
+        "complete",
+      ]);
+    }
+  });
+
+  test("viewers get an explicit read-only path and no agent action", () => {
+    const decision = decideOnboarding({
+      room: "review",
+      role: "viewer",
+      configuredAgents: [{ id: "local:agent", state: "detached" }],
+    });
+    assert.equal(decision.readOnly, true);
+    assert.equal(decision.action, undefined);
+    assert.match(decision.steps[2].label, /read-only/i);
+  });
+});
+
+describe("fast-path agent defaults", () => {
+  test("puts detected providers first without accepting or inventing ids", () => {
+    assert.deepEqual(
+      orderDetectedProviderIds(["codex", "claude-code", "gemini", "custom"], ["gemini", "unknown"]),
+      ["gemini", "codex", "claude-code", "custom"]
+    );
+  });
+
+  test("uses only concrete safe permission defaults", () => {
+    assert.equal(safestUsablePermission("codex", "cli"), "readOnly");
+    assert.equal(safestUsablePermission("claude-code", "claude-code"), "workspace");
+    assert.equal(safestUsablePermission("gemini", "cli"), undefined);
+    assert.equal(safestUsablePermission("grok", "openai-compatible"), undefined);
+  });
+
+  test("keeps one normal responder while new agents wait to be named", () => {
+    assert.equal(responseModeForNewAgent(0), "automatic");
+    assert.equal(responseModeForNewAgent(1), "mentions");
+    assert.equal(effectiveResponseMode(undefined, 0), "automatic");
+    assert.equal(effectiveResponseMode(undefined, 1), "mentions");
+    assert.equal(effectiveResponseMode("mentions", 0), "mentions");
   });
 });
 

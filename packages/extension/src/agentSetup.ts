@@ -51,6 +51,168 @@ export function nextAgentLabel(existing: readonly string[]): string {
   }
 }
 
+export type AgentResponseMode = "automatic" | "mentions";
+
+/**
+ * Existing agents predate an explicit response-mode field. Preserve their
+ * established behaviour: the first one answers ordinary room messages and the
+ * rest wait to be named. Newly-created agents persist the same decision.
+ */
+export function effectiveResponseMode(
+  configured: AgentResponseMode | undefined,
+  index: number
+): AgentResponseMode {
+  return configured ?? (index === 0 ? "automatic" : "mentions");
+}
+
+/** A new second agent must not make every plain message fan out twice. */
+export function responseModeForNewAgent(configuredAgentCount: number): AgentResponseMode {
+  return configuredAgentCount === 0 ? "automatic" : "mentions";
+}
+
+/**
+ * Provider discovery changes ordering only. It never accepts provider ids from
+ * an invite or webview, and stable source ordering keeps the picker predictable.
+ */
+export function orderDetectedProviderIds(
+  providerIds: readonly string[],
+  detectedIds: readonly string[]
+): string[] {
+  const detected = new Set(detectedIds);
+  return [
+    ...providerIds.filter((id) => detected.has(id)),
+    ...providerIds.filter((id) => !detected.has(id)),
+  ];
+}
+
+export type SafeAgentPermission = "readOnly" | "workspace" | "full";
+
+/**
+ * Fail closed where Ripieno has a real enforcement mechanism. Other CLIs keep
+ * provider-owned permissions rather than receiving a label we cannot enforce.
+ */
+export function safestUsablePermission(
+  providerId: string,
+  providerKind: "claude-code" | "cli" | "openai-compatible"
+): SafeAgentPermission | undefined {
+  if (providerId === "codex") return "readOnly";
+  if (providerKind === "claude-code") return "workspace";
+  return undefined;
+}
+
+export type OnboardingRole = "owner" | "member" | "viewer";
+export type OnboardingAgentState =
+  | "detached"
+  | "attaching"
+  | "idle"
+  | "thinking"
+  | "error"
+  | "refused";
+export type OnboardingAction = "joinRoom" | "addAgent" | "attachAgent";
+export type OnboardingStepStatus = "complete" | "current" | "pending";
+
+export interface OnboardingStep {
+  label: string;
+  status: OnboardingStepStatus;
+}
+
+export interface OnboardingDecision {
+  steps: [OnboardingStep, OnboardingStep, OnboardingStep];
+  action?: { kind: OnboardingAction; label: string };
+  readOnly: boolean;
+  complete: boolean;
+  showAgentHelp: boolean;
+}
+
+export interface OnboardingDecisionInput {
+  room?: string;
+  role?: OnboardingRole;
+  configuredAgents: readonly { id: string; state?: OnboardingAgentState }[];
+  /** Relay-authoritative ids currently attached beneath this member. */
+  attachedAgentIds?: readonly string[];
+}
+
+/**
+ * One pure state machine drives both the visible three-step progress and the
+ * extension-host authorization for its fixed actions.
+ */
+export function decideOnboarding(input: OnboardingDecisionInput): OnboardingDecision {
+  if (!input.room) {
+    return {
+      steps: [
+        { label: "Joined room", status: "current" },
+        { label: "Agent needs setup", status: "pending" },
+        { label: "Start collaborating", status: "pending" },
+      ],
+      action: { kind: "joinRoom", label: "Join room" },
+      readOnly: false,
+      complete: false,
+      showAgentHelp: false,
+    };
+  }
+
+  if (input.role === "viewer") {
+    return {
+      steps: [
+        { label: "Joined room", status: "complete" },
+        { label: "Agent unavailable to viewers", status: "complete" },
+        { label: "Follow along read-only", status: "current" },
+      ],
+      readOnly: true,
+      complete: true,
+      showAgentHelp: false,
+    };
+  }
+
+  const attached = new Set(input.attachedAgentIds ?? []);
+  const active = input.configuredAgents.some(
+    (agent) =>
+      attached.has(agent.id) ||
+      [...attached].some((id) => id.endsWith(`::${agent.id}`)) ||
+      agent.state === "attaching" ||
+      agent.state === "idle" ||
+      agent.state === "thinking"
+  );
+  if (active) {
+    return {
+      steps: [
+        { label: "Joined room", status: "complete" },
+        { label: "Agent ready", status: "complete" },
+        { label: "Start collaborating", status: "complete" },
+      ],
+      readOnly: false,
+      complete: true,
+      showAgentHelp: false,
+    };
+  }
+
+  if (input.configuredAgents.length > 0) {
+    return {
+      steps: [
+        { label: "Joined room", status: "complete" },
+        { label: "Agent ready", status: "complete" },
+        { label: "Start collaborating", status: "current" },
+      ],
+      action: { kind: "attachAgent", label: "Attach agent" },
+      readOnly: false,
+      complete: false,
+      showAgentHelp: false,
+    };
+  }
+
+  return {
+    steps: [
+      { label: "Joined room", status: "complete" },
+      { label: "Agent needs setup", status: "current" },
+      { label: "Start collaborating", status: "pending" },
+    ],
+    action: { kind: "addAgent", label: "Add agent" },
+    readOnly: false,
+    complete: false,
+    showAgentHelp: true,
+  };
+}
+
 /**
  * VS Code may hand a tree command either the provider's node or its rendered
  * TreeItem. Accept both, while stripping only our own room namespace.

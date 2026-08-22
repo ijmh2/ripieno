@@ -6,10 +6,34 @@
 // process around) we just resend a full snapshot on visibility change.
 
 import * as vscode from "vscode";
-import type { ActionEntry, RoomMode, RoomStatus, RosterEntry, TranscriptEntry } from "@ripieno/protocol";
+import type {
+  ActionEntry,
+  Goal,
+  GoalAuditEntry,
+  HandoffAuditEntry,
+  HandoffDecision,
+  HandoffOffer,
+  RoomMode,
+  RoomStatus,
+  RosterEntry,
+  TranscriptEntry,
+} from "@ripieno/protocol";
 import type { ConnectionState } from "@ripieno/relay-client";
 import type { ApprovalChoice } from "./approvals";
 import { onboardingCommandFor, parseRoomViewMessage } from "./roomViewMessages";
+import { applyGoalState } from "./goalState";
+import { applyHandoffState } from "./handoffState";
+import {
+  decideOnboarding,
+  type OnboardingAgentState,
+  type OnboardingDecision,
+} from "./agentSetup";
+
+export interface LocalAgentOnboarding {
+  id: string;
+  label: string;
+  state: OnboardingAgentState;
+}
 
 interface RoomState {
   room?: string;
@@ -20,6 +44,14 @@ interface RoomState {
   transcript: TranscriptEntry[];
   /** What agents have *done*, kept apart from what people have said. */
   actions: ActionEntry[];
+  goals: Goal[];
+  goalAudit: GoalAuditEntry[];
+  roomRevision: number;
+  handoffs: HandoffOffer[];
+  handoffAudit: HandoffAuditEntry[];
+  handoffRevision: number;
+  /** Configured on this machine, including agents not attached to the room. */
+  localAgents: LocalAgentOnboarding[];
   /** entryId -> accumulated streamed text, cleared once the final entry lands. */
   liveDeltas: Map<string, string>;
   status: RoomStatus;
@@ -36,7 +68,21 @@ interface PendingApproval {
 }
 
 function emptyState(connection: ConnectionState): RoomState {
-  return { roster: [], transcript: [], actions: [], liveDeltas: new Map(), status: "idle", connection };
+  return {
+    roster: [],
+    transcript: [],
+    actions: [],
+    goals: [],
+    goalAudit: [],
+    roomRevision: 0,
+    handoffs: [],
+    handoffAudit: [],
+    handoffRevision: 0,
+    localAgents: [],
+    liveDeltas: new Map(),
+    status: "idle",
+    connection,
+  };
 }
 
 /** Messages the extension host pushes into the webview. */
@@ -49,7 +95,14 @@ type ToWebview =
       roster: RosterEntry[];
       transcript: TranscriptEntry[];
   /** What agents have *done*, kept apart from what people have said. */
-  actions: ActionEntry[];
+      actions: ActionEntry[];
+      goals: Goal[];
+      goalAudit: GoalAuditEntry[];
+      roomRevision: number;
+      handoffs: HandoffOffer[];
+      handoffAudit: HandoffAuditEntry[];
+      handoffRevision: number;
+      onboarding: OnboardingDecision;
       liveDeltas: [string, string][];
       status: RoomStatus;
       waitingOn?: string;
@@ -58,9 +111,17 @@ type ToWebview =
     }
   | { type: "entry"; entry: TranscriptEntry }
   | { type: "action"; entry: ActionEntry }
+  | { type: "goals"; goals: Goal[]; goalAudit: GoalAuditEntry[]; roomRevision: number }
+  | {
+      type: "handoffs";
+      handoffs: HandoffOffer[];
+      handoffAudit: HandoffAuditEntry[];
+      handoffRevision: number;
+    }
   | { type: "delta"; entryId: string; text: string }
   | { type: "deltaCancel"; entryId: string }
-  | { type: "roster"; roster: RosterEntry[]; you?: RosterEntry }
+  | { type: "roster"; roster: RosterEntry[]; you?: RosterEntry; onboarding: OnboardingDecision }
+  | { type: "onboarding"; onboarding: OnboardingDecision }
   | { type: "status"; status: RoomStatus; waitingOn?: string }
   | { type: "connection"; state: ConnectionState }
   | {
@@ -86,7 +147,13 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly extensionUri: vscode.Uri,
-    private readonly onComposerSend: (text: string) => void
+    private readonly onComposerSend: (text: string) => void,
+    private readonly onHandoffAction: (request: {
+      action: HandoffDecision;
+      id: string;
+      expectedVersion: number;
+      targetAgentId?: string;
+    }) => void
   ) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -110,6 +177,13 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
         if (!pending) return;
         pending.resolve(msg.choice);
         this.pendingApprovals.delete(msg.id);
+      } else if (msg.type === "handoffAction") {
+        this.onHandoffAction({
+          action: msg.action,
+          id: msg.id,
+          expectedVersion: msg.expectedVersion,
+          targetAgentId: msg.targetAgentId,
+        });
       } else if (msg.type === "onboardingAction") {
         const command = onboardingCommandFor(msg.action, this.state);
         if (command) void vscode.commands.executeCommand(command);
@@ -140,12 +214,25 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     roster: RosterEntry[],
     transcript: TranscriptEntry[],
     mode: RoomMode,
-    actions: ActionEntry[] = []
+    actions: ActionEntry[] = [],
+    goals: Goal[] = [],
+    goalAudit: GoalAuditEntry[] = [],
+    roomRevision = 0,
+    handoffs: HandoffOffer[] = [],
+    handoffAudit: HandoffAuditEntry[] = [],
+    handoffRevision = 0
   ): void {
     this.state = {
       room,
       mode,
       actions,
+      goals,
+      goalAudit,
+      roomRevision,
+      handoffs,
+      handoffAudit,
+      handoffRevision,
+      localAgents: this.state.localAgents,
       you,
       roster,
       transcript: [...transcript],
@@ -157,17 +244,56 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     this.postSnapshot();
   }
 
+  setHandoffState(
+    handoffs: HandoffOffer[],
+    handoffAudit: HandoffAuditEntry[],
+    handoffRevision: number
+  ): void {
+    const next = applyHandoffState(this.state, handoffs, handoffAudit, handoffRevision);
+    if (next === this.state) return;
+    this.state.handoffs = next.handoffs;
+    this.state.handoffAudit = next.handoffAudit;
+    this.state.handoffRevision = next.handoffRevision;
+    this.post({
+      type: "handoffs",
+      handoffs: this.state.handoffs,
+      handoffAudit: this.state.handoffAudit,
+      handoffRevision: next.handoffRevision,
+    });
+  }
+
   /** Work done by an agent, shown apart from the conversation. */
   addAction(entry: ActionEntry): void {
     this.state.actions.push(entry);
     this.post({ type: "action", entry });
   }
 
+  setGoalState(goals: Goal[], goalAudit: GoalAuditEntry[], roomRevision: number): void {
+    // Ignore stale frames. Reconnect snapshots and live broadcasts carry the
+    // same monotonic relay revision, so extension-host ordering stays explicit.
+    const next = applyGoalState(this.state, goals, goalAudit, roomRevision);
+    if (next === this.state) return;
+    this.state.goals = next.goals;
+    this.state.goalAudit = next.goalAudit;
+    this.state.roomRevision = next.roomRevision;
+    this.post({
+      type: "goals",
+      goals: this.state.goals,
+      goalAudit: this.state.goalAudit,
+      roomRevision: next.roomRevision,
+    });
+  }
+
   setRoster(roster: RosterEntry[]): void {
     this.state.roster = roster;
     const youHandle = this.state.you?.handle;
     this.state.you = youHandle ? roster.find((member) => member.handle === youHandle) : undefined;
-    this.post({ type: "roster", roster, you: this.state.you });
+    this.post({ type: "roster", roster, you: this.state.you, onboarding: this.onboarding() });
+  }
+
+  setLocalAgents(localAgents: LocalAgentOnboarding[]): void {
+    this.state.localAgents = localAgents.map((agent) => ({ ...agent }));
+    this.post({ type: "onboarding", onboarding: this.onboarding() });
   }
 
   addEntry(entry: TranscriptEntry): void {
@@ -247,7 +373,8 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   /** Called on ripieno.leaveRoom: clears the transcript and returns to idle. */
   reset(): void {
     this.resolvePendingApprovals();
-    this.state = emptyState("offline");
+    const localAgents = this.state.localAgents;
+    this.state = { ...emptyState("offline"), localAgents };
     this.postSnapshot();
   }
 
@@ -271,11 +398,27 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       roster: this.state.roster,
       transcript: this.state.transcript,
       actions: this.state.actions,
+      goals: this.state.goals,
+      goalAudit: this.state.goalAudit,
+      roomRevision: this.state.roomRevision,
+      handoffs: this.state.handoffs,
+      handoffAudit: this.state.handoffAudit,
+      handoffRevision: this.state.handoffRevision,
+      onboarding: this.onboarding(),
       liveDeltas: [...this.state.liveDeltas.entries()],
       status: this.state.status,
       waitingOn: this.state.waitingOn,
       connection: this.state.connection,
       approvals: [...this.pendingApprovals.values()].map(({ request }) => request),
+    });
+  }
+
+  private onboarding(): OnboardingDecision {
+    return decideOnboarding({
+      room: this.state.room,
+      role: this.state.you?.role,
+      configuredAgents: this.state.localAgents,
+      attachedAgentIds: this.state.you?.agents.map((agent) => agent.id) ?? [],
     });
   }
 
@@ -316,10 +459,26 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   <div id="statusPill" class="status-pill idle" role="status" aria-live="polite">idle</div>
   <div id="roster" class="roster" role="list" aria-label="People in this room"></div>
 </header>
+<section id="onboarding" class="onboarding" aria-labelledby="onboardingTitle">
+  <h2 id="onboardingTitle" class="sr-only">Getting started</h2>
+  <ol id="onboardingSteps" class="onboarding-steps" aria-label="Getting started progress"></ol>
+  <button id="onboardingAction" class="onboarding-action" type="button" hidden></button>
+  <p id="onboardingHelp" class="onboarding-help" hidden>A ChatGPT web conversation cannot be imported. To use Codex, install the Codex CLI and run <code>codex login</code> to sign in with ChatGPT, or use an API key. API-key usage is billed separately through the OpenAI Platform.</p>
+</section>
 <div class="transcript-wrap">
   <div id="transcript" class="transcript" role="log" aria-live="polite" aria-label="Room conversation"></div>
   <button id="jumpLatest" class="jump-latest" type="button" hidden>Latest <span aria-hidden="true">↓</span></button>
 </div>
+<details id="goals" class="goals" hidden>
+  <summary id="goalsSummary" class="goals-summary">Goals</summary>
+  <div id="goalsList" class="goals-list" role="list" aria-label="Room goals"></div>
+</details>
+<div id="goalAnnouncements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+<section id="handoffs" class="handoffs" aria-labelledby="handoffsTitle" hidden>
+  <div id="handoffsTitle" class="handoffs-title">Agent handoffs</div>
+  <div id="handoffsList" class="handoffs-list" role="list" aria-label="Agent handoff lifecycle"></div>
+</section>
+<div id="handoffAnnouncements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 <details id="actions" class="actions" hidden>
   <summary id="actionsSummary" class="actions-summary">Work</summary>
   <div id="actionsList" class="actions-list"></div>

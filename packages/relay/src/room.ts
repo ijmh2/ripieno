@@ -6,12 +6,22 @@
  * future BYO driver drops in without touching this file.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type {
   ActionEntry,
   AgentActivity,
+  AgentCapability,
   AttachedAgent,
   ConnectionRole,
+  Goal,
+  GoalAuditEntry,
+  GoalResultMsg,
+  GoalTransition,
+  HandoffAuditEntry,
+  HandoffContinuationContext,
+  HandoffDecision,
+  HandoffOffer,
+  HandoffResultMsg,
   Member,
   RoomStatus,
   RoomMode,
@@ -20,11 +30,33 @@ import type {
   ToolProgressState,
   TranscriptEntry,
 } from "@ripieno/protocol";
-import { WORKSPACE_HANDLE } from "@ripieno/protocol";
+import {
+  MAX_GOALS,
+  MAX_GOAL_AUDIT_ENTRIES,
+  MAX_GOAL_REQUEST_ID_CHARS,
+  MAX_GOAL_REQUESTS,
+  MAX_GOAL_TEXT_CHARS,
+  HANDOFF_EXPIRY_MS,
+  MAX_HANDOFFS,
+  MAX_HANDOFF_AUDIT_ENTRIES,
+  MAX_HANDOFF_CONTEXT_ACTIONS,
+  MAX_HANDOFF_CONTEXT_CHARS,
+  MAX_HANDOFF_CONTEXT_GOALS,
+  MAX_HANDOFF_CONTEXT_TRANSCRIPT,
+  MAX_HANDOFF_REQUEST_ID_CHARS,
+  MAX_HANDOFF_REQUESTS,
+  MAX_HANDOFF_TASK_CHARS,
+  MAX_HANDOFF_OUTCOME_CHARS,
+  WORKSPACE_HANDLE,
+} from "@ripieno/protocol";
 import { toRosterEntry } from "./roomCore.js";
 import type { RoomDriver } from "./driver.js";
 import type { AgentUsage, RoomRole, TurnUsage } from "@ripieno/protocol";
-import type { RoomSnapshot } from "./roomStore.js";
+import type {
+  GoalRequestReceipt,
+  HandoffRequestReceipt,
+  RoomSnapshot,
+} from "./roomStore.js";
 
 /**
  * The slice of a WebSocket the room actually uses. Depending on this rather
@@ -46,6 +78,7 @@ interface Connection {
 interface AgentConnection extends Connection {
   id: string;
   label: string;
+  capability: AgentCapability;
   /** Last reported activity. Absent until its host says — see AgentActivity. */
   state?: AgentActivity;
 }
@@ -54,6 +87,7 @@ interface AgentConnection extends Connection {
 export interface AgentIdentity {
   id: string;
   label: string;
+  capability?: AgentCapability;
 }
 
 export class Room {
@@ -64,6 +98,8 @@ export class Room {
    * not evict each other or their owner's editor connection.
    */
   private readonly agents = new Map<string, AgentConnection>();
+  /** Durable room-level revocation: released source ids cannot race or reconnect. */
+  private readonly releasedAgents = new Set<string>();
   /** Everyone who has ever joined, so the roster keeps offline members visible. */
   private readonly known = new Map<string, Member>();
   private readonly transcript: TranscriptEntry[] = [];
@@ -127,6 +163,17 @@ export class Room {
   private readonly usage = new Map<string, AgentUsage>();
   /** What agents have done, distinct from what people have said. */
   private readonly actions: ActionEntry[] = [];
+  /** Durable goals and their mutation history are authoritative here. */
+  private readonly goals = new Map<string, Goal>();
+  private readonly goalAudit: GoalAuditEntry[] = [];
+  private readonly goalRequests = new Map<string, GoalRequestReceipt>();
+  private roomRevision = 0;
+  /** Relay-authoritative, durable transfers of responsibility between local agents. */
+  private readonly handoffs = new Map<string, HandoffOffer>();
+  private readonly handoffAudit: HandoffAuditEntry[] = [];
+  private readonly handoffRequests = new Map<string, HandoffRequestReceipt>();
+  private handoffRevision = 0;
+  private handoffExpiryTimer: NodeJS.Timeout | undefined;
   /** Outstanding remote tool requests, so a reply can find who asked. */
   private readonly remoteCalls = new Map<
     string,
@@ -164,7 +211,7 @@ export class Room {
    * never who is here now, and restoring presence would have the agent
    * addressing tools to machines that are not connected.
    */
-  hydrate(snapshot: RoomSnapshot): void {
+  hydrate(snapshot: RoomSnapshot): boolean {
     for (const member of snapshot.members) {
       if (!this.known.has(member.handle)) this.known.set(member.handle, member);
     }
@@ -174,11 +221,75 @@ export class Room {
     for (const entry of snapshot.usage ?? []) this.usage.set(entry.agentId, entry);
     this.transcript.push(...snapshot.transcript.slice(-Room.MAX_TRANSCRIPT));
     this.actions.push(...snapshot.actions.slice(-Room.MAX_ACTIONS));
+    for (const goal of (snapshot.goals ?? []).slice(-MAX_GOALS)) this.goals.set(goal.id, goal);
+    this.goalAudit.push(...(snapshot.goalAudit ?? []).slice(-MAX_GOAL_AUDIT_ENTRIES));
+    for (const receipt of (snapshot.goalRequests ?? []).slice(-MAX_GOAL_REQUESTS)) {
+      if (
+        typeof receipt.actorHandle === "string" &&
+        (receipt.kind === "create" || receipt.kind === "transition")
+      ) {
+        this.goalRequests.set(goalRequestKey(receipt.actorHandle, receipt.requestId), receipt);
+      }
+    }
+    this.roomRevision = Number.isSafeInteger(snapshot.roomRevision) ? snapshot.roomRevision! : 0;
+    const recoveredHandoffs: Array<{
+      handoff: HandoffOffer;
+      from: HandoffAuditEntry["fromStatus"];
+      reason: string;
+    }> = [];
+    for (const handoff of (snapshot.handoffs ?? []).slice(-MAX_HANDOFFS)) {
+      if (!handoff?.id || !handoff?.nonce) continue;
+      // A relay upgrade cannot safely replay the old one-shot accepted shape.
+      if ((handoff.status as string) === "accepted") {
+        const reason = "legacy delivery outcome unknown after relay upgrade";
+        handoff.status = "outcomeUnknown";
+        handoff.version += 1;
+        handoff.updatedAt = Date.now();
+        handoff.finishedAt = handoff.updatedAt;
+        handoff.decisionReason = reason;
+        recoveredHandoffs.push({ handoff, from: undefined, reason });
+      } else if (handoff.status === "started") {
+        const reason = "relay restarted after start before a durable outcome";
+        handoff.status = "outcomeUnknown";
+        handoff.version += 1;
+        handoff.updatedAt = Date.now();
+        handoff.finishedAt = handoff.updatedAt;
+        handoff.decisionReason = reason;
+        recoveredHandoffs.push({ handoff, from: "started", reason });
+      }
+      this.handoffs.set(handoff.id, handoff);
+      if (["claimed", "started", "completed", "failed", "outcomeUnknown"].includes(handoff.status)) {
+        this.releasedAgents.add(handoff.sourceAgentId);
+      }
+    }
+    this.handoffAudit.push(
+      ...(snapshot.handoffAudit ?? []).slice(-MAX_HANDOFF_AUDIT_ENTRIES)
+    );
+    for (const receipt of (snapshot.handoffRequests ?? []).slice(-MAX_HANDOFF_REQUESTS)) {
+      if (
+        typeof receipt.actorHandle === "string" &&
+        (receipt.kind === "offer" || receipt.kind === "decision")
+      ) {
+        this.handoffRequests.set(
+          handoffRequestKey(receipt.actorHandle, receipt.requestId),
+          receipt
+        );
+      }
+    }
+    this.handoffRevision = Number.isSafeInteger(snapshot.handoffRevision)
+      ? snapshot.handoffRevision!
+      : 0;
+    for (const { handoff, from, reason } of recoveredHandoffs) {
+      this.handoffRevision += 1;
+      this.recordHandoffAudit(handoff, "relay", "outcomeUnknown", from, reason);
+    }
     // Agent messages restored from disk are already final; without this a
     // late delta could resurrect one that finished before the restart.
     for (const entry of snapshot.transcript) {
       if (entry.kind === "agent") this.completed.add(entry.id);
     }
+    this.sweepExpiredHandoffs();
+    return recoveredHandoffs.length > 0;
   }
 
   snapshot(): RoomSnapshot {
@@ -188,11 +299,21 @@ export class Room {
       members: [...this.known.values()],
       roles: Object.fromEntries(this.roles),
       usage: this.usageReport,
+      goals: this.goalList,
+      goalAudit: this.goalAuditLog,
+      goalRequests: [...this.goalRequests.values()],
+      roomRevision: this.roomRevision,
+      handoffs: this.handoffList,
+      handoffAudit: this.handoffAuditLog,
+      handoffRequests: [...this.handoffRequests.values()],
+      handoffRevision: this.handoffRevision,
     };
   }
 
   /** Called whenever something worth keeping changed. */
   onChanged?: () => void;
+  /** Critical handoff barrier. Server wires this directly to an awaited store save. */
+  onCriticalChanged?: () => Promise<void>;
 
   get roster(): RosterEntry[] {
     return [...this.known.values()].map((m) =>
@@ -210,6 +331,22 @@ export class Room {
     return [...this.usage.values()];
   }
 
+  get goalList(): Goal[] {
+    return [...this.goals.values()].map((goal) => ({ ...goal }));
+  }
+
+  get goalAuditLog(): GoalAuditEntry[] {
+    return this.goalAudit.map((entry) => ({ ...entry }));
+  }
+
+  get handoffList(): HandoffOffer[] {
+    return [...this.handoffs.values()].map((handoff) => structuredClone(handoff));
+  }
+
+  get handoffAuditLog(): HandoffAuditEntry[] {
+    return this.handoffAudit.map((entry) => ({ ...entry }));
+  }
+
   /**
    * Record what an agent's turn cost.
    *
@@ -220,7 +357,7 @@ export class Room {
    * were not told.
    */
   recordUsage(agentId: string, provider: string, turn: TurnUsage): void {
-    const agent = this.agents.get(agentId);
+    const agent = this.isAgentAuthorized(agentId) ? this.agents.get(agentId) : undefined;
     if (!agent) return;
 
     const running = this.usage.get(agentId) ?? {
@@ -265,13 +402,24 @@ export class Room {
     return this.roleOf(handle) !== "viewer";
   }
 
+  /** Current relay authority, never a role cached by a client or stale socket. */
+  isAgentAuthorized(agentId: string, socket?: SocketLike): boolean {
+    const agent = this.agents.get(agentId);
+    return Boolean(
+      agent &&
+        (!socket || agent.socket === socket) &&
+        !this.releasedAgents.has(agentId) &&
+        this.canAct(agent.member.handle)
+    );
+  }
+
   /**
    * Change what somebody may do.
    *
    * Only the owner, and never on themselves: a room whose owner demotes
    * themselves by accident has nobody who can undo it.
    */
-  setRole(actor: string, handle: string, role: RoomRole): void {
+  async setRole(actor: string, handle: string, role: RoomRole): Promise<void> {
     if (this.roleOf(actor) !== "owner") {
       this.systemTo(actor, "Only the room's owner can change what someone may do.");
       return;
@@ -285,6 +433,25 @@ export class Room {
       return;
     }
     this.roles.set(handle, role);
+    if (role === "viewer") {
+      const handoffsChanged = this.transitionHandoffsForRemoval(
+        handle,
+        "role revoked",
+        undefined,
+        true
+      );
+      // Role and lifecycle changes cross the same durability barrier before an
+      // agent socket is closed. A restarted relay therefore cannot restore a
+      // started delivery as though its target still held authority.
+      await this.persistHandoffTransitions(handoffsChanged);
+      // Remove authority synchronously before close events or queued frames can
+      // run. Every server-side agent path also consults isAgentAuthorized.
+      for (const [agentId, agent] of this.agents) {
+        if (agent.member.handle !== handle) continue;
+        this.agents.delete(agentId);
+        agent.socket.close(4003, "room role revoked; agent execution cancelled");
+      }
+    }
     this.system(`${this.known.get(handle)?.displayName ?? handle} is now a ${role}.`);
     this.broadcastRoster();
     this.onChanged?.();
@@ -293,7 +460,13 @@ export class Room {
   private agentsOf(handle: string): AttachedAgent[] {
     return [...this.agents.values()]
       .filter((a) => a.member.handle === handle)
-      .map((a) => ({ id: a.id, owner: handle, label: a.label, state: a.state }));
+      .map((a) => ({
+        id: a.id,
+        owner: handle,
+        label: a.label,
+        capability: a.capability,
+        state: a.state,
+      }));
   }
 
   /**
@@ -306,7 +479,7 @@ export class Room {
    * per agent.
    */
   setAgentState(agentId: string, state: AgentActivity): void {
-    const agent = this.agents.get(agentId);
+    const agent = this.isAgentAuthorized(agentId) ? this.agents.get(agentId) : undefined;
     if (!agent || agent.state === state) return;
     agent.state = state;
     this.broadcastRoster();
@@ -322,6 +495,7 @@ export class Room {
     role: ConnectionRole = "human",
     agent?: AgentIdentity
   ): Promise<void> {
+    this.sweepExpiredHandoffs();
     // An agent attaches under its owner's handle but supplies its own idea of
     // their name. The human connection is the authority on who they are, so an
     // agent may only fill in an identity nobody has claimed yet.
@@ -341,10 +515,29 @@ export class Room {
     if (role === "agent") {
       const id = (myAgentId = agent?.id ?? `${member.handle}:default`);
       label = agent?.label ?? `${member.displayName}'s agent`;
+      if (!this.canAct(member.handle)) {
+        this.sendTo(socket, { t: "error", message: "Viewers cannot attach agents to this room." });
+        socket.close(4003, "viewer");
+        return;
+      }
+      if (this.releasedAgents.has(id)) {
+        this.sendTo(socket, {
+          t: "error",
+          message: "This source agent was released by a completed handoff claim.",
+        });
+        socket.close(4004, "responsibility already transferred");
+        return;
+      }
       // Replacing by *agent id* — not by handle — is what lets one person run
       // several agents at once without them evicting each other.
       this.agents.get(id)?.socket.close(4000, `another connection claimed the agent id ${id}`);
-      this.agents.set(id, { member, socket, id, label });
+      this.agents.set(id, {
+        member,
+        socket,
+        id,
+        label,
+        capability: agent?.capability ?? "conversation",
+      });
     } else {
       label = member.displayName;
       this.connections.get(member.handle)?.socket.close(
@@ -361,6 +554,12 @@ export class Room {
       workspaceHost: this.host,
       actions: this.actions,
       usage: this.usageReport,
+      goals: this.goalList,
+      goalAudit: this.goalAuditLog,
+      roomRevision: this.roomRevision,
+      handoffs: this.handoffList,
+      handoffAudit: this.handoffAuditLog,
+      handoffRevision: this.handoffRevision,
       you: toRosterEntry(
         member,
         true,
@@ -379,7 +578,1026 @@ export class Room {
     });
     this.system(`${label} joined the room.`);
     this.broadcastRoster();
+    this.scheduleHandoffExpiry();
+    if (role === "agent" && myAgentId) this.replayHandoffDelivery(myAgentId);
     await this.tellDriver();
+  }
+
+  /** Create a durable goal owned by the authenticated human actor. */
+  createGoal(actor: string, requestId: string, rawText: string): GoalResultMsg {
+    const fingerprint = goalRequestFingerprint({ actor, kind: "create", text: rawText });
+    const replay = this.replayGoalRequest(actor, requestId, fingerprint);
+    if (replay) return replay;
+    if (!validGoalRequestId(requestId)) {
+      return this.goalFailure(requestId, "Goal request ID is invalid.");
+    }
+    if (!this.connections.has(actor) || isContainer(actor)) {
+      return this.rememberGoalResult(
+        actor,
+        requestId,
+        fingerprint,
+        "create",
+        undefined,
+        this.goalFailure(requestId, "Only a present human member can create a goal.")
+      );
+    }
+    if (!this.canAct(actor)) {
+      return this.rememberGoalResult(
+        actor,
+        requestId,
+        fingerprint,
+        "create",
+        undefined,
+        this.goalFailure(requestId, "Viewers cannot create goals.")
+      );
+    }
+    const text = typeof rawText === "string" ? rawText.trim() : "";
+    if (text.length === 0 || text.length > MAX_GOAL_TEXT_CHARS) {
+      return this.rememberGoalResult(
+        actor,
+        requestId,
+        fingerprint,
+        "create",
+        undefined,
+        this.goalFailure(requestId, `A goal must be 1-${MAX_GOAL_TEXT_CHARS} characters.`)
+      );
+    }
+    if (this.goals.size >= MAX_GOALS && !this.reclaimOldestCompletedGoal()) {
+      return this.rememberGoalResult(
+        actor,
+        requestId,
+        fingerprint,
+        "create",
+        undefined,
+        this.goalFailure(requestId, `This room already has the maximum of ${MAX_GOALS} goals.`)
+      );
+    }
+
+    const now = Date.now();
+    const goal: Goal = {
+      id: `goal_${randomUUID()}`,
+      text,
+      ownerHandle: actor,
+      ownerName: this.known.get(actor)?.displayName ?? actor,
+      status: "active",
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.goals.set(goal.id, goal);
+    this.roomRevision += 1;
+    this.recordGoalAudit(goal, requestId, actor, "create", undefined);
+    const result: GoalResultMsg = {
+      t: "goalResult",
+      requestId,
+      ok: true,
+      roomRevision: this.roomRevision,
+      goal: { ...goal },
+      goals: this.goalList,
+      goalAudit: this.goalAuditLog,
+    };
+    this.rememberGoalResult(actor, requestId, fingerprint, "create", goal.id, result);
+    this.broadcastGoals();
+    this.onChanged?.();
+    return result;
+  }
+
+  /** Apply one legal goal transition with ownership and version checks. */
+  transitionGoal(
+    actor: string,
+    requestId: string,
+    goalId: string,
+    action: GoalTransition,
+    expectedVersion: number
+  ): GoalResultMsg {
+    const fingerprint = goalRequestFingerprint({
+      actor,
+      kind: "transition",
+      goalId,
+      action,
+      expectedVersion,
+    });
+    const replay = this.replayGoalRequest(actor, requestId, fingerprint);
+    if (replay) return replay;
+    if (!validGoalRequestId(requestId)) {
+      return this.goalFailure(requestId, "Goal request ID is invalid.");
+    }
+
+    const fail = (message: string): GoalResultMsg =>
+      this.rememberGoalResult(
+        actor,
+        requestId,
+        fingerprint,
+        "transition",
+        typeof goalId === "string" ? goalId : undefined,
+        this.goalFailure(requestId, message)
+      );
+    if (!this.connections.has(actor) || isContainer(actor)) {
+      return fail("Only a present human member can change a goal.");
+    }
+    if (!this.canAct(actor)) return fail("Viewers cannot change goals.");
+    const goal = typeof goalId === "string" ? this.goals.get(goalId) : undefined;
+    if (!goal) return fail("Goal not found. Use /goal list to refresh the available IDs.");
+    if (goal.ownerHandle !== actor && this.roleOf(actor) !== "owner") {
+      return fail("Only the goal owner or room owner can change this goal.");
+    }
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== goal.version) {
+      return fail(`Goal changed since you last saw it (current version ${goal.version}).`);
+    }
+
+    const next = nextGoalStatus(goal.status, action);
+    if (!next) return fail(`Cannot ${action} a ${goal.status} goal.`);
+    const before = goal.status;
+    const now = Date.now();
+    goal.status = next;
+    goal.version += 1;
+    goal.updatedAt = now;
+    if (next === "completed") goal.completedAt = now;
+    this.roomRevision += 1;
+    this.recordGoalAudit(goal, requestId, actor, action, before);
+    const result: GoalResultMsg = {
+      t: "goalResult",
+      requestId,
+      ok: true,
+      roomRevision: this.roomRevision,
+      goal: { ...goal },
+      goals: this.goalList,
+      goalAudit: this.goalAuditLog,
+    };
+    this.rememberGoalResult(actor, requestId, fingerprint, "transition", goal.id, result);
+    this.broadcastGoals();
+    this.onChanged?.();
+    return result;
+  }
+
+  private replayGoalRequest(
+    actor: string,
+    requestId: string,
+    fingerprint: string
+  ): GoalResultMsg | undefined {
+    if (!validGoalRequestId(requestId)) return undefined;
+    const prior = this.goalRequests.get(goalRequestKey(actor, requestId));
+    if (!prior) return undefined;
+    if (prior.fingerprint === fingerprint) {
+      if (!prior.result.ok) return { ...prior.result };
+      const current = prior.goalId ? this.goals.get(prior.goalId) : undefined;
+      return {
+        ...prior.result,
+        roomRevision: this.roomRevision,
+        goal: current ? { ...current } : undefined,
+        goals: this.goalList,
+        goalAudit: this.goalAuditLog,
+      };
+    }
+    return this.goalFailure(requestId, "That request ID was already used for a different goal mutation.");
+  }
+
+  private goalFailure(requestId: string, message: string): GoalResultMsg {
+    return { t: "goalResult", requestId, ok: false, roomRevision: this.roomRevision, message };
+  }
+
+  private rememberGoalResult(
+    actorHandle: string,
+    requestId: string,
+    fingerprint: string,
+    kind: GoalRequestReceipt["kind"],
+    goalId: string | undefined,
+    result: GoalResultMsg
+  ): GoalResultMsg {
+    const key = goalRequestKey(actorHandle, requestId);
+    this.goalRequests.set(key, {
+      actorHandle,
+      requestId,
+      fingerprint,
+      kind,
+      goalId,
+      result: durableGoalResult(result),
+    });
+    while (this.goalRequests.size > MAX_GOAL_REQUESTS) {
+      // A successful create receipt is the durable identity of a live goal.
+      // Evict failed/transition churn first, deterministically oldest-first.
+      const evictable = [...this.goalRequests.entries()].find(
+        ([, receipt]) =>
+          !(
+            receipt.kind === "create" &&
+            receipt.result.ok &&
+            receipt.goalId !== undefined &&
+            this.goals.has(receipt.goalId)
+          )
+      );
+      if (!evictable) break; // MAX_GOALS < MAX_GOAL_REQUESTS, so defensive only.
+      this.goalRequests.delete(evictable[0]);
+    }
+    this.onChanged?.();
+    return result;
+  }
+
+  private recordGoalAudit(
+    goal: Goal,
+    requestId: string,
+    actor: string,
+    action: "create" | GoalTransition,
+    fromStatus: Goal["status"] | undefined
+  ): void {
+    this.goalAudit.push({
+      id: randomUUID(),
+      goalId: goal.id,
+      requestId,
+      actorHandle: actor,
+      action,
+      fromStatus,
+      toStatus: goal.status,
+      goalVersion: goal.version,
+      roomRevision: this.roomRevision,
+      ts: Date.now(),
+    });
+    if (this.goalAudit.length > MAX_GOAL_AUDIT_ENTRIES) {
+      this.goalAudit.splice(0, this.goalAudit.length - MAX_GOAL_AUDIT_ENTRIES);
+    }
+  }
+
+  private broadcastGoals(): void {
+    this.broadcast({
+      t: "goals",
+      goals: this.goalList,
+      goalAudit: this.goalAuditLog,
+      roomRevision: this.roomRevision,
+    });
+  }
+
+  /** Make room only by retiring the oldest completed goal. Live work is never displaced. */
+  private reclaimOldestCompletedGoal(): boolean {
+    const completed = [...this.goals.values()]
+      .filter((goal) => goal.status === "completed")
+      .sort(
+        (left, right) =>
+          (left.completedAt ?? left.updatedAt) - (right.completedAt ?? right.updatedAt) ||
+          left.createdAt - right.createdAt
+      )[0];
+    if (!completed) return false;
+    this.goals.delete(completed.id);
+    for (let index = this.goalAudit.length - 1; index >= 0; index--) {
+      if (this.goalAudit[index]!.goalId === completed.id) this.goalAudit.splice(index, 1);
+    }
+    for (const [key, receipt] of this.goalRequests) {
+      if (receipt.goalId === completed.id) this.goalRequests.delete(key);
+    }
+    return true;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Explicit agent handoff                                           */
+  /* ---------------------------------------------------------------- */
+
+  /** Offer responsibility for one of the actor's present agents to another member. */
+  createHandoff(
+    actor: string,
+    requestId: string,
+    rawTargetHandle: string,
+    requestedSourceAgentId: string | undefined,
+    rawTask: string
+  ): HandoffResultMsg {
+    this.sweepExpiredHandoffs();
+    const fingerprint = handoffRequestFingerprint({
+      actor,
+      kind: "offer",
+      targetHandle: rawTargetHandle,
+      sourceAgentId: requestedSourceAgentId,
+      task: rawTask,
+    });
+    const replay = this.replayHandoffRequest(actor, requestId, fingerprint);
+    if (replay) return replay;
+    if (!validHandoffRequestId(requestId)) {
+      return this.handoffFailure(requestId, "Handoff request ID is invalid.");
+    }
+    const fail = (message: string): HandoffResultMsg =>
+      this.rememberHandoffResult(
+        actor,
+        requestId,
+        fingerprint,
+        "offer",
+        undefined,
+        this.handoffFailure(requestId, message)
+      );
+    if (!this.connections.has(actor) || isContainer(actor)) {
+      return fail("Only a present human member can offer a handoff.");
+    }
+    if (!this.canAct(actor)) return fail("Viewers cannot offer handoffs.");
+
+    const task = typeof rawTask === "string" ? rawTask.trim() : "";
+    if (task.length === 0 || task.length > MAX_HANDOFF_TASK_CHARS) {
+      return fail(`A handoff task must be 1-${MAX_HANDOFF_TASK_CHARS} characters.`);
+    }
+
+    const targetHandle =
+      typeof rawTargetHandle === "string" ? rawTargetHandle.trim().replace(/^@/, "") : "";
+    if (!targetHandle || targetHandle === actor || isContainer(targetHandle)) {
+      return fail("Choose another present human member for the handoff.");
+    }
+    if (!this.connections.has(targetHandle)) {
+      return fail(`@${targetHandle} must be present before a handoff can be offered.`);
+    }
+    if (!this.canAct(targetHandle)) {
+      return fail(`@${targetHandle} is a viewer and cannot accept responsibility for an agent.`);
+    }
+
+    const ownedSources = [...this.agents.values()].filter(
+      (agent) => agent.member.handle === actor
+    );
+    const source = requestedSourceAgentId
+      ? ownedSources.find((agent) => agent.id === requestedSourceAgentId)
+      : ownedSources.length === 1
+        ? ownedSources[0]
+        : undefined;
+    if (!source) {
+      return fail(
+        requestedSourceAgentId
+          ? "The source agent is not present or is not owned by you."
+          : ownedSources.length === 0
+            ? "Attach one of your agents before offering a handoff."
+            : "Choose which of your present agents to hand off."
+      );
+    }
+
+    if (this.handoffs.size >= MAX_HANDOFFS && !this.reclaimOldestTerminalHandoff()) {
+      return fail(`This room already has the maximum of ${MAX_HANDOFFS} pending handoffs.`);
+    }
+
+    const now = Date.now();
+    const handoff: HandoffOffer = {
+      id: `handoff_${randomUUID()}`,
+      nonce: randomBytes(16).toString("hex"),
+      task,
+      sourceAgentId: source.id,
+      sourceAgentLabel: source.label,
+      sourceOwnerHandle: actor,
+      sourceOwnerName: this.known.get(actor)?.displayName ?? actor,
+      targetHandle,
+      targetName: this.known.get(targetHandle)?.displayName ?? targetHandle,
+      status: "pending",
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: now + HANDOFF_EXPIRY_MS,
+    };
+    this.handoffs.set(handoff.id, handoff);
+    this.handoffRevision += 1;
+    this.recordHandoffAudit(handoff, actor, "offer", undefined);
+    const result = this.handoffSuccess(requestId, handoff);
+    this.rememberHandoffResult(actor, requestId, fingerprint, "offer", handoff.id, result);
+    this.broadcastHandoffs();
+    this.scheduleHandoffExpiry();
+    this.onChanged?.();
+    return result;
+  }
+
+  /** Assign, decline, cancel, or explicitly retry with relay-derived authority. */
+  async decideHandoff(
+    actor: string,
+    requestId: string,
+    handoffId: string,
+    nonce: string,
+    action: HandoffDecision,
+    expectedVersion: number,
+    requestedTargetAgentId?: string
+  ): Promise<HandoffResultMsg> {
+    this.sweepExpiredHandoffs();
+    const fingerprint = handoffRequestFingerprint({
+      actor,
+      kind: "decision",
+      handoffId,
+      nonce,
+      action,
+      expectedVersion,
+      targetAgentId: requestedTargetAgentId,
+    });
+    const replay = this.replayHandoffRequest(actor, requestId, fingerprint);
+    if (replay) return replay;
+    if (!validHandoffRequestId(requestId)) {
+      return this.handoffFailure(requestId, "Handoff request ID is invalid.");
+    }
+    const fail = (message: string): HandoffResultMsg =>
+      this.rememberHandoffResult(
+        actor,
+        requestId,
+        fingerprint,
+        "decision",
+        typeof handoffId === "string" ? handoffId : undefined,
+        this.handoffFailure(requestId, message)
+      );
+    if (!this.connections.has(actor) || isContainer(actor)) {
+      return fail("Only a present human member can decide a handoff.");
+    }
+    const handoff = typeof handoffId === "string" ? this.handoffs.get(handoffId) : undefined;
+    if (!handoff) return fail("Handoff not found. Use /handoff list to refresh the IDs.");
+    if (typeof nonce !== "string" || nonce !== handoff.nonce) {
+      return fail("Handoff nonce does not match the authoritative offer. Refresh with /handoff list.");
+    }
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== handoff.version) {
+      return fail(`Handoff changed since you last saw it (current version ${handoff.version}).`);
+    }
+
+    let targetAgent: AgentConnection | undefined;
+    if (action === "accept" || action === "retry") {
+      if (actor !== handoff.targetHandle) {
+        return fail("Only the named recipient can accept or retry this handoff.");
+      }
+      if (!this.canAct(actor)) return fail("Viewers cannot accept or retry handoffs.");
+      if (action === "accept" && handoff.status !== "pending") {
+        return fail(`This handoff is already ${handoff.status}; the offer is single-use.`);
+      }
+      if (action === "retry" && handoff.status !== "outcomeUnknown" && handoff.status !== "failed") {
+        return fail("Only a failed or outcome-unknown handoff can be retried manually.");
+      }
+      const ownedTargets = [...this.agents.values()].filter(
+        (agent) => agent.member.handle === actor && this.isAgentAuthorized(agent.id)
+      );
+      targetAgent = requestedTargetAgentId
+        ? ownedTargets.find((agent) => agent.id === requestedTargetAgentId)
+        : ownedTargets.length === 1
+          ? ownedTargets[0]
+          : undefined;
+      if (!targetAgent) {
+        return fail(
+          requestedTargetAgentId
+            ? "The target agent is not present or is not owned by you."
+            : ownedTargets.length === 0
+              ? "Attach one of your agents before accepting this handoff."
+              : "Choose which of your present agents should continue the work."
+        );
+      }
+    } else if (action === "decline") {
+      if (handoff.status !== "pending") {
+        return fail(`This handoff is already ${handoff.status}; the offer is single-use.`);
+      }
+      if (actor !== handoff.targetHandle) {
+        return fail("Only the named recipient can decline this handoff.");
+      }
+    } else if (action === "cancel") {
+      if (handoff.status !== "pending" && handoff.status !== "assigned") {
+        return fail(`A ${handoff.status} handoff can no longer be cancelled.`);
+      }
+      if (actor !== handoff.sourceOwnerHandle && this.roleOf(actor) !== "owner") {
+        return fail("Only the source agent's owner or room owner can cancel this handoff.");
+      }
+    } else {
+      return fail("Unknown handoff decision.");
+    }
+
+    const from = handoff.status;
+    const now = Date.now();
+    handoff.status =
+      action === "accept" || action === "retry"
+        ? "assigned"
+        : action === "decline"
+          ? "declined"
+          : "cancelled";
+    handoff.version += 1;
+    handoff.updatedAt = now;
+    handoff.decidedBy = actor;
+    handoff.decisionReason = action === "accept" ? "assigned after explicit acceptance" : action;
+    if (targetAgent) {
+      handoff.targetAgentId = targetAgent.id;
+      handoff.targetAgentLabel = targetAgent.label;
+      handoff.targetAgentCapability = targetAgent.capability;
+      handoff.deliveryId = `delivery_${randomUUID()}`;
+      handoff.assignedAt = now;
+      delete handoff.claimedAt;
+      delete handoff.startedAt;
+      delete handoff.finishedAt;
+      delete handoff.outcomeDetail;
+      handoff.continuation = this.buildHandoffContext(handoff, targetAgent);
+    }
+    this.handoffRevision += 1;
+    this.recordHandoffAudit(
+      handoff,
+      actor,
+      action === "accept" ? "assign" : action,
+      from,
+      handoff.decisionReason
+    );
+    const result = this.handoffSuccess(requestId, handoff);
+    this.rememberHandoffResult(actor, requestId, fingerprint, "decision", handoff.id, result);
+    // Assignment identity, frozen context, consent, and idempotency receipt are
+    // durable before any target socket learns it can claim work.
+    await this.onCriticalChanged?.();
+    this.broadcastHandoffs();
+    if (targetAgent) this.deliverHandoffAssignment(handoff);
+    this.scheduleHandoffExpiry();
+    this.onChanged?.();
+    return result;
+  }
+
+  /** The exact assigned agent claims only after its host has durably stored delivery. */
+  async claimHandoff(
+    agentId: string,
+    handoffId: string,
+    deliveryId: string,
+    expectedVersion: number
+  ): Promise<boolean> {
+    const agent = this.agents.get(agentId);
+    const handoff = this.handoffs.get(handoffId);
+    if (
+      !agent ||
+      !this.isAgentAuthorized(agentId) ||
+      !handoff ||
+      handoff.targetAgentId !== agentId ||
+      handoff.targetHandle !== agent.member.handle ||
+      handoff.deliveryId !== deliveryId
+    ) return false;
+    if (handoff.status === "claimed") {
+      this.deliverHandoffStart(handoff);
+      return true;
+    }
+    if (handoff.status !== "assigned" || expectedVersion !== handoff.version) return false;
+
+    const source = this.agents.get(handoff.sourceAgentId);
+    const from = handoff.status;
+    handoff.status = "claimed";
+    handoff.version += 1;
+    handoff.updatedAt = Date.now();
+    handoff.claimedAt = handoff.updatedAt;
+    handoff.decisionReason = "recipient agent durably claimed assignment";
+    this.handoffRevision += 1;
+    this.recordHandoffAudit(handoff, agent.member.handle, "claim", from, handoff.decisionReason);
+
+    // Revoke synchronously in Room before awaiting disk or sending a start.
+    // Frames already queued behind this claim therefore fail the same guard as
+    // any later reconnect attempt by the released source id.
+    this.releasedAgents.add(handoff.sourceAgentId);
+    if (source) this.agents.delete(source.id);
+    await this.onCriticalChanged?.();
+    this.broadcastHandoffs();
+    this.broadcastRoster();
+    if (source) {
+      this.sendTo(source.socket, {
+        t: "handoffReleased",
+        handoffId: handoff.id,
+        deliveryId,
+      });
+      source.socket.close(4004, "responsibility transferred by claimed handoff");
+    }
+    this.deliverHandoffStart(handoff);
+    this.onChanged?.();
+    return true;
+  }
+
+  /** Record the target host's durable local started marker. */
+  async markHandoffStarted(
+    agentId: string,
+    handoffId: string,
+    deliveryId: string,
+    expectedVersion: number
+  ): Promise<boolean> {
+    const agent = this.agents.get(agentId);
+    const handoff = this.handoffs.get(handoffId);
+    if (
+      !agent ||
+      !this.isAgentAuthorized(agentId) ||
+      !handoff ||
+      handoff.targetAgentId !== agentId ||
+      handoff.deliveryId !== deliveryId
+    ) {
+      return false;
+    }
+    if (handoff.status === "started") return true;
+    if (handoff.status !== "claimed" || handoff.version !== expectedVersion) return false;
+    const from = handoff.status;
+    handoff.status = "started";
+    handoff.version += 1;
+    handoff.updatedAt = Date.now();
+    handoff.startedAt = handoff.updatedAt;
+    handoff.decisionReason = "recipient host durably marked delivery started";
+    this.handoffRevision += 1;
+    this.recordHandoffAudit(handoff, agent.member.handle, "start", from, handoff.decisionReason);
+    await this.onCriticalChanged?.();
+    this.broadcastHandoffs();
+    this.onChanged?.();
+    return true;
+  }
+
+  /** Durable completion/failure/uncertainty from the exact selected target agent. */
+  async reportHandoffOutcome(
+    agentId: string,
+    handoffId: string,
+    deliveryId: string,
+    outcome: "completed" | "failed" | "outcomeUnknown",
+    rawDetail?: string
+  ): Promise<boolean> {
+    const agent = this.agents.get(agentId);
+    const handoff = this.handoffs.get(handoffId);
+    if (
+      !agent ||
+      !this.isAgentAuthorized(agentId) ||
+      !handoff ||
+      handoff.targetAgentId !== agentId ||
+      handoff.deliveryId !== deliveryId
+    ) {
+      return false;
+    }
+    if (["completed", "failed", "outcomeUnknown"].includes(handoff.status)) {
+      return handoff.status === outcome;
+    }
+    if (handoff.status !== "claimed" && handoff.status !== "started") return false;
+    const from = handoff.status;
+    handoff.status = outcome;
+    handoff.version += 1;
+    handoff.updatedAt = Date.now();
+    handoff.finishedAt = handoff.updatedAt;
+    handoff.outcomeDetail = redactHandoffText(
+      typeof rawDetail === "string" ? rawDetail : ""
+    ).slice(0, MAX_HANDOFF_OUTCOME_CHARS);
+    handoff.decisionReason =
+      outcome === "completed"
+        ? "recipient agent completed the assigned turn"
+        : outcome === "failed"
+          ? "recipient provider reported failure"
+          : "recipient host cannot prove the started provider call's outcome";
+    this.handoffRevision += 1;
+    this.recordHandoffAudit(
+      handoff,
+      agent.member.handle,
+      outcome === "completed" ? "complete" : outcome === "failed" ? "fail" : "outcomeUnknown",
+      from,
+      handoff.decisionReason
+    );
+    await this.onCriticalChanged?.();
+    this.broadcastHandoffs();
+    this.onChanged?.();
+    return true;
+  }
+
+  /** Replay only the stage that is still waiting on this exact target agent. */
+  private replayHandoffDelivery(agentId: string): void {
+    for (const handoff of this.handoffs.values()) {
+      if (handoff.targetAgentId !== agentId) continue;
+      if (handoff.status === "assigned") this.deliverHandoffAssignment(handoff);
+      else if (handoff.status === "claimed") this.deliverHandoffStart(handoff);
+    }
+  }
+
+  private deliverHandoffAssignment(handoff: HandoffOffer): void {
+    if (
+      handoff.status !== "assigned" ||
+      !handoff.deliveryId ||
+      !handoff.targetAgentId ||
+      !handoff.continuation
+    ) return;
+    const target = this.agents.get(handoff.targetAgentId);
+    if (!target || !this.isAgentAuthorized(target.id)) return;
+    this.sendTo(target.socket, {
+      t: "handoffAssignment",
+      handoffId: handoff.id,
+      deliveryId: handoff.deliveryId,
+      handoffVersion: handoff.version,
+      context: structuredClone(handoff.continuation),
+    });
+  }
+
+  private deliverHandoffStart(handoff: HandoffOffer): void {
+    if (
+      handoff.status !== "claimed" ||
+      !handoff.deliveryId ||
+      !handoff.targetAgentId ||
+      !handoff.continuation
+    ) return;
+    const target = this.agents.get(handoff.targetAgentId);
+    if (!target || !this.isAgentAuthorized(target.id)) return;
+    this.sendTo(target.socket, {
+      t: "handoffStart",
+      handoffId: handoff.id,
+      deliveryId: handoff.deliveryId,
+      handoffVersion: handoff.version,
+      context: structuredClone(handoff.continuation),
+    });
+  }
+
+  /**
+   * Move every delivery affected by lost authority into an honest durable
+   * state. `wholeMember` is used for demotion: all their pending/assigned work
+   * is cancelled and every claimed/started target delivery becomes uncertain.
+   * A single agent disconnect keeps assigned target work replayable, while
+   * cancelling offers sourced by that exact agent.
+   */
+  private transitionHandoffsForRemoval(
+    handle: string,
+    reason: "disconnected" | "role revoked",
+    agentId?: string,
+    wholeMember = false
+  ): boolean {
+    let changed = false;
+    const now = Date.now();
+    for (const handoff of this.handoffs.values()) {
+      const relevantPreClaim =
+        (handoff.status === "pending" || handoff.status === "assigned") &&
+        (wholeMember
+          ? handoff.sourceOwnerHandle === handle || handoff.targetHandle === handle
+          : handoff.sourceAgentId === agentId);
+      if (relevantPreClaim) {
+        const from = handoff.status;
+        handoff.status = "cancelled";
+        handoff.version += 1;
+        handoff.updatedAt = now;
+        handoff.decidedBy = "relay";
+        handoff.decisionReason = reason;
+        this.handoffRevision += 1;
+        this.recordHandoffAudit(handoff, "relay", "cancel", from, reason);
+        changed = true;
+        continue;
+      }
+      const relevantActiveTarget =
+        (handoff.status === "claimed" || handoff.status === "started") &&
+        (wholeMember ? handoff.targetHandle === handle : handoff.targetAgentId === agentId);
+      if (!relevantActiveTarget) continue;
+      const from = handoff.status;
+      handoff.status = "outcomeUnknown";
+      handoff.version += 1;
+      handoff.updatedAt = now;
+      handoff.finishedAt = handoff.updatedAt;
+      handoff.decisionReason =
+        reason === "role revoked"
+          ? "target authority was revoked before a durable outcome"
+          : "target disconnected after claim before a durable outcome";
+      this.handoffRevision += 1;
+      this.recordHandoffAudit(
+        handoff,
+        "relay",
+        "outcomeUnknown",
+        from,
+        handoff.decisionReason
+      );
+      changed = true;
+    }
+    this.scheduleHandoffExpiry(now);
+    return changed;
+  }
+
+  private async persistHandoffTransitions(changed: boolean): Promise<void> {
+    if (!changed) return;
+    await this.onCriticalChanged?.();
+    this.broadcastHandoffs();
+    this.onChanged?.();
+  }
+
+  /** Expire elapsed offers. Public so deterministic tests can drive the clock. */
+  sweepExpiredHandoffs(now = Date.now()): number {
+    let changed = 0;
+    for (const handoff of this.handoffs.values()) {
+      if (handoff.status !== "pending" || handoff.expiresAt > now) continue;
+      const from = handoff.status;
+      handoff.status = "expired";
+      handoff.version += 1;
+      handoff.updatedAt = now;
+      handoff.decidedBy = "relay";
+      handoff.decisionReason = "expired";
+      this.handoffRevision += 1;
+      this.recordHandoffAudit(handoff, "relay", "expire", from, "expired");
+      changed += 1;
+    }
+    if (changed > 0) {
+      this.broadcastHandoffs();
+      this.onChanged?.();
+    }
+    this.scheduleHandoffExpiry(now);
+    return changed;
+  }
+
+  private async cancelPreClaimHandoffsFor(
+    handle: string,
+    reason: "disconnected" | "role revoked",
+    agentId?: string
+  ): Promise<void> {
+    let changed = false;
+    const now = Date.now();
+    for (const handoff of this.handoffs.values()) {
+      if (handoff.status !== "pending" && handoff.status !== "assigned") continue;
+      const relevant = agentId
+        ? handoff.sourceAgentId === agentId
+        : handoff.sourceOwnerHandle === handle || handoff.targetHandle === handle;
+      if (!relevant) continue;
+      const from = handoff.status;
+      handoff.status = "cancelled";
+      handoff.version += 1;
+      handoff.updatedAt = now;
+      handoff.decidedBy = "relay";
+      handoff.decisionReason = reason;
+      this.handoffRevision += 1;
+      this.recordHandoffAudit(handoff, "relay", "cancel", from, reason);
+      changed = true;
+    }
+    if (changed) {
+      await this.onCriticalChanged?.();
+      this.broadcastHandoffs();
+      this.onChanged?.();
+    }
+    this.scheduleHandoffExpiry(now);
+  }
+
+  private scheduleHandoffExpiry(now = Date.now()): void {
+    if (this.handoffExpiryTimer) clearTimeout(this.handoffExpiryTimer);
+    this.handoffExpiryTimer = undefined;
+    const next = [...this.handoffs.values()]
+      .filter((handoff) => handoff.status === "pending")
+      .sort((left, right) => left.expiresAt - right.expiresAt)[0];
+    if (!next) return;
+    this.handoffExpiryTimer = setTimeout(
+      () => this.sweepExpiredHandoffs(),
+      Math.max(1, next.expiresAt - now)
+    );
+    this.handoffExpiryTimer.unref();
+  }
+
+  private buildHandoffContext(
+    handoff: HandoffOffer,
+    targetAgent: AgentConnection
+  ): HandoffContinuationContext {
+    const transcriptSource = this.transcript.filter((entry) => entry.kind !== "system");
+    const actionSource = this.actions;
+    const goalSource = this.goalList.filter((goal) => goal.status === "active");
+    const transcript = transcriptSource.slice(-MAX_HANDOFF_CONTEXT_TRANSCRIPT).map((entry) => ({
+      ...entry,
+      authorHandle: redactHandoffText(entry.authorHandle).slice(0, 80),
+      authorName: redactHandoffText(entry.authorName).slice(0, 120),
+      text: redactHandoffText(entry.text).slice(0, 2_000),
+    }));
+    const actions = actionSource.slice(-MAX_HANDOFF_CONTEXT_ACTIONS).map((entry) => ({
+      ...entry,
+      agentLabel: redactHandoffText(entry.agentLabel).slice(0, 120),
+      targetHandle: redactHandoffText(entry.targetHandle).slice(0, 80),
+      verb: redactHandoffText(entry.verb).slice(0, 80),
+      target: redactHandoffText(entry.target).slice(0, 1_000),
+      detail: entry.detail ? redactHandoffText(entry.detail).slice(0, 1_000) : undefined,
+    }));
+    const activeGoals = goalSource.slice(-MAX_HANDOFF_CONTEXT_GOALS).map((goal) => ({
+      ...goal,
+      text: redactHandoffText(goal.text).slice(0, 1_000),
+      ownerHandle: redactHandoffText(goal.ownerHandle).slice(0, 80),
+      ownerName: redactHandoffText(goal.ownerName).slice(0, 120),
+    }));
+    const context: HandoffContinuationContext = {
+      schemaVersion: 2,
+      notice:
+        "Relay-authoritative delivery metadata with untrusted quoted room content for a new " +
+        "recipient-owned agent turn. This is not a provider session export or restoration.",
+      handoff: {
+        id: handoff.id,
+        nonce: handoff.nonce,
+        sourceAgentId: handoff.sourceAgentId,
+        sourceAgentLabel: handoff.sourceAgentLabel,
+        sourceOwnerHandle: handoff.sourceOwnerHandle,
+        targetAgentId: targetAgent.id,
+        targetAgentLabel: targetAgent.label,
+        targetHandle: targetAgent.member.handle,
+        acceptedAt: handoff.assignedAt ?? handoff.updatedAt,
+        task: handoff.task,
+        targetCapability: targetAgent.capability,
+      },
+      transcript,
+      actions,
+      activeGoals,
+      truncated: {
+        transcript: transcriptSource.length > transcript.length,
+        actions: actionSource.length > actions.length,
+        goals: goalSource.length > activeGoals.length,
+        characters: false,
+      },
+    };
+    while (JSON.stringify(context).length > MAX_HANDOFF_CONTEXT_CHARS) {
+      context.truncated.characters = true;
+      if (context.transcript.length > 1) context.transcript.shift();
+      else if (context.actions.length > 0) context.actions.shift();
+      else if (context.activeGoals.length > 0) context.activeGoals.shift();
+      else break;
+    }
+    return context;
+  }
+
+  private replayHandoffRequest(
+    actor: string,
+    requestId: string,
+    fingerprint: string
+  ): HandoffResultMsg | undefined {
+    if (!validHandoffRequestId(requestId)) return undefined;
+    const prior = this.handoffRequests.get(handoffRequestKey(actor, requestId));
+    if (!prior) return undefined;
+    if (prior.fingerprint !== fingerprint) {
+      return this.handoffFailure(
+        requestId,
+        "That request ID was already used for a different handoff mutation."
+      );
+    }
+    if (!prior.result.ok) return { ...prior.result };
+    const current = prior.handoffId ? this.handoffs.get(prior.handoffId) : undefined;
+    return {
+      ...prior.result,
+      handoffRevision: this.handoffRevision,
+      handoff: current ? structuredClone(current) : undefined,
+      handoffs: this.handoffList,
+      handoffAudit: this.handoffAuditLog,
+    };
+  }
+
+  private handoffFailure(requestId: string, message: string): HandoffResultMsg {
+    return {
+      t: "handoffResult",
+      requestId,
+      ok: false,
+      handoffRevision: this.handoffRevision,
+      message,
+    };
+  }
+
+  private handoffSuccess(requestId: string, handoff: HandoffOffer): HandoffResultMsg {
+    return {
+      t: "handoffResult",
+      requestId,
+      ok: true,
+      handoffRevision: this.handoffRevision,
+      handoff: structuredClone(handoff),
+      handoffs: this.handoffList,
+      handoffAudit: this.handoffAuditLog,
+    };
+  }
+
+  private rememberHandoffResult(
+    actorHandle: string,
+    requestId: string,
+    fingerprint: string,
+    kind: HandoffRequestReceipt["kind"],
+    handoffId: string | undefined,
+    result: HandoffResultMsg
+  ): HandoffResultMsg {
+    this.handoffRequests.set(handoffRequestKey(actorHandle, requestId), {
+      actorHandle,
+      requestId,
+      fingerprint,
+      kind,
+      handoffId,
+      result: durableHandoffResult(result),
+    });
+    while (this.handoffRequests.size > MAX_HANDOFF_REQUESTS) {
+      const evictable = [...this.handoffRequests.entries()].find(
+        ([, receipt]) =>
+          !(
+            receipt.kind === "offer" &&
+            receipt.result.ok &&
+            receipt.handoffId !== undefined &&
+            !isHandoffTerminal(this.handoffs.get(receipt.handoffId)?.status)
+          )
+      );
+      if (!evictable) break;
+      this.handoffRequests.delete(evictable[0]);
+    }
+    this.onChanged?.();
+    return result;
+  }
+
+  private recordHandoffAudit(
+    handoff: HandoffOffer,
+    actorHandle: string,
+    action: HandoffAuditEntry["action"],
+    fromStatus: HandoffOffer["status"] | undefined,
+    reason?: HandoffAuditEntry["reason"]
+  ): void {
+    this.handoffAudit.push({
+      id: randomUUID(),
+      handoffId: handoff.id,
+      actorHandle,
+      action,
+      fromStatus,
+      toStatus: handoff.status,
+      handoffVersion: handoff.version,
+      handoffRevision: this.handoffRevision,
+      ts: Date.now(),
+      reason,
+    });
+    if (this.handoffAudit.length > MAX_HANDOFF_AUDIT_ENTRIES) {
+      this.handoffAudit.splice(0, this.handoffAudit.length - MAX_HANDOFF_AUDIT_ENTRIES);
+    }
+  }
+
+  private broadcastHandoffs(): void {
+    this.broadcast({
+      t: "handoffs",
+      handoffs: this.handoffList,
+      handoffAudit: this.handoffAuditLog,
+      handoffRevision: this.handoffRevision,
+    });
+  }
+
+  private reclaimOldestTerminalHandoff(): boolean {
+    const terminal = [...this.handoffs.values()]
+      .filter((handoff) => isHandoffTerminal(handoff.status))
+      .sort((left, right) => left.updatedAt - right.updatedAt || left.createdAt - right.createdAt)[0];
+    if (!terminal) return false;
+    this.handoffs.delete(terminal.id);
+    for (let index = this.handoffAudit.length - 1; index >= 0; index--) {
+      if (this.handoffAudit[index]!.handoffId === terminal.id) this.handoffAudit.splice(index, 1);
+    }
+    for (const [key, receipt] of this.handoffRequests) {
+      if (receipt.handoffId === terminal.id) this.handoffRequests.delete(key);
+    }
+    return true;
   }
 
   /**
@@ -398,8 +1616,18 @@ export class Room {
     if (role === "agent") {
       const key = agentId ?? `${handle}:default`;
       const conn = this.agents.get(key);
+      // A demotion may already have removed the map entry before WebSocket's
+      // close event is queued. Lifecycle reconciliation must not depend on the
+      // entry still being present; only a live replacement socket suppresses
+      // the stale close event.
+      if (conn && socket && conn.socket !== socket) return;
+      const handoffsChanged = this.transitionHandoffsForRemoval(
+        handle,
+        "disconnected",
+        key
+      );
+      await this.persistHandoffTransitions(handoffsChanged);
       if (!conn) return;
-      if (socket && conn.socket !== socket) return;
       label = conn.label;
       this.agents.delete(key);
     } else {
@@ -408,6 +1636,9 @@ export class Room {
       if (socket && conn.socket !== socket) return;
       label = isContainer(handle) ? "The shared workspace" : conn.member.displayName;
       this.connections.delete(handle);
+      if (!isContainer(handle)) {
+        await this.cancelPreClaimHandoffsFor(handle, "disconnected");
+      }
       this.containers.delete(handle);
       // Anything dispatched to them will never be answered now. Say so at once
       // rather than leaving the asking agent to burn its full timeout on a
@@ -503,6 +1734,7 @@ export class Room {
     name: string,
     input: Record<string, unknown>
   ): void {
+    if (!this.isAgentAuthorized(requester.agentId)) return;
     const target = targetHandle === "room" ? this.host : targetHandle;
     if (!target) {
       this.replyRemote(requester.agentId, requestId, "This room has no shared workspace host.", true);
@@ -643,6 +1875,8 @@ export class Room {
 
   /** Release the driver's session, stream and timers. */
   async dispose(): Promise<void> {
+    if (this.handoffExpiryTimer) clearTimeout(this.handoffExpiryTimer);
+    this.handoffExpiryTimer = undefined;
     await this.driver.close?.();
   }
 
@@ -662,7 +1896,7 @@ export class Room {
     text = text.slice(0, Room.MAX_MESSAGE_CHARS);
     if (role === "agent") {
       const conn = this.agents.get(agentId ?? `${handle}:default`);
-      if (!conn || text.trim() === "") return;
+      if (!conn || !this.isAgentAuthorized(conn.id) || text.trim() === "") return;
       const depth = (this.chainDepth.get(conn.id) ?? 0) + 1;
       this.chainDepth.set(conn.id, depth);
       // Attributed to its owner, in their colour, and named so two of one
@@ -934,6 +2168,97 @@ export class Room {
  */
 function isNavigation(tool: string): boolean {
   return tool === "list_dir" || tool === "stat" || tool === "list_files";
+}
+
+function validGoalRequestId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_GOAL_REQUEST_ID_CHARS &&
+    /^[A-Za-z0-9._:-]+$/.test(value)
+  );
+}
+
+function validHandoffRequestId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_HANDOFF_REQUEST_ID_CHARS &&
+    /^[A-Za-z0-9._:-]+$/.test(value)
+  );
+}
+
+function isHandoffTerminal(status: HandoffOffer["status"] | undefined): boolean {
+  return Boolean(
+    status &&
+      ["completed", "failed", "outcomeUnknown", "declined", "cancelled", "expired"].includes(
+        status
+      )
+  );
+}
+
+/** Persist a fixed-size retry identity even when a rejected payload was huge. */
+function goalRequestFingerprint(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function goalRequestKey(actorHandle: string, requestId: string): string {
+  return `${actorHandle}\0${requestId}`;
+}
+
+function handoffRequestFingerprint(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function handoffRequestKey(actorHandle: string, requestId: string): string {
+  return `${actorHandle}\0${requestId}`;
+}
+
+/** Receipts retain the mutation result, never an O(goals + audit) snapshot. */
+function durableGoalResult(result: GoalResultMsg): GoalResultMsg {
+  const durable: GoalResultMsg = {
+    t: "goalResult",
+    requestId: result.requestId,
+    ok: result.ok,
+    roomRevision: result.roomRevision,
+  };
+  if (result.goal) durable.goal = { ...result.goal };
+  if (result.message !== undefined) durable.message = result.message;
+  return durable;
+}
+
+/** Receipts retain one result, never an O(handoffs + audit) snapshot. */
+function durableHandoffResult(result: HandoffResultMsg): HandoffResultMsg {
+  const durable: HandoffResultMsg = {
+    t: "handoffResult",
+    requestId: result.requestId,
+    ok: result.ok,
+    handoffRevision: result.handoffRevision,
+  };
+  if (result.handoff) durable.handoff = structuredClone(result.handoff);
+  if (result.message !== undefined) durable.message = result.message;
+  return durable;
+}
+
+/** Redact common credentials before shared text becomes continuation context. */
+export function redactHandoffText(value: string): string {
+  return value
+    .replace(/\b(?:sk|ghp|gho|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{10,}\b/gi, "[REDACTED]")
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED]")
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
+    .replace(
+      /((?:api[_-]?key|access[_-]?token|room[_-]?token|secret|password)\s*[:=]\s*)["']?[^\s"',;]+/gi,
+      "$1[REDACTED]"
+    );
+}
+
+function nextGoalStatus(status: Goal["status"], action: GoalTransition): Goal["status"] | undefined {
+  if (status === "active" && action === "pause") return "paused";
+  if (status === "paused" && action === "resume") return "active";
+  if ((status === "active" || status === "paused") && action === "complete") {
+    return "completed";
+  }
+  return undefined;
 }
 
 function verbFor(tool: string): string {

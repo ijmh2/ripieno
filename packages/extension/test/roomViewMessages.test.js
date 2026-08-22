@@ -8,7 +8,7 @@ const {
 } = require("../dist/roomViewMessages.js");
 
 describe("room webview message boundary", () => {
-  test("accepts only the four known message shapes", () => {
+  test("accepts only the known message shapes", () => {
     assert.deepEqual(parseRoomViewMessage({ type: "ready" }), { type: "ready" });
     assert.deepEqual(parseRoomViewMessage({ type: "send", text: "  hello  " }), {
       type: "send",
@@ -19,8 +19,59 @@ describe("room webview message boundary", () => {
       { type: "approvalVerdict", id: "ap_1", choice: "once" }
     );
     assert.deepEqual(
+      parseRoomViewMessage({
+        type: "handoffAction",
+        action: "retry",
+        id: "handoff_1",
+        expectedVersion: 7,
+        targetAgentId: "sam::reviewer",
+      }),
+      {
+        type: "handoffAction",
+        action: "retry",
+        id: "handoff_1",
+        expectedVersion: 7,
+        targetAgentId: "sam::reviewer",
+      }
+    );
+    assert.deepEqual(
       parseRoomViewMessage({ type: "onboardingAction", action: "joinRoom" }),
       { type: "onboardingAction", action: "joinRoom" }
+    );
+    assert.deepEqual(
+      parseRoomViewMessage({ type: "onboardingAction", action: "addAgent" }),
+      { type: "onboardingAction", action: "addAgent" }
+    );
+    assert.deepEqual(
+      parseRoomViewMessage({
+        type: "handoffAction",
+        action: "accept",
+        id: "handoff_1",
+        expectedVersion: 1,
+        targetAgentId: "sam::reviewer",
+      }),
+      {
+        type: "handoffAction",
+        action: "accept",
+        id: "handoff_1",
+        expectedVersion: 1,
+        targetAgentId: "sam::reviewer",
+      }
+    );
+    assert.deepEqual(
+      parseRoomViewMessage({
+        type: "handoffAction",
+        action: "decline",
+        id: "handoff_1",
+        expectedVersion: 1,
+      }),
+      {
+        type: "handoffAction",
+        action: "decline",
+        id: "handoff_1",
+        expectedVersion: 1,
+        targetAgentId: undefined,
+      }
     );
   });
 
@@ -42,6 +93,13 @@ describe("room webview message boundary", () => {
       { type: "approvalVerdict", id: "x".repeat(129), choice: "once" },
       { type: "approvalVerdict", id: "ap_1", choice: "ALLOW" },
       { type: "approvalVerdict", id: "ap_1", choice: "once", command: "anything" },
+      { type: "handoffAction", action: "runCommand", id: "handoff_1", expectedVersion: 1 },
+      { type: "handoffAction", action: "accept", id: "", expectedVersion: 1 },
+      { type: "handoffAction", action: "accept", id: "handoff_1", expectedVersion: 0 },
+      { type: "handoffAction", action: "accept", id: "handoff_1", expectedVersion: 1.5 },
+      { type: "handoffAction", action: "accept", id: "handoff_1", expectedVersion: 1, targetAgentId: "" },
+      { type: "handoffAction", action: "decline", id: "handoff_1", expectedVersion: 1, targetAgentId: "sam::reviewer" },
+      { type: "handoffAction", action: "cancel", id: "handoff_1", expectedVersion: 1, command: "anything" },
     ]) {
       assert.equal(parseRoomViewMessage(value), undefined, JSON.stringify(value)?.slice(0, 160));
     }
@@ -69,6 +127,20 @@ describe("room webview message boundary", () => {
       parseRoomViewMessage({ type: "onboardingAction", action: "attachAgent", args: ["other"] }),
       undefined
     );
+    assert.equal(
+      parseRoomViewMessage({ type: "onboardingAction", action: "addAgent", provider: "codex" }),
+      undefined
+    );
+    assert.equal(
+      parseRoomViewMessage({
+        type: "handoffAction",
+        action: "accept",
+        id: "handoff_1",
+        expectedVersion: 1,
+        command: "workbench.action.terminal.sendSequence",
+      }),
+      undefined
+    );
   });
 });
 
@@ -78,11 +150,35 @@ describe("onboarding action authorization", () => {
     assert.equal(onboardingCommandFor("joinRoom", { room: "review" }), undefined);
   });
 
-  test("attach is allowed only for a joined writable member with no agent", () => {
+  test("add is allowed only for a joined writable member with no configured agent", () => {
+    assert.equal(
+      onboardingCommandFor("addAgent", {
+        room: "review",
+        you: { role: "member", agents: [] },
+        localAgents: [],
+      }),
+      "ripieno.addAgent"
+    );
+    for (const state of [
+      {},
+      { room: "review" },
+      { room: "review", you: { role: "viewer", agents: [] }, localAgents: [] },
+      {
+        room: "review",
+        you: { role: "member", agents: [] },
+        localAgents: [{ id: "local:agent", state: "detached" }],
+      },
+    ]) {
+      assert.equal(onboardingCommandFor("addAgent", state), undefined);
+    }
+  });
+
+  test("attach is allowed only for a joined writable member with a detached local agent", () => {
     assert.equal(
       onboardingCommandFor("attachAgent", {
         room: "review",
         you: { role: "member", agents: [] },
+        localAgents: [{ id: "local:agent", state: "detached" }],
       }),
       "ripieno.attachAgent"
     );
@@ -90,6 +186,7 @@ describe("onboarding action authorization", () => {
       onboardingCommandFor("attachAgent", {
         room: "review",
         you: { role: "owner", agents: [] },
+        localAgents: [{ id: "local:agent", state: "error" }],
       }),
       "ripieno.attachAgent"
     );
@@ -97,8 +194,17 @@ describe("onboarding action authorization", () => {
     for (const state of [
       {},
       { room: "review" },
-      { room: "review", you: { role: "viewer", agents: [] } },
-      { room: "review", you: { role: "member", agents: [{}] } },
+      {
+        room: "review",
+        you: { role: "viewer", agents: [] },
+        localAgents: [{ id: "local:agent", state: "detached" }],
+      },
+      {
+        room: "review",
+        you: { role: "member", agents: [{ id: "ivan::local:agent" }] },
+        localAgents: [{ id: "local:agent", state: "idle" }],
+      },
+      { room: "review", you: { role: "member", agents: [] }, localAgents: [] },
       { room: "review", you: { role: "member" } },
     ]) {
       assert.equal(onboardingCommandFor("attachAgent", state), undefined);

@@ -15,7 +15,47 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import type { ActionEntry, AgentUsage, Member, RoomRole, TranscriptEntry } from "@ripieno/protocol";
+import type {
+  ActionEntry,
+  AgentUsage,
+  Goal,
+  GoalAuditEntry,
+  GoalResultMsg,
+  HandoffAuditEntry,
+  HandoffOffer,
+  HandoffResultMsg,
+  Member,
+  RoomRole,
+  TranscriptEntry,
+} from "@ripieno/protocol";
+import {
+  MAX_GOALS,
+  MAX_GOAL_AUDIT_ENTRIES,
+  MAX_GOAL_REQUESTS,
+  MAX_HANDOFFS,
+  MAX_HANDOFF_AUDIT_ENTRIES,
+  MAX_HANDOFF_REQUESTS,
+} from "@ripieno/protocol";
+
+/** Durable idempotency receipt. Its fingerprint includes the relay-derived actor. */
+export interface GoalRequestReceipt {
+  actorHandle: string;
+  requestId: string;
+  fingerprint: string;
+  kind: "create" | "transition";
+  goalId?: string;
+  result: GoalResultMsg;
+}
+
+/** Durable idempotency receipt. Its fingerprint includes the relay-derived actor. */
+export interface HandoffRequestReceipt {
+  actorHandle: string;
+  requestId: string;
+  fingerprint: string;
+  kind: "offer" | "decision";
+  handoffId?: string;
+  result: HandoffResultMsg;
+}
 
 export interface RoomSnapshot {
   transcript: TranscriptEntry[];
@@ -29,6 +69,14 @@ export interface RoomSnapshot {
   roles?: Record<string, RoomRole>;
   /** Per-agent totals, so a restart does not reset everyone's spend to zero. */
   usage?: AgentUsage[];
+  goals?: Goal[];
+  goalAudit?: GoalAuditEntry[];
+  goalRequests?: GoalRequestReceipt[];
+  roomRevision?: number;
+  handoffs?: HandoffOffer[];
+  handoffAudit?: HandoffAuditEntry[];
+  handoffRequests?: HandoffRequestReceipt[];
+  handoffRevision?: number;
 }
 
 export interface RoomStore {
@@ -36,13 +84,18 @@ export interface RoomStore {
   save(code: string, snapshot: RoomSnapshot): Promise<void>;
 }
 
-/** The default: nothing survives, which is correct for tests and local runs. */
+/** The default: survives room reaping for this relay process, but not a restart. */
 export class MemoryRoomStore implements RoomStore {
-  async load(): Promise<undefined> {
-    return undefined;
+  private readonly rooms = new Map<string, RoomSnapshot>();
+
+  async load(code: string): Promise<RoomSnapshot | undefined> {
+    const snapshot = this.rooms.get(code);
+    return snapshot ? structuredClone(snapshot) : undefined;
   }
-  async save(): Promise<void> {
-    // Intentionally nothing.
+  async save(code: string, snapshot: RoomSnapshot): Promise<void> {
+    // Reaping an empty room must release sockets and drivers, not its state.
+    // Clone so a revived Room cannot mutate the store by retaining references.
+    this.rooms.set(code, structuredClone(snapshot));
   }
 }
 
@@ -116,6 +169,16 @@ export class FileRoomStore implements RoomStore {
         members: parsed.members ?? [],
         roles: parsed.roles ?? {},
         usage: parsed.usage ?? [],
+        goals: (parsed.goals ?? []).slice(-MAX_GOALS),
+        goalAudit: (parsed.goalAudit ?? []).slice(-MAX_GOAL_AUDIT_ENTRIES),
+        goalRequests: (parsed.goalRequests ?? []).slice(-MAX_GOAL_REQUESTS),
+        roomRevision: Number.isSafeInteger(parsed.roomRevision) ? parsed.roomRevision : 0,
+        handoffs: (parsed.handoffs ?? []).slice(-MAX_HANDOFFS),
+        handoffAudit: (parsed.handoffAudit ?? []).slice(-MAX_HANDOFF_AUDIT_ENTRIES),
+        handoffRequests: (parsed.handoffRequests ?? []).slice(-MAX_HANDOFF_REQUESTS),
+        handoffRevision: Number.isSafeInteger(parsed.handoffRevision)
+          ? parsed.handoffRevision
+          : 0,
       };
     } catch {
       // A missing file is the normal case for a new room; a corrupt one should
@@ -142,6 +205,14 @@ export class FileRoomStore implements RoomStore {
       members: snapshot.members,
       roles: snapshot.roles,
       usage: snapshot.usage,
+      goals: (snapshot.goals ?? []).slice(-MAX_GOALS),
+      goalAudit: (snapshot.goalAudit ?? []).slice(-MAX_GOAL_AUDIT_ENTRIES),
+      goalRequests: (snapshot.goalRequests ?? []).slice(-MAX_GOAL_REQUESTS),
+      roomRevision: snapshot.roomRevision ?? 0,
+      handoffs: (snapshot.handoffs ?? []).slice(-MAX_HANDOFFS),
+      handoffAudit: (snapshot.handoffAudit ?? []).slice(-MAX_HANDOFF_AUDIT_ENTRIES),
+      handoffRequests: (snapshot.handoffRequests ?? []).slice(-MAX_HANDOFF_REQUESTS),
+      handoffRevision: snapshot.handoffRevision ?? 0,
     };
 
     // Write then rename: a relay killed mid-write would otherwise leave a

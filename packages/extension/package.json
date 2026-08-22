@@ -136,7 +136,7 @@
       "view/title": [
         {
           "command": "ripieno.addAgent",
-          "when": "view == ripieno.rooms",
+          "when": "view == ripieno.rooms && ripieno.canAttachAgents",
           "group": "navigation"
         },
         {
@@ -209,6 +209,16 @@
         {
           "command": "ripieno.removeAgent",
           "when": "view == ripieno.rooms && viewItem == ripienoAgentAttached",
+          "group": "2_manage@9"
+        },
+        {
+          "command": "ripieno.customizeAgent",
+          "when": "view == ripieno.rooms && viewItem == ripienoAgentDetachedReadOnly",
+          "group": "inline@1"
+        },
+        {
+          "command": "ripieno.removeAgent",
+          "when": "view == ripieno.rooms && viewItem == ripienoAgentDetachedReadOnly",
           "group": "2_manage@9"
         },
         {

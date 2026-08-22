@@ -14,10 +14,11 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Member, RosterEntry, TranscriptEntry } from "@ripieno/protocol";
+import type { Goal, HandoffOffer, Member, RosterEntry, TranscriptEntry } from "@ripieno/protocol";
+import { MAX_GOAL_AUDIT_ENTRIES, MAX_GOAL_REQUESTS } from "@ripieno/protocol";
 import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
-import { FileRoomStore } from "../src/roomStore.js";
+import { FileRoomStore, MemoryRoomStore } from "../src/roomStore.js";
 
 const mira: Member = { handle: "mellery", displayName: "Mira" };
 const sam: Member = { handle: "swhitfield", displayName: "Sam" };
@@ -32,7 +33,15 @@ class Socket implements SocketLike {
   close(): void {
     this.readyState = 3;
   }
-  joined(): { transcript: unknown[]; actions?: unknown[]; roster: RosterEntry[] } {
+  joined(): {
+    transcript: unknown[];
+    actions?: unknown[];
+    goals?: Goal[];
+    roomRevision?: number;
+    handoffs?: HandoffOffer[];
+    handoffRevision?: number;
+    roster: RosterEntry[];
+  } {
     return JSON.parse(this.sent.find((m) => m.includes('"joined"')) ?? "{}");
   }
 }
@@ -83,6 +92,123 @@ describe("room history survives a restart", () => {
       "the conversation should be there"
     );
     assert.equal(joined.actions?.length, 1, "and so should the work");
+  });
+
+  test("goals, audit, revision and idempotency survive restart", async () => {
+    const store = new FileRoomStore(dir);
+    const first = new Room("durable-goals", new Driver());
+    await first.join(mira, new Socket());
+    const created = first.createGoal("mellery", "req_create", "Ship multiplayer goals");
+    const goalId = created.goal!.id;
+    first.transitionGoal("mellery", "req_pause", goalId, "pause", 1);
+    await store.save("durable-goals", first.snapshot());
+
+    const revived = new Room("durable-goals", new Driver());
+    revived.hydrate((await store.load("durable-goals"))!);
+    const socket = new Socket();
+    await revived.join(mira, socket);
+    assert.equal(socket.joined().goals?.[0]?.status, "paused");
+    assert.equal(socket.joined().goals?.[0]?.version, 2);
+    assert.equal(socket.joined().roomRevision, 2);
+    assert.equal(revived.goalAuditLog.length, 2);
+
+    const replay = revived.createGoal("mellery", "req_create", "Ship multiplayer goals");
+    assert.equal(replay.goal?.id, goalId, "a retry after restart must not create a second goal");
+    assert.equal(replay.goal?.status, "paused", "replay must use current authoritative state");
+    assert.equal(replay.goal?.version, 2);
+    assert.equal(revived.goalList.length, 1);
+    const conflict = revived.createGoal("mellery", "req_create", "A different goal");
+    assert.equal(conflict.ok, false);
+    assert.match(conflict.message ?? "", /already used/);
+  });
+
+  test("pending handoffs, audit, revision and idempotency survive restart", async () => {
+    const store = new FileRoomStore(dir);
+    const first = new Room("durable-handoffs", new Driver());
+    const miraHuman = new Socket();
+    const samHuman = new Socket();
+    await first.join(mira, miraHuman);
+    await first.join(sam, samHuman);
+    await first.join(mira, new Socket(), "agent", {
+      id: "mellery::coder",
+      label: "Mira's coder",
+    });
+    const created = first.createHandoff(
+      "mellery",
+      "req_handoff_create",
+      "swhitfield",
+      "mellery::coder",
+      "Finish the persisted launch task"
+    );
+    await store.save("durable-handoffs", first.snapshot());
+
+    const revived = new Room("durable-handoffs", new Driver());
+    revived.hydrate((await store.load("durable-handoffs"))!);
+    const joinedSocket = new Socket();
+    await revived.join(sam, joinedSocket);
+    assert.equal(joinedSocket.joined().handoffs?.[0]?.id, created.handoff?.id);
+    assert.equal(joinedSocket.joined().handoffs?.[0]?.status, "pending");
+    assert.equal(joinedSocket.joined().handoffRevision, 1);
+    assert.equal(revived.handoffAuditLog.length, 1);
+
+    const replay = revived.createHandoff(
+      "mellery",
+      "req_handoff_create",
+      "swhitfield",
+      "mellery::coder",
+      "Finish the persisted launch task"
+    );
+    assert.equal(replay.ok, true);
+    assert.equal(replay.handoff?.id, created.handoff?.id);
+    assert.equal(revived.handoffList.length, 1);
+    const conflict = revived.createHandoff(
+      "mellery",
+      "req_handoff_create",
+      "someone-else",
+      "mellery::coder",
+      "Finish the persisted launch task"
+    );
+    assert.equal(conflict.ok, false);
+    assert.match(conflict.message ?? "", /already used/);
+  });
+
+  test("persisted goal audit and idempotency receipts are explicitly capped", async () => {
+    const store = new FileRoomStore(dir);
+    const room = new Room("bounded-goals", new Driver());
+    await room.join(mira, new Socket());
+    const goal = room.createGoal("mellery", "req_create", "Alternate state").goal!;
+    let version = 1;
+    for (let i = 0; i < MAX_GOAL_AUDIT_ENTRIES + 20; i++) {
+      const action = i % 2 === 0 ? "pause" : "resume";
+      const result = room.transitionGoal("mellery", `req_${i}`, goal.id, action, version);
+      assert.equal(result.ok, true);
+      version += 1;
+    }
+    await store.save("bounded-goals", room.snapshot());
+    const loaded = await store.load("bounded-goals");
+    assert.equal(loaded?.goalAudit?.length, MAX_GOAL_AUDIT_ENTRIES);
+    assert.equal(loaded?.goalRequests?.length, MAX_GOAL_REQUESTS);
+    assert.ok(loaded?.goalRequests?.every((receipt) => receipt.fingerprint.length === 64));
+  });
+
+  test("the in-memory store survives room reaping without sharing mutable references", async () => {
+    const store = new MemoryRoomStore();
+    const first = new Room("memory-goals", new Driver());
+    await first.join(mira, new Socket());
+    const goal = first.createGoal("mellery", "req_memory", "Survive an empty room").goal!;
+    await store.save("memory-goals", first.snapshot());
+
+    // Mutating the live room after save must not mutate the stored snapshot.
+    first.transitionGoal("mellery", "req_memory_pause", goal.id, "pause", 1);
+    const stored = await store.load("memory-goals");
+    assert.equal(stored?.goals?.[0]?.status, "active");
+
+    const revived = new Room("memory-goals", new Driver());
+    revived.hydrate(stored!);
+    const socket = new Socket();
+    await revived.join(mira, socket);
+    assert.equal(socket.joined().goals?.[0]?.id, goal.id);
+    assert.equal(socket.joined().roomRevision, 1);
   });
 
   test("restored members are absent until they reconnect", async () => {

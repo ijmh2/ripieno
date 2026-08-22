@@ -136,6 +136,7 @@ describe("every menu clause names something that exists", () => {
       "ripienoAgentDetached",
       "ripienoAgentAttached",
       "ripienoAgentError",
+      "ripienoAgentDetachedReadOnly",
     ]) {
       const item = menus.find(
         (menu) =>
@@ -153,6 +154,7 @@ describe("every menu clause names something that exists", () => {
       "ripienoAgentDetached",
       "ripienoAgentAttached",
       "ripienoAgentError",
+      "ripienoAgentDetachedReadOnly",
     ]) {
       const item = menus.find(
         (menu) =>
@@ -163,6 +165,20 @@ describe("every menu clause names something that exists", () => {
       assert.ok(item, `no Delete Agent action for ${context}`);
       assert.ok(!item.group?.startsWith("inline"), `Delete Agent crowds inline controls for ${context}`);
     }
+  });
+
+  test("viewer rows keep management but expose no attach or add affordance", () => {
+    const viewerAttach = menus.find(
+      (menu) =>
+        menu.command === "ripieno.attachAgent" &&
+        menu.when?.includes("viewItem == ripienoAgentDetachedReadOnly")
+    );
+    assert.equal(viewerAttach, undefined);
+
+    const titleAdd = menus.find(
+      (menu) => menu.where === "view/title" && menu.command === "ripieno.addAgent"
+    );
+    assert.match(titleAdd?.when ?? "", /ripieno\.canAttachAgents/);
   });
 });
 

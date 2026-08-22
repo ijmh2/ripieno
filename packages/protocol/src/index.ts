@@ -25,6 +25,8 @@ export interface AttachedAgent {
   owner: string;
   /** How it appears in the transcript, e.g. "Mira's agent" or "Mira's reviewer". */
   label: string;
+  /** What the attached host can actually do; absent for older clients. */
+  capability?: AgentCapability;
   /**
    * What it is doing right now, when its host has said.
    *
@@ -33,6 +35,8 @@ export interface AttachedAgent {
    */
   state?: AgentActivity;
 }
+
+export type AgentCapability = "conversation" | "workspace";
 
 /**
  * An agent's activity, as the room sees it.
@@ -119,6 +123,172 @@ export const MAX_AGENT_HOPS = 2;
 export type RoomStatus = "idle" | "thinking" | "awaiting-tool" | "error";
 
 /* ------------------------------------------------------------------ */
+/* Durable goals                                                       */
+/* ------------------------------------------------------------------ */
+
+/** Explicit wire/storage bounds. The relay enforces these values. */
+export const MAX_GOALS = 100;
+export const MAX_GOAL_TEXT_CHARS = 1_000;
+export const MAX_GOAL_AUDIT_ENTRIES = 500;
+export const MAX_GOAL_REQUESTS = 500;
+export const MAX_GOAL_REQUEST_ID_CHARS = 128;
+
+export type GoalStatus = "active" | "paused" | "completed";
+export type GoalTransition = "pause" | "resume" | "complete";
+
+/** A durable, relay-owned objective shared by everyone in one room. */
+export interface Goal {
+  /** Opaque, server-minted id. */
+  id: string;
+  text: string;
+  /** Taken from the authenticated human connection, never from a message. */
+  ownerHandle: string;
+  ownerName: string;
+  status: GoalStatus;
+  /** Incremented on every successful transition of this goal. */
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}
+
+export interface GoalAuditEntry {
+  id: string;
+  goalId: string;
+  requestId: string;
+  actorHandle: string;
+  action: "create" | GoalTransition;
+  fromStatus?: GoalStatus;
+  toStatus: GoalStatus;
+  goalVersion: number;
+  roomRevision: number;
+  ts: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Explicit agent handoff                                              */
+/* ------------------------------------------------------------------ */
+
+/** Relay-enforced bounds for durable handoff state and room context. */
+export const HANDOFF_EXPIRY_MS = 5 * 60_000;
+export const MAX_HANDOFFS = 100;
+export const MAX_HANDOFF_AUDIT_ENTRIES = 500;
+export const MAX_HANDOFF_REQUESTS = 500;
+export const MAX_HANDOFF_REQUEST_ID_CHARS = 128;
+export const MAX_HANDOFF_TASK_CHARS = 2_000;
+export const MAX_HANDOFF_OUTCOME_CHARS = 2_000;
+export const MAX_HANDOFF_CONTEXT_CHARS = 24_000;
+export const MAX_HANDOFF_CONTEXT_TRANSCRIPT = 25;
+export const MAX_HANDOFF_CONTEXT_ACTIONS = 25;
+export const MAX_HANDOFF_CONTEXT_GOALS = 20;
+
+export type HandoffStatus =
+  | "pending"
+  | "assigned"
+  | "claimed"
+  | "started"
+  | "completed"
+  | "failed"
+  | "outcomeUnknown"
+  | "declined"
+  | "cancelled"
+  | "expired";
+export type HandoffDecision = "accept" | "decline" | "cancel" | "retry";
+
+/**
+ * A transfer of responsibility, not a transfer of provider identity.
+ *
+ * Provider credentials and private provider session ids are intentionally not
+ * representable here. On acceptance a recipient-owned local agent starts from
+ * shared room context using its own provider configuration and session.
+ */
+export interface HandoffOffer {
+  id: string;
+  /** Public server-minted correlation value. It is not an authentication secret. */
+  nonce: string;
+  /** The bounded task the source owner explicitly asks the recipient to take on. */
+  task: string;
+  sourceAgentId: string;
+  sourceAgentLabel: string;
+  sourceOwnerHandle: string;
+  sourceOwnerName: string;
+  targetHandle: string;
+  targetName: string;
+  status: HandoffStatus;
+  /** Incremented at every durable lifecycle transition. */
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+  expiresAt: number;
+  decidedBy?: string;
+  decisionReason?: string;
+  targetAgentId?: string;
+  targetAgentLabel?: string;
+  targetAgentCapability?: AgentCapability;
+  /** Relay-minted identity for one explicitly authorised delivery attempt. */
+  deliveryId?: string;
+  assignedAt?: number;
+  claimedAt?: number;
+  startedAt?: number;
+  finishedAt?: number;
+  outcomeDetail?: string;
+  /** Frozen bounded context, persisted before assignment is delivered. */
+  continuation?: HandoffContinuationContext;
+}
+
+export interface HandoffAuditEntry {
+  id: string;
+  handoffId: string;
+  actorHandle: string;
+  action:
+    | "offer"
+    | "assign"
+    | "claim"
+    | "start"
+    | "complete"
+    | "fail"
+    | "outcomeUnknown"
+    | "retry"
+    | "decline"
+    | "cancel"
+    | "expire";
+  fromStatus?: HandoffStatus;
+  toStatus: HandoffStatus;
+  handoffVersion: number;
+  handoffRevision: number;
+  ts: number;
+  reason?: string;
+}
+
+/** A bounded relay-authoritative snapshot used to continue work on another agent. */
+export interface HandoffContinuationContext {
+  schemaVersion: 2;
+  notice: string;
+  handoff: {
+    id: string;
+    nonce: string;
+    sourceAgentId: string;
+    sourceAgentLabel: string;
+    sourceOwnerHandle: string;
+    targetAgentId: string;
+    targetAgentLabel: string;
+    targetHandle: string;
+    acceptedAt: number;
+    task: string;
+    targetCapability: AgentCapability;
+  };
+  transcript: TranscriptEntry[];
+  actions: ActionEntry[];
+  activeGoals: Goal[];
+  truncated: {
+    transcript: boolean;
+    actions: boolean;
+    goals: boolean;
+    characters: boolean;
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Client → Server                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -158,6 +328,8 @@ export interface JoinMsg {
   agentId?: string;
   /** Role "agent" only. Transcript label, e.g. "Mira's reviewer". */
   agentLabel?: string;
+  /** Role "agent" only. Declared capability used to keep continuation prompts honest. */
+  agentCapability?: AgentCapability;
   /**
    * Shared secret, when the relay is configured with one.
    *
@@ -341,6 +513,68 @@ export interface ClaimWorkspaceMsg {
   claim: boolean;
 }
 
+export interface GoalCreateMsg {
+  t: "goalCreate";
+  /** Client retry key. It identifies this exact mutation, not the goal. */
+  requestId: string;
+  text: string;
+}
+
+export interface GoalTransitionMsg {
+  t: "goalTransition";
+  requestId: string;
+  goalId: string;
+  action: GoalTransition;
+  /** Optimistic concurrency guard from the latest authoritative snapshot. */
+  expectedVersion: number;
+}
+
+export interface HandoffOfferMsg {
+  t: "handoffOffer";
+  requestId: string;
+  targetHandle: string;
+  /** Optional only when the actor has exactly one present agent. */
+  sourceAgentId?: string;
+  task: string;
+}
+
+export interface HandoffDecisionMsg {
+  t: "handoffDecision";
+  requestId: string;
+  handoffId: string;
+  /** Public correlation value from the authoritative offer snapshot; not authentication. */
+  nonce: string;
+  action: HandoffDecision;
+  expectedVersion: number;
+  /** Required for accept unless the recipient has exactly one present agent. */
+  targetAgentId?: string;
+}
+
+/** Recipient agent proves it durably stored an assignment before source release. */
+export interface HandoffClaimMsg {
+  t: "handoffClaim";
+  handoffId: string;
+  deliveryId: string;
+  expectedVersion: number;
+}
+
+/** Recipient agent reports that its local started marker is durable. */
+export interface HandoffStartedMsg {
+  t: "handoffStarted";
+  handoffId: string;
+  deliveryId: string;
+  expectedVersion: number;
+}
+
+/** Correlated terminal result from the exact assigned recipient agent. */
+export interface HandoffOutcomeMsg {
+  t: "handoffOutcome";
+  handoffId: string;
+  deliveryId: string;
+  outcome: "completed" | "failed" | "outcomeUnknown";
+  detail?: string;
+}
+
 export type ClientMsg =
   | JoinMsg
   | SayMsg
@@ -353,6 +587,13 @@ export type ClientMsg =
   | AgentUsageMsg
   | AgentStateMsg
   | WorkspaceChangedMsg
+  | GoalCreateMsg
+  | GoalTransitionMsg
+  | HandoffOfferMsg
+  | HandoffDecisionMsg
+  | HandoffClaimMsg
+  | HandoffStartedMsg
+  | HandoffOutcomeMsg
   | PingMsg;
 
 /* ------------------------------------------------------------------ */
@@ -378,6 +619,14 @@ export interface JoinedMsg {
   actions?: ActionEntry[];
   /** Per-agent spend so far, so a joiner sees the room's cost immediately. */
   usage?: AgentUsage[];
+  /** Authoritative durable goal snapshot. */
+  goals?: Goal[];
+  goalAudit?: GoalAuditEntry[];
+  roomRevision?: number;
+  /** Authoritative durable handoff snapshot. */
+  handoffs?: HandoffOffer[];
+  handoffAudit?: HandoffAuditEntry[];
+  handoffRevision?: number;
   you: RosterEntry;
   /**
    * Agent connections only: the id the relay gave this agent.
@@ -505,6 +754,76 @@ export interface ErrorMsg {
   message: string;
 }
 
+/** Full authoritative state, broadcast after each successful goal mutation. */
+export interface GoalStateMsg {
+  t: "goals";
+  goals: Goal[];
+  goalAudit: GoalAuditEntry[];
+  roomRevision: number;
+}
+
+/** Direct acknowledgement of a mutation, including durable retry results. */
+export interface GoalResultMsg {
+  t: "goalResult";
+  requestId: string;
+  ok: boolean;
+  roomRevision: number;
+  goal?: Goal;
+  /** Current authoritative state; present on every successful acknowledgement. */
+  goals?: Goal[];
+  goalAudit?: GoalAuditEntry[];
+  message?: string;
+}
+
+/** Full authoritative state, broadcast after every handoff mutation or expiry. */
+export interface HandoffStateMsg {
+  t: "handoffs";
+  handoffs: HandoffOffer[];
+  handoffAudit: HandoffAuditEntry[];
+  handoffRevision: number;
+}
+
+/** Direct acknowledgement, including durable idempotent retry results. */
+export interface HandoffResultMsg {
+  t: "handoffResult";
+  requestId: string;
+  ok: boolean;
+  handoffRevision: number;
+  handoff?: HandoffOffer;
+  handoffs?: HandoffOffer[];
+  handoffAudit?: HandoffAuditEntry[];
+  message?: string;
+}
+
+/**
+ * Sent only to the recipient-owned agent selected by an accepted offer.
+ * Receipt authorises one local continuation run; it never restores or claims
+ * to restore the source provider's private session.
+ */
+export interface HandoffAssignmentMsg {
+  t: "handoffAssignment";
+  handoffId: string;
+  deliveryId: string;
+  handoffVersion: number;
+  context: HandoffContinuationContext;
+}
+
+/** Replayable only after claim is durable and source authority is revoked. */
+export interface HandoffStartMsg {
+  t: "handoffStart";
+  handoffId: string;
+  deliveryId: string;
+  handoffVersion: number;
+  context: HandoffContinuationContext;
+}
+
+/** Tells the accepted source host to stop acting; its provider state stays local. */
+export interface HandoffReleasedMsg {
+  t: "handoffReleased";
+  handoffId: string;
+  deliveryId: string;
+}
+
 export type ServerMsg =
   | JoinedMsg
   | RosterMsg
@@ -517,6 +836,13 @@ export type ServerMsg =
   | ActionMsg
   | WorkspaceInvalidatedMsg
   | UsageMsg
+  | GoalStateMsg
+  | GoalResultMsg
+  | HandoffStateMsg
+  | HandoffResultMsg
+  | HandoffAssignmentMsg
+  | HandoffStartMsg
+  | HandoffReleasedMsg
   | StatusMsg
   | ErrorMsg;
 

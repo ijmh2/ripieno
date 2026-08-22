@@ -72,6 +72,7 @@ export class RoomsTreeProvider
   private roster: RosterEntry[] = [];
   private myAgents: MyAgent[] = [];
   private myHandle: string | undefined;
+  private myRole: "owner" | "member" | "viewer" | undefined;
   /** Whose machine is the room's shared workspace, if anyone has offered one. */
   private host: string | undefined;
 
@@ -81,6 +82,7 @@ export class RoomsTreeProvider
     this.room = room;
     this.mode = mode;
     this.myHandle = myHandle ?? this.myHandle;
+    if (!room) this.myRole = undefined;
     this.refresh();
   }
 
@@ -92,6 +94,7 @@ export class RoomsTreeProvider
   setRoster(roster: RosterEntry[], workspaceHost?: string): void {
     this.iAmOwner = roster.some((r) => r.handle === this.myHandle && r.role === "owner");
     this.roster = roster;
+    this.myRole = roster.find((entry) => entry.handle === this.myHandle)?.role;
     this.host = workspaceHost;
     this.refresh();
   }
@@ -156,7 +159,9 @@ export class RoomsTreeProvider
       )) {
         roots.push({ kind: "myAgent", agent });
       }
-      roots.push({ kind: "hint", text: "Add agent…", command: "ripieno.addAgent" });
+      if (!this.room || this.myRole !== "viewer") {
+        roots.push({ kind: "hint", text: "Add agent…", command: "ripieno.addAgent" });
+      }
       return roots;
     }
 
@@ -265,11 +270,16 @@ export class RoomsTreeProvider
           ? `refused — ${node.agent.refusal ?? "the relay would not accept it"}`
           : `${describeAgent(node.agent.state)}${detailSuffix(node.agent)}`;
         item.iconPath = new vscode.ThemeIcon(refused ? "error" : "robot");
-        item.contextValue = "ripienoAgentDetached";
+        item.contextValue =
+          this.room && this.myRole === "viewer"
+            ? "ripienoAgentDetachedReadOnly"
+            : "ripienoAgentDetached";
         item.id = `detached:${node.agent.id}`;
         item.tooltip = refused
           ? `The relay refused this agent: ${node.agent.refusal ?? "no reason given"}`
-          : "Drag onto the room to attach it, or use the attach action.";
+          : this.room && this.myRole === "viewer"
+            ? "Viewers cannot attach agents to this room."
+            : "Drag onto the room to attach it, or use the attach action.";
         return item;
       }
 

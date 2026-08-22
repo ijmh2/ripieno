@@ -5,7 +5,14 @@
 
 import WebSocket = require("ws");
 import { isIP } from "node:net";
-import type { ClientMsg, ConnectionRole, JoinMsg, Member, ServerMsg } from "@ripieno/protocol";
+import type {
+  AgentCapability,
+  ClientMsg,
+  ConnectionRole,
+  JoinMsg,
+  Member,
+  ServerMsg,
+} from "@ripieno/protocol";
 
 export type ConnectionState = "connecting" | "online" | "offline";
 
@@ -15,6 +22,8 @@ const PING_INTERVAL_MS = 25_000;
 /** Relay close codes that must not be retried. */
 const EVICTED_CODE = 4000;
 const UNAUTHORISED_CODE = 4003;
+/** The relay ended an agent socket after its owner explicitly handed responsibility away. */
+const HANDED_OFF_CODE = 4004;
 
 export type RelayUrlValidation =
   | { ok: true; url: string }
@@ -74,6 +83,7 @@ export interface RelayClientOptions {
   /** Role "agent" only: which of the member's agents this connection is. */
   agentId?: string;
   agentLabel?: string;
+  agentCapability?: AgentCapability;
   /** Shared secret, when the relay requires one (any deployed relay should). */
   token?: string;
   /**
@@ -139,6 +149,7 @@ export class RelayClient {
         role: this.opts.role ?? "human",
         agentId: this.opts.agentId,
         agentLabel: this.opts.agentLabel,
+        agentCapability: this.opts.agentCapability,
         token: this.opts.token,
         workspaceToken: this.opts.workspaceToken,
         githubToken: this.opts.githubToken,
@@ -174,11 +185,24 @@ export class RelayClient {
         return;
       }
 
+      // A source agent that has just been handed off must not reconnect and
+      // reclaim responsibility. The preceding handoffReleased message gives a
+      // compliant AgentHost the product-level reason; this close code is the
+      // transport-level enforcement and is intentionally not an eviction error.
+      if (code === HANDED_OFF_CODE) {
+        this.disposed = true;
+        return;
+      }
+
       // 4003 is an auth refusal. Retrying with the same bad token is pointless
-      // and hammers the relay.
+      // and hammers the relay. Preserve the relay's close reason: an attached
+      // agent can also receive this code when its room role is revoked, and its
+      // host must stop local execution rather than describe that as a bad token.
       if (code === UNAUTHORISED_CODE) {
         this.disposed = true;
-        this.opts.onEvicted?.("the relay rejected this connection — check ripieno.roomToken");
+        this.opts.onEvicted?.(
+          reason.toString() || "the relay rejected this connection — check its token or room role"
+        );
         return;
       }
 

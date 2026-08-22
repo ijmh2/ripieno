@@ -8,7 +8,7 @@
 import { createServer } from "node:http";
 import { isIP } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { ClientMsg, ConnectionRole, Member } from "@ripieno/protocol";
+import type { ClientMsg, ConnectionRole, Member, ServerMsg } from "@ripieno/protocol";
 import { WORKSPACE_HANDLE } from "@ripieno/protocol";
 import { ByoDriver } from "./byoDriver.js";
 import { Room } from "./room.js";
@@ -164,7 +164,7 @@ export function startServer(config: ServerConfig): Relay {
    * a clean shutdown flushes anyway.
    */
   function scheduleSave(code: string, room: Room): void {
-    if (!config.dataDir || saveTimers.has(code)) return;
+    if (saveTimers.has(code)) return;
     const timer = setTimeout(() => {
       saveTimers.delete(code);
       void store.save(code, room.snapshot()).catch((err) => {
@@ -268,9 +268,11 @@ export function startServer(config: ServerConfig): Relay {
   /** Bring back whatever this room had before the last restart. */
   async function restore(code: string, room: Room): Promise<void> {
     room.onChanged = () => scheduleSave(code, room);
+    room.onCriticalChanged = () => store.save(code, room.snapshot());
     const snapshot = await store.load(code);
     if (!snapshot) return;
-    room.hydrate(snapshot);
+    const recoveredUncertainHandoff = room.hydrate(snapshot);
+    if (recoveredUncertainHandoff) await room.onCriticalChanged();
     log(`room ${code} restored — ${snapshot.transcript.length} messages, ${snapshot.actions.length} actions`);
   }
 
@@ -283,7 +285,7 @@ export function startServer(config: ServerConfig): Relay {
     const pending = saveTimers.get(code);
     if (pending) clearTimeout(pending);
     saveTimers.delete(code);
-    if (config.dataDir) await store.save(code, room.snapshot()).catch(() => undefined);
+    await store.save(code, room.snapshot()).catch(() => undefined);
     await room.dispose();
     log(`room ${code} closed (empty)`);
   }
@@ -338,6 +340,14 @@ export function startServer(config: ServerConfig): Relay {
       }
 
       try {
+        if (
+          msg.t !== "join" &&
+          joined?.role === "agent" &&
+          joined.agentId &&
+          !joined.room.isAgentAuthorized(joined.agentId, socket)
+        ) {
+          return send(socket, "this agent is no longer authorised in the room");
+        }
         switch (msg.t) {
           case "join": {
             if (joined) return send(socket, "already joined on this connection");
@@ -403,6 +413,7 @@ export function startServer(config: ServerConfig): Relay {
                       typeof msg.agentLabel === "string" && msg.agentLabel.trim() !== ""
                         ? msg.agentLabel.slice(0, 60)
                         : `${member.displayName}'s agent`,
+                    capability: msg.agentCapability === "workspace" ? ("workspace" as const) : ("conversation" as const),
                   }
                 : undefined;
             // A viewer may watch, but an agent acts — and acting is what they
@@ -414,6 +425,7 @@ export function startServer(config: ServerConfig): Relay {
               return;
             }
             await room.join(member, socket, role, agent);
+            if (role === "agent" && agent && !room.isAgentAuthorized(agent.id, socket)) return;
             joined = {
               room,
               handle: member.handle,
@@ -442,6 +454,7 @@ export function startServer(config: ServerConfig): Relay {
             break;
           case "toolResult":
             if (!joined) return send(socket, "join a room before returning tool results");
+            if (joined.role === "agent") return send(socket, "an agent cannot return tool results");
             await joined.room.toolResult(
               joined.handle,
               msg.callId,
@@ -463,7 +476,10 @@ export function startServer(config: ServerConfig): Relay {
 
           case "setRole":
             if (!joined) return send(socket, "join a room before changing roles");
-            joined.room.setRole(joined.handle, msg.handle, msg.role);
+            if (joined.role !== "human") {
+              return send(socket, "only a human room owner may change roles");
+            }
+            await joined.room.setRole(joined.handle, msg.handle, msg.role);
             break;
 
           case "claimWorkspace":
@@ -475,6 +491,126 @@ export function startServer(config: ServerConfig): Relay {
           case "workspaceChanged":
             if (!joined) return;
             joined.room.noteWorkspaceChanged(joined.handle, msg.paths);
+            break;
+
+          case "goalCreate":
+            if (!joined) return send(socket, "join a room before creating a goal");
+            if (joined.role !== "human") {
+              return send(socket, "only a human member may create a goal");
+            }
+            sendMessage(
+              socket,
+              joined.room.createGoal(joined.handle, msg.requestId, msg.text)
+            );
+            break;
+
+          case "goalTransition":
+            if (!joined) return send(socket, "join a room before changing a goal");
+            if (joined.role !== "human") {
+              return send(socket, "only a human member may change a goal");
+            }
+            sendMessage(
+              socket,
+              joined.room.transitionGoal(
+                joined.handle,
+                msg.requestId,
+                msg.goalId,
+                msg.action,
+                msg.expectedVersion
+              )
+            );
+            break;
+
+          case "handoffOffer":
+            if (!joined) return send(socket, "join a room before offering a handoff");
+            if (joined.role !== "human") {
+              return send(socket, "only a human member may offer a handoff");
+            }
+            sendMessage(
+              socket,
+              joined.room.createHandoff(
+                joined.handle,
+                msg.requestId,
+                msg.targetHandle,
+                msg.sourceAgentId,
+                msg.task
+              )
+            );
+            break;
+
+          case "handoffDecision":
+            if (!joined) return send(socket, "join a room before deciding a handoff");
+            if (joined.role !== "human") {
+              return send(socket, "only a human member may decide a handoff");
+            }
+            if (
+              msg.action !== "accept" &&
+              msg.action !== "decline" &&
+              msg.action !== "cancel" &&
+              msg.action !== "retry"
+            ) {
+              return send(socket, "unknown handoff decision");
+            }
+            sendMessage(
+              socket,
+              await joined.room.decideHandoff(
+                joined.handle,
+                msg.requestId,
+                msg.handoffId,
+                msg.nonce,
+                msg.action,
+                msg.expectedVersion,
+                msg.targetAgentId
+              )
+            );
+            break;
+
+          case "handoffClaim":
+            if (!joined?.agentId || joined.role !== "agent") {
+              return send(socket, "only the selected recipient agent may claim a handoff");
+            }
+            if (
+              !(await joined.room.claimHandoff(
+                joined.agentId,
+                msg.handoffId,
+                msg.deliveryId,
+                msg.expectedVersion
+              ))
+            ) return send(socket, "handoff claim rejected by authoritative room state");
+            break;
+
+          case "handoffStarted":
+            if (!joined?.agentId || joined.role !== "agent") {
+              return send(socket, "only the selected recipient agent may start a handoff");
+            }
+            if (
+              !(await joined.room.markHandoffStarted(
+                joined.agentId,
+                msg.handoffId,
+                msg.deliveryId,
+                msg.expectedVersion
+              ))
+            ) return send(socket, "handoff start rejected by authoritative room state");
+            break;
+
+          case "handoffOutcome":
+            if (!joined?.agentId || joined.role !== "agent") {
+              return send(socket, "only the selected recipient agent may report a handoff outcome");
+            }
+            if (
+              msg.outcome !== "completed" &&
+              msg.outcome !== "failed" &&
+              msg.outcome !== "outcomeUnknown"
+            ) return send(socket, "invalid handoff outcome");
+            if (
+              !(await joined.room.reportHandoffOutcome(
+                joined.agentId,
+                msg.handoffId,
+                msg.deliveryId,
+                msg.outcome,
+                msg.detail
+              ))
+            ) return send(socket, "handoff outcome rejected by authoritative room state");
             break;
 
           case "remoteTool": {
@@ -494,6 +630,9 @@ export function startServer(config: ServerConfig): Relay {
 
           case "remoteToolResult":
             if (!joined) return;
+            if (joined.role === "agent") {
+              return send(socket, "an agent cannot answer remote workspace calls");
+            }
             joined.room.completeRemoteTool(
               joined.handle,
               msg.requestId,
@@ -573,8 +712,12 @@ function sanitise(member: Member | undefined): Member | undefined {
 }
 
 function send(socket: WebSocket, message: string): void {
+  sendMessage(socket, { t: "error", message });
+}
+
+function sendMessage(socket: WebSocket, message: ServerMsg): void {
   if (socket.readyState === socket.OPEN) {
-    socket.send(JSON.stringify({ t: "error", message }));
+    socket.send(JSON.stringify(message));
   }
 }
 

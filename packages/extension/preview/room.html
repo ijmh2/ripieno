@@ -54,7 +54,7 @@
     --vscode-inputValidation-warningForeground: #7a6a00;
   }
 </style>
-<link rel="stylesheet" href="../media/main.css?v=6" />
+<link rel="stylesheet" href="../media/main.css?v=7" />
 </head>
 <body>
 <!-- Markup below mirrors roomView.ts so this exercises the shipped webview. -->
@@ -66,10 +66,26 @@
   <div id="statusPill" class="status-pill idle" role="status" aria-live="polite">idle</div>
   <div id="roster" class="roster" role="list" aria-label="People in this room"></div>
 </header>
+<section id="onboarding" class="onboarding" aria-labelledby="onboardingTitle">
+  <h2 id="onboardingTitle" class="sr-only">Getting started</h2>
+  <ol id="onboardingSteps" class="onboarding-steps" aria-label="Getting started progress"></ol>
+  <button id="onboardingAction" class="onboarding-action" type="button" hidden></button>
+  <p id="onboardingHelp" class="onboarding-help" hidden>A ChatGPT web conversation cannot be imported. To use Codex, install the Codex CLI and run <code>codex login</code> to sign in with ChatGPT, or use an API key. API-key usage is billed separately through the OpenAI Platform.</p>
+</section>
 <div class="transcript-wrap">
   <div id="transcript" class="transcript" role="log" aria-live="polite" aria-label="Room conversation"></div>
   <button id="jumpLatest" class="jump-latest" type="button" hidden>Latest <span aria-hidden="true">↓</span></button>
 </div>
+<details id="goals" class="goals" hidden>
+  <summary id="goalsSummary" class="goals-summary">Goals</summary>
+  <div id="goalsList" class="goals-list" role="list" aria-label="Room goals"></div>
+</details>
+<div id="goalAnnouncements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+<section id="handoffs" class="handoffs" aria-labelledby="handoffsTitle" hidden>
+  <div id="handoffsTitle" class="handoffs-title">Agent handoffs</div>
+  <div id="handoffsList" class="handoffs-list" role="list" aria-label="Agent handoff lifecycle"></div>
+</section>
+<div id="handoffAnnouncements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 <details id="actions" class="actions" hidden>
   <summary id="actionsSummary" class="actions-summary">Work</summary>
   <div id="actionsList" class="actions-list"></div>
@@ -93,7 +109,7 @@
     setState: () => undefined,
   });
 </script>
-<script src="../media/main.js?v=6"></script>
+<script src="../media/main.js?v=7"></script>
 <script>
   const t = (n) => Date.now() - n * 60000;
 
@@ -106,6 +122,16 @@
     mode: "byo",
     you: { handle: "mellery", displayName: "Mira", present: true, color: 5, role: "owner",
       agents: [{ id: "i:coder", owner: "mellery", label: "Mira's coder", state: "thinking" }] },
+    onboarding: {
+      steps: [
+        { label: "Joined room", status: "complete" },
+        { label: "Agent ready", status: "complete" },
+        { label: "Start collaborating", status: "complete" },
+      ],
+      readOnly: false,
+      complete: true,
+      showAgentHelp: false,
+    },
     roster: [
       { handle: "mellery", displayName: "Mira", present: true, color: 5, role: "owner",
         agents: [{ id: "i:coder", owner: "mellery", label: "Mira's coder", state: "thinking" }] },
@@ -153,12 +179,28 @@
       summary: 'command: npm test -- --runInBand\n(plus description)',
       rememberable: false,
     }],
+    goals: [],
+    goalAudit: [],
+    roomRevision: 0,
+    handoffs: [],
+    handoffAudit: [],
+    handoffRevision: 0,
     liveDeltas: [["a3", "Good catch, Kate. Re-running Sam's with Mira's resampling and an explicit half-day mask"]],
   };
 
   if (params.get("viewer") === "1") {
     snapshot.you.role = "viewer";
     snapshot.roster[0].role = "viewer";
+    snapshot.onboarding = {
+      steps: [
+        { label: "Joined room", status: "complete" },
+        { label: "Agent unavailable to viewers", status: "complete" },
+        { label: "Follow along read-only", status: "current" },
+      ],
+      readOnly: true,
+      complete: true,
+      showAgentHelp: false,
+    };
   }
 
   if (params.get("onboarding") === "join") {
@@ -172,6 +214,17 @@
     snapshot.actions = [];
     snapshot.approvals = [];
     snapshot.liveDeltas = [];
+    snapshot.onboarding = {
+      steps: [
+        { label: "Joined room", status: "current" },
+        { label: "Agent needs setup", status: "pending" },
+        { label: "Start collaborating", status: "pending" },
+      ],
+      action: { kind: "joinRoom", label: "Join room" },
+      readOnly: false,
+      complete: false,
+      showAgentHelp: false,
+    };
   } else if (params.get("onboarding") === "attach") {
     snapshot.status = "idle";
     snapshot.you.agents = [];
@@ -180,6 +233,17 @@
     snapshot.actions = [];
     snapshot.approvals = [];
     snapshot.liveDeltas = [];
+    snapshot.onboarding = {
+      steps: [
+        { label: "Joined room", status: "complete" },
+        { label: "Agent ready", status: "complete" },
+        { label: "Start collaborating", status: "current" },
+      ],
+      action: { kind: "attachAgent", label: "Attach agent" },
+      readOnly: false,
+      complete: false,
+      showAgentHelp: false,
+    };
   }
 
   document.getElementById("actions").open = params.get("work") === "1";

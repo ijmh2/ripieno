@@ -113,7 +113,10 @@ history that survives a reload. Solo is where people form their opinion of the
 product, and a cut-down version would teach them the wrong thing about it.
 
 Choose **Add agent…** in the **Rooms & Agents** tree. Ripieno asks which account
-should power it before asking you to configure anything else.
+should power it, putting a detected local provider first. It generates the name,
+keeps the brief optional, uses the provider's default model and starts at the
+safest boundary Ripieno can actually enforce. Name, brief, model, response mode,
+workspace folder and permissions remain individually editable from the gear.
 
 ### Use your ChatGPT account
 
@@ -122,22 +125,28 @@ CLI is installed and signed in; if it is not, it opens Codex's own trusted
 sign-in flow in a terminal and continues after the login succeeds. Ripieno never
 sees or stores your ChatGPT credentials. Once the account is ready, the agent
 joins immediately with a normal name (`agent`, then `agent 2`), the current
-workspace, the provider's default model and no special brief.
+workspace, the provider's default model, no special brief and **Read project**
+access. An existing detached agent gets a single **Attach agent** step instead
+of another setup wizard.
 
 Use the **gear beside any agent** to change its name, add or remove a brief,
-point it at another folder, choose a model where the provider supports it, or
-change permissions. The same menu deletes an agent after confirmation and
-forgets its saved session and credentials. Codex agents offer **Read only**, **Workspace only** (the
-default), and a separately confirmed **Full computer access**. Claude agents
-default to approval cards before side effects. Conversation-only API agents
-cannot touch local files through Ripieno. The Codex boundaries follow
+point it at another folder, choose a model where the provider supports it,
+choose automatic replies or only-when-named response mode, or change permissions.
+The same menu deletes an agent after confirmation and forgets its saved session
+and credentials. The plain-language boundaries describe concrete enforcement:
+**Conversation only** for API chat agents, **Read project** for sandboxed Codex,
+**Ask before changes** for Claude's approval bridge, and **Trusted workspace**
+for Codex workspace-write. A separately confirmed **Full computer access**
+option stays explicitly named because it removes the workspace boundary. The
+Codex boundaries follow
 [OpenAI's sandbox model](https://learn.chatgpt.com/docs/sandboxing): workspace
 write is the normal local boundary, while full access removes it.
 
-This creates a new coding agent backed by your ChatGPT account. It does not
-import an existing ChatGPT conversation or a custom GPT. Codex installation and
-ChatGPT sign-in are documented in
-[OpenAI's Codex CLI guide](https://learn.chatgpt.com/docs/codex/cli).
+This creates a new coding agent; it cannot import a ChatGPT web conversation or
+custom GPT. Install Codex CLI and run `codex login` to sign in with ChatGPT, or
+use an API key. API-key usage is billed separately through the OpenAI Platform
+at API rates rather than from ChatGPT plan credits. See
+[OpenAI's Codex authentication guide](https://learn.chatgpt.com/docs/auth).
 
 ### Room commands
 

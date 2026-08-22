@@ -12,12 +12,23 @@
   const roomLabelEl = document.getElementById("roomLabel");
   const modeBadgeEl = document.getElementById("modeBadge");
   const statusPillEl = document.getElementById("statusPill");
+  const onboardingEl = document.getElementById("onboarding");
+  const onboardingStepsEl = document.getElementById("onboardingSteps");
+  const onboardingActionEl = document.getElementById("onboardingAction");
+  const onboardingHelpEl = document.getElementById("onboardingHelp");
   const composerEl = document.getElementById("composer");
   const composerValidationEl = document.getElementById("composerValidation");
   const sendButtonEl = document.getElementById("sendButton");
   const actionsEl = document.getElementById("actions");
   const actionsSummaryEl = document.getElementById("actionsSummary");
   const actionsListEl = document.getElementById("actionsList");
+  const goalsEl = document.getElementById("goals");
+  const goalsSummaryEl = document.getElementById("goalsSummary");
+  const goalsListEl = document.getElementById("goalsList");
+  const goalAnnouncementsEl = document.getElementById("goalAnnouncements");
+  const handoffsEl = document.getElementById("handoffs");
+  const handoffsListEl = document.getElementById("handoffsList");
+  const handoffAnnouncementsEl = document.getElementById("handoffAnnouncements");
   const approvalStackEl = document.getElementById("approvalStack");
   const jumpLatestEl = document.getElementById("jumpLatest");
   // Mirrors MAX_COMPOSER_CHARS in roomViewMessages.ts. The host remains the
@@ -32,6 +43,13 @@
   let currentRoom;
   let currentUser;
   let actions = [];
+  let goals = [];
+  let goalAudit = [];
+  let roomRevision = 0;
+  let handoffs = [];
+  let handoffAudit = [];
+  let handoffRevision = 0;
+  let onboarding;
   let unseenEntries = 0;
 
   /** entryId -> { container, textEl } for rows currently in the DOM. */
@@ -104,32 +122,51 @@
     title.textContent = currentRoom ? "The room is ready" : "No room joined";
     const detail = document.createElement("span");
     detail.textContent = currentRoom
-      ? "Start the conversation, or type @ to choose a person or agent."
+      ? currentUser?.role === "viewer"
+        ? "You can follow this room, but viewers cannot post or attach agents."
+        : "Start the conversation, or type @ to choose a person or agent."
       : "Use Ripieno: Join Room to open a shared conversation.";
     empty.append(title, detail);
-
-    let onboarding;
-    if (!currentRoom) {
-      onboarding = { action: "joinRoom", label: "Join room" };
-    } else if (
-      currentUser &&
-      currentUser.role !== "viewer" &&
-      (currentUser.agents || []).length === 0
-    ) {
-      onboarding = { action: "attachAgent", label: "Add or attach an agent" };
-    }
-    if (onboarding) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "empty-action";
-      button.textContent = onboarding.label;
-      button.addEventListener("click", () => {
-        vscode.postMessage({ type: "onboardingAction", action: onboarding.action });
-      });
-      empty.appendChild(button);
-    }
     transcriptEl.appendChild(empty);
   }
+
+  function renderOnboarding(next) {
+    onboarding = next;
+    if (!next || !Array.isArray(next.steps) || next.steps.length !== 3) {
+      onboardingEl.hidden = true;
+      return;
+    }
+    onboardingEl.hidden = false;
+    onboardingEl.classList.toggle("complete", next.complete === true);
+    onboardingEl.classList.toggle("read-only", next.readOnly === true);
+    onboardingStepsEl.innerHTML = "";
+    next.steps.forEach((step, index) => {
+      const item = document.createElement("li");
+      item.className = `onboarding-step ${step.status}`;
+      if (step.status === "current") item.setAttribute("aria-current", "step");
+
+      const marker = document.createElement("span");
+      marker.className = "onboarding-marker";
+      marker.setAttribute("aria-hidden", "true");
+      marker.textContent = step.status === "complete" ? "✓" : String(index + 1);
+
+      const label = document.createElement("span");
+      label.className = "onboarding-label";
+      label.textContent = step.label;
+      item.append(marker, label);
+      onboardingStepsEl.appendChild(item);
+    });
+
+    onboardingActionEl.hidden = !next.action;
+    onboardingActionEl.textContent = next.action?.label || "";
+    onboardingHelpEl.hidden = next.showAgentHelp !== true;
+  }
+
+  onboardingActionEl.addEventListener("click", () => {
+    const action = onboarding?.action?.kind;
+    if (action !== "joinRoom" && action !== "addAgent" && action !== "attachAgent") return;
+    vscode.postMessage({ type: "onboardingAction", action });
+  });
 
   function formatTime(ts) {
     if (!Number.isFinite(ts)) return "";
@@ -384,6 +421,13 @@
     waitingOn = msg.waitingOn;
     roster = msg.roster;
     actions = msg.actions || [];
+    goals = msg.goals || [];
+    goalAudit = msg.goalAudit || [];
+    roomRevision = msg.roomRevision || 0;
+    handoffs = msg.handoffs || [];
+    handoffAudit = msg.handoffAudit || [];
+    handoffRevision = msg.handoffRevision || 0;
+    onboarding = msg.onboarding;
     currentRoom = msg.room;
     currentUser = msg.you;
     roomLabelEl.textContent = msg.room || "Not connected";
@@ -410,6 +454,9 @@
     }
 
     renderRoster();
+    renderOnboarding(msg.onboarding);
+    renderGoals();
+    renderHandoffs();
     renderActions();
     for (const approval of msg.approvals || []) {
       showApproval(approval);
@@ -472,10 +519,12 @@
     });
   }
 
-  function applyRoster(newRoster, you) {
+  function applyRoster(newRoster, you, nextOnboarding) {
     roster = newRoster;
     currentUser = you;
     renderRoster();
+    renderHandoffs();
+    renderOnboarding(nextOnboarding);
     const empty = transcriptEl.querySelector(".empty-state");
     if (empty) {
       empty.remove();
@@ -512,7 +561,10 @@
         applyDeltaCancel(msg.entryId);
         break;
       case "roster":
-        applyRoster(msg.roster, msg.you);
+        applyRoster(msg.roster, msg.you, msg.onboarding);
+        break;
+      case "onboarding":
+        renderOnboarding(msg.onboarding);
         break;
       case "status":
         applyStatus(msg.status, msg.waitingOn);
@@ -526,8 +578,276 @@
       case "action":
         addAction(msg.entry);
         break;
+      case "goals":
+        if (msg.roomRevision >= roomRevision) {
+          const shouldAnnounce = msg.roomRevision > roomRevision;
+          goals = msg.goals;
+          goalAudit = msg.goalAudit || [];
+          roomRevision = msg.roomRevision;
+          renderGoals();
+          if (shouldAnnounce) announceLatestGoalChange();
+        }
+        break;
+      case "handoffs":
+        if (msg.handoffRevision >= handoffRevision) {
+          const shouldAnnounce = msg.handoffRevision > handoffRevision;
+          handoffs = msg.handoffs;
+          handoffAudit = msg.handoffAudit || [];
+          handoffRevision = msg.handoffRevision;
+          renderHandoffs();
+          if (shouldAnnounce) announceLatestHandoffChange();
+        }
+        break;
     }
   });
+
+  /* ---------------------------------------------------------------- */
+  /* Durable room goals                                                */
+  /* ---------------------------------------------------------------- */
+
+  function displayedGoalId(id) {
+    const bare = id.startsWith("goal_") ? id.slice(5) : id;
+    return bare.slice(0, 8);
+  }
+
+  function latestGoalAudit(goalId) {
+    for (let index = goalAudit.length - 1; index >= 0; index--) {
+      if (goalAudit[index].goalId === goalId) return goalAudit[index];
+    }
+    return undefined;
+  }
+
+  function auditVerb(action) {
+    return action === "create" ? "created" : action === "pause" ? "paused" : action === "resume" ? "resumed" : "completed";
+  }
+
+  function announceLatestGoalChange() {
+    const latest = goalAudit[goalAudit.length - 1];
+    if (!latest) return;
+    const goal = goals.find((candidate) => candidate.id === latest.goalId);
+    goalAnnouncementsEl.textContent = `@${latest.actorHandle} ${auditVerb(latest.action)} goal ${goal ? displayedGoalId(goal.id) : ""}${goal ? `: ${goal.text}` : ""}`;
+  }
+
+  function renderGoals() {
+    goalsEl.hidden = !currentRoom;
+    if (!currentRoom) return;
+    const active = goals.filter((goal) => goal.status === "active").length;
+    const paused = goals.filter((goal) => goal.status === "paused").length;
+    goalsSummaryEl.textContent = `Goals · ${active} active${paused ? ` · ${paused} paused` : ""}`;
+    goalsSummaryEl.title =
+      `Room goal state at revision ${roomRevision}. ` +
+      "Rooms keep up to 100 goals and retire the oldest completed goal first when full.";
+    goalsListEl.innerHTML = "";
+
+    if (goals.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "goals-empty";
+      empty.textContent = "No goals yet — use /goal create <text>.";
+      goalsListEl.appendChild(empty);
+      return;
+    }
+    for (const goal of goals) {
+      const row = document.createElement("div");
+      row.className = `goal-row ${goal.status}`;
+      row.setAttribute("role", "listitem");
+      row.setAttribute(
+        "aria-label",
+        `${goal.status} goal ${displayedGoalId(goal.id)}, owned by ${goal.ownerName}: ${goal.text}`
+      );
+
+      const badge = document.createElement("span");
+      badge.className = "goal-status";
+      badge.textContent = goal.status;
+      row.appendChild(badge);
+
+      const body = document.createElement("span");
+      body.className = "goal-body";
+      const text = document.createElement("span");
+      text.className = "goal-text";
+      text.textContent = goal.text;
+      body.appendChild(text);
+      const meta = document.createElement("span");
+      meta.className = "goal-meta";
+      meta.textContent = `${displayedGoalId(goal.id)} · @${goal.ownerHandle} · v${goal.version}`;
+      body.appendChild(meta);
+      const latest = latestGoalAudit(goal.id);
+      if (latest) {
+        const provenance = document.createElement("span");
+        provenance.className = "goal-provenance";
+        provenance.textContent = `${auditVerb(latest.action)} by @${latest.actorHandle} · ${formatTime(latest.ts)}`;
+        body.appendChild(provenance);
+      }
+      row.appendChild(body);
+      goalsListEl.appendChild(row);
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Explicit agent handoffs                                          */
+  /* ---------------------------------------------------------------- */
+
+  function displayedHandoffId(id) {
+    const bare = id.startsWith("handoff_") ? id.slice(8) : id;
+    return bare.slice(0, 8);
+  }
+
+  function announceLatestHandoffChange() {
+    const latest = handoffAudit[handoffAudit.length - 1];
+    if (!latest) return;
+    const handoff = handoffs.find((candidate) => candidate.id === latest.handoffId);
+    handoffAnnouncementsEl.textContent = handoff
+      ? `Agent handoff ${displayedHandoffId(handoff.id)} is now ${handoff.status}.`
+      : "Agent handoff state changed.";
+  }
+
+  function handoffAction(handoff, action, targetAgentId) {
+    const message = {
+      type: "handoffAction",
+      action,
+      id: handoff.id,
+      expectedVersion: handoff.version,
+    };
+    if ((action === "accept" || action === "retry") && targetAgentId) {
+      message.targetAgentId = targetAgentId;
+    }
+    vscode.postMessage(message);
+  }
+
+  function renderHandoffs() {
+    const visible = handoffs.slice(-12).reverse();
+    handoffsEl.hidden = visible.length === 0 || !currentRoom;
+    handoffsListEl.innerHTML = "";
+    if (handoffsEl.hidden) return;
+
+    for (const handoff of visible) {
+      const card = document.createElement("div");
+      card.className = "handoff-card";
+      card.setAttribute("role", "listitem");
+      const accessibleId = `handoff-${handoff.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+      const title = document.createElement("div");
+      title.className = "handoff-title";
+      title.id = `${accessibleId}-title`;
+      title.textContent = `${handoff.sourceAgentLabel} → @${handoff.targetHandle}`;
+      card.appendChild(title);
+
+      const meta = document.createElement("div");
+      meta.className = "handoff-meta";
+      meta.id = `${accessibleId}-status`;
+      const remaining = Math.max(0, handoff.expiresAt - Date.now());
+      meta.textContent =
+        handoff.status === "pending"
+          ? `${displayedHandoffId(handoff.id)} · pending · expires in ${Math.max(1, Math.ceil(remaining / 60000))}m`
+          : `${displayedHandoffId(handoff.id)} · ${handoff.status} · v${handoff.version}`;
+      card.appendChild(meta);
+
+      const task = document.createElement("div");
+      task.className = "handoff-task";
+      task.id = `${accessibleId}-task`;
+      task.textContent = handoff.task;
+      card.appendChild(task);
+
+      const latest = [...handoffAudit].reverse().find((entry) => entry.handoffId === handoff.id);
+      let lifecycleId;
+      if (latest) {
+        const lifecycle = document.createElement("div");
+        lifecycle.className = "handoff-meta";
+        lifecycleId = `${accessibleId}-lifecycle`;
+        lifecycle.id = lifecycleId;
+        const when = new Date(latest.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        lifecycle.textContent = `@${latest.actorHandle} · ${latest.action} · ${when}${latest.reason ? ` · ${latest.reason}` : ""}`;
+        card.appendChild(lifecycle);
+      }
+
+      const recipient = currentUser?.handle === handoff.targetHandle;
+      const sourceOwner = currentUser?.handle === handoff.sourceOwnerHandle;
+      const moderator = currentUser?.role === "owner";
+      const controls = document.createElement("div");
+      controls.className = "handoff-actions";
+
+      const canAccept = recipient && handoff.status === "pending";
+      const canRetry =
+        recipient && (handoff.status === "failed" || handoff.status === "outcomeUnknown");
+      if (canAccept || canRetry) {
+        const ownedAgents = currentUser?.agents || [];
+        let select;
+        if (ownedAgents.length > 1) {
+          const label = document.createElement("label");
+          label.className = "handoff-agent-label";
+          label.textContent = "Continue with";
+          select = document.createElement("select");
+          select.className = "handoff-agent-select";
+          select.setAttribute("aria-label", `Agent for handoff ${displayedHandoffId(handoff.id)}`);
+          for (const agent of ownedAgents) {
+            const option = document.createElement("option");
+            option.value = agent.id;
+            option.textContent = agent.label;
+            select.appendChild(option);
+          }
+          label.appendChild(select);
+          card.appendChild(label);
+        }
+
+        const accept = document.createElement("button");
+        accept.type = "button";
+        accept.className = "handoff-button primary";
+        accept.textContent = ownedAgents.length > 0
+          ? canRetry ? "Retry manually" : "Accept and run"
+          : "Attach an agent first";
+        accept.disabled = ownedAgents.length === 0;
+        accept.title =
+          `${canRetry ? "Explicitly starts a new delivery attempt" : "Accepts this exact task and starts one continuation turn"} ` +
+          "on your selected local agent. It does not move the source provider session.";
+        accept.addEventListener("click", () =>
+          handoffAction(handoff, canRetry ? "retry" : "accept", select?.value || ownedAgents[0]?.id)
+        );
+        controls.appendChild(accept);
+
+        if (canAccept) {
+          const decline = document.createElement("button");
+          decline.type = "button";
+          decline.className = "handoff-button";
+          decline.textContent = "Decline";
+          decline.addEventListener("click", () => handoffAction(handoff, "decline"));
+          controls.appendChild(decline);
+        }
+      }
+
+      if ((sourceOwner || moderator) && (handoff.status === "pending" || handoff.status === "assigned")) {
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "handoff-button";
+        cancel.textContent = moderator && !sourceOwner ? "Cancel as owner" : "Cancel";
+        cancel.addEventListener("click", () => handoffAction(handoff, "cancel"));
+        controls.appendChild(cancel);
+      }
+
+      if (controls.childElementCount > 0) card.appendChild(controls);
+      const note = document.createElement("div");
+      note.className = "handoff-note";
+      note.id = `${accessibleId}-note`;
+      note.textContent =
+        handoff.status === "pending"
+          ? recipient
+            ? "Review the task above. Accepting authorises this exact task on your selected local agent; no source provider session moves."
+            : `Waiting for @${handoff.targetHandle} to accept or decline.`
+          : handoff.status === "assigned"
+            ? "Accepted and durably assigned; the source remains authorised until the recipient agent claims it."
+            : handoff.status === "claimed"
+              ? "Recipient claimed the delivery; source authority is revoked before execution."
+              : handoff.status === "started"
+                ? "Recipient provider execution started. It will not be automatically repeated after a crash."
+                : handoff.status === "outcomeUnknown"
+                  ? "The provider call may have run. Only the recipient can explicitly choose a manual retry."
+                  : handoff.outcomeDetail || `Handoff is ${handoff.status}.`;
+      card.appendChild(note);
+      card.setAttribute("aria-labelledby", `${title.id} ${meta.id}`);
+      card.setAttribute(
+        "aria-describedby",
+        [task.id, lifecycleId, note.id].filter(Boolean).join(" ")
+      );
+      handoffsListEl.appendChild(card);
+    }
+  }
 
   /* ---------------------------------------------------------------- */
   /* Action log — what agents did, as opposed to what people said       */
@@ -727,6 +1047,8 @@
     { insert: "/model", label: "/model", detail: "Choose an agent and provider model", kind: "command", color: 5 },
     { insert: "/attach", label: "/attach", detail: "Attach one of your agents", kind: "command", color: 5 },
     { insert: "/detach", label: "/detach", detail: "Detach one of your agents", kind: "command", color: 5 },
+    { insert: "/goal", label: "/goal", detail: "Create, inspect or update durable room goals", kind: "command", color: 5 },
+    { insert: "/handoff", label: "/handoff", detail: "Offer, accept or inspect agent handoffs", kind: "command", color: 5 },
   ];
   let candidates = [];
   let highlighted = 0;
@@ -917,6 +1239,12 @@
 
   sendButtonEl.addEventListener("click", trySend);
   actionsSummaryEl.addEventListener("click", () => {
+    const pinned = isPinnedToBottom();
+    requestAnimationFrame(() => {
+      if (pinned) scrollToBottom();
+    });
+  });
+  goalsSummaryEl.addEventListener("click", () => {
     const pinned = isPinnedToBottom();
     requestAnimationFrame(() => {
       if (pinned) scrollToBottom();

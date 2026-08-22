@@ -1,6 +1,16 @@
 import * as vscode from "vscode";
 import { spawn } from "child_process";
-import type { Member, RosterEntry, ServerMsg } from "@ripieno/protocol";
+import { randomUUID } from "node:crypto";
+import type {
+  Goal,
+  GoalAuditEntry,
+  HandoffAuditEntry,
+  HandoffDecision,
+  HandoffOffer,
+  Member,
+  RosterEntry,
+  ServerMsg,
+} from "@ripieno/protocol";
 import { resolveIdentity, resolveIdentityWithToken, relayRequiresIdentity } from "./identity";
 import { SoloRelay } from "./soloRelay";
 import { buildInvite, describeInvite, parseInvite } from "./invite";
@@ -17,7 +27,13 @@ import * as os from "node:os";
 import { RelayClient, type ConnectionState } from "@ripieno/relay-client";
 import { ToolExecutor, registerProposedDocuments } from "./toolExecutor";
 import { RoomViewProvider } from "./roomView";
-import { AgentHost, type AgentState } from "./agentHost";
+import {
+  AgentHost,
+  type AgentState,
+  type HandoffDeliveryStore,
+  type LocalHandoffDelivery,
+} from "./agentHost";
+import { handoffDeliveryScopeKey, providerSessionScopeKey } from "./sessionScope";
 import { RoomsTreeProvider, type MyAgent } from "./roomsTree";
 import {
   PROVIDERS,
@@ -36,11 +52,24 @@ import {
   isCodexLoginReady,
   isUnusedLegacyBootstrapAgent,
   nextAgentLabel,
+  effectiveResponseMode,
+  orderDetectedProviderIds,
   parseCodexModelCatalog,
   needsSharedRoomAgentConsent,
+  responseModeForNewAgent,
+  safestUsablePermission,
   shouldStartAddAgentForAttach,
+  type AgentResponseMode,
 } from "./agentSetup";
 import { parseModelValue, resolveModelRequest } from "./agentCommands";
+import { displayGoalId, parseGoalCommand, resolveGoalReference } from "./goalCommands";
+import { GoalMutationQueue, type GoalMutationMsg } from "./goalMutations";
+import {
+  displayHandoffId,
+  parseHandoffCommand,
+  resolveHandoffAgent,
+  resolveHandoffReference,
+} from "./handoffCommands";
 
 export function activate(context: vscode.ExtensionContext): void {
   const toolExecutor = new ToolExecutor();
@@ -62,6 +91,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const changedPaths = new Set<string>();
   let publishTimer: NodeJS.Timeout | undefined;
   let me: Member | undefined;
+  /** Latest relay-authoritative goal snapshot, used for versions and short ids. */
+  let goals: Goal[] = [];
+  let goalAudit: GoalAuditEntry[] = [];
+  let goalsRevision = 0;
+  let handoffs: HandoffOffer[] = [];
+  let handoffAudit: HandoffAuditEntry[] = [];
+  let handoffRevision = 0;
+  let latestRoster: RosterEntry[] = [];
+  const pendingGoalMutations = new GoalMutationQueue();
   /**
    * Proves who `me` is to the relay, when it asks.
    *
@@ -84,8 +122,13 @@ export function activate(context: vscode.ExtensionContext): void {
     void vscode.commands.executeCommand("setContext", "ripieno.inRoom", inRoom);
   }
 
+  function setCanAttachAgentsContext(canAttach: boolean): void {
+    void vscode.commands.executeCommand("setContext", "ripieno.canAttachAgents", canAttach);
+  }
+
   // A saved room is only an invitation to rejoin; activation starts disconnected.
   setInRoomContext(false);
+  setCanAttachAgentsContext(true);
 
   // A member may run several agents at once — a coder and a reviewer, say —
   // each with its own process, session and label in the transcript.
@@ -103,6 +146,8 @@ export function activate(context: vscode.ExtensionContext): void {
     args?: string[];
     /** The editable trust boundary for this one agent. */
     permissions?: AgentPermission;
+    /** Whether ordinary room messages wake it, or only explicit mentions do. */
+    responseMode?: AgentResponseMode;
   }
   const specs = new Map<string, AgentSpecRecord>();
 
@@ -124,22 +169,44 @@ export function activate(context: vscode.ExtensionContext): void {
     room?: string;
     relayUrl?: string;
     agents: AgentSpecRecord[];
-    /** Claude Code session per agent id, so a reload resumes rather than restarts. */
+    /** Legacy agent-only session ids. Retained for cleanup only; never resumed. */
     sessions: Record<string, string>;
+    /** Provider-private sessions scoped to relay + room + local agent. */
+    providerSessions: Record<string, string>;
+    /** Crash-safe handoff receipt/start/outcome journal. */
+    handoffDeliveries: Record<string, LocalHandoffDelivery>;
   }
 
   function loadState(): PersistedState {
     const saved = context.globalState.get<PersistedState>(STATE_KEY);
-    return { agents: [], sessions: {}, ...saved };
+    return {
+      agents: [],
+      sessions: {},
+      providerSessions: {},
+      handoffDeliveries: {},
+      ...saved,
+    };
+  }
+
+  let stateWrites: Promise<void> = Promise.resolve();
+  function updateState(
+    mutate: (current: PersistedState) => PersistedState
+  ): Promise<void> {
+    const nextWrite = stateWrites
+      .catch(() => undefined)
+      .then(async () => {
+        const current = loadState();
+        await context.globalState.update(
+          STATE_KEY,
+          mutate({ ...current, agents: [...specs.values()] })
+        );
+      });
+    stateWrites = nextWrite;
+    return nextWrite;
   }
 
   function saveState(patch: Partial<PersistedState>): void {
-    const next: PersistedState = {
-      ...loadState(),
-      agents: [...specs.values()],
-      ...patch,
-    };
-    void context.globalState.update(STATE_KEY, next);
+    void updateState((current) => ({ ...current, ...patch }));
   }
   const approvals = new ApprovalBridge();
   const permissionServerPath = vscode.Uri.joinPath(
@@ -153,10 +220,14 @@ export function activate(context: vscode.ExtensionContext): void {
     "workspaceServer.js"
   ).fsPath;
 
-  const roomView = new RoomViewProvider(context.extensionUri, (text) => {
-    if (handleRoomCommand(text)) return;
-    relay?.send({ t: "say", text });
-  });
+  const roomView = new RoomViewProvider(
+    context.extensionUri,
+    (text) => {
+      if (handleRoomCommand(text)) return;
+      relay?.send({ t: "say", text });
+    },
+    (request) => sendHandoffDecision(request.action, request.id, request.expectedVersion, request.targetAgentId)
+  );
 
   // The host's workspace, as a real filesystem. Read-only: edits go through
   // "Propose change to host" so the owner sees a diff instead of a stream of
@@ -232,7 +303,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function myAgentsForTree(): MyAgent[] {
-    return [...specs.values()].map((spec) => ({
+    return [...specs.values()].map((spec, index) => ({
       id: spec.id,
       label: labelFor(spec.label),
       state: agents.get(spec.id)?.currentState ?? "detached",
@@ -241,11 +312,23 @@ export function activate(context: vscode.ExtensionContext): void {
       folder: spec.cwd ? spec.cwd.split("/").pop() : undefined,
       model: spec.model,
       // The first agent answers anything not addressed to someone specific.
-      primary: [...specs.keys()][0] === spec.id,
+      primary: effectiveResponseMode(spec.responseMode, index) === "automatic",
       capability: isWorkspaceProvider(spec.providerId) ? "workspace" : "conversation",
       provider: spec.providerId,
       permissions: describePermissions(spec),
     }));
+  }
+
+  function refreshAgentViews(): void {
+    const local = myAgentsForTree();
+    roomsTree.setMyAgents(local);
+    roomView.setLocalAgents(
+      local.map((agent) => ({ id: agent.id, label: agent.label, state: agent.state }))
+    );
+  }
+
+  function currentRole(): "owner" | "member" | "viewer" | undefined {
+    return latestRoster.find((entry) => entry.handle === me?.handle)?.role;
   }
 
   function labelFor(base: string): string {
@@ -253,12 +336,19 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   async function addAgent(): Promise<void> {
+    if (currentRoom && currentRole() === "viewer") {
+      void vscode.window.showInformationMessage(
+        "This room is read-only for viewers. An owner can change your role before you attach an agent."
+      );
+      return;
+    }
     const provider = await pickProvider();
     if (!provider) return;
 
     // Setup asks only for what the provider strictly needs. A general-purpose
     // agent gets a useful name, the open workspace and a safe trust boundary;
     // name, brief, folder, model and permissions all live behind its gear.
+    const configuredAgentCount = specs.size;
     const name = nextAgentLabel([...specs.values()].map((spec) => spec.label));
     let id = `local:agent:${Date.now().toString(36)}:${specs.size}`;
     while (specs.has(id)) id += ":next";
@@ -346,13 +436,10 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       baseUrl = checkedBaseUrl.url;
-      model = await vscode.window.showInputBox({
-        title: `Model for "${name}"`,
-        prompt: `Model name as ${provider.label} expects it.`,
-        value: provider.suggestedModel ?? "",
-        ignoreFocusOut: true,
-      });
-      if (!model) return;
+      // Fast setup uses a known preset model where one exists. A custom
+      // endpoint can set its required model afterward from Customize; model
+      // selection is never an onboarding tax.
+      model = provider.suggestedModel;
 
       const key = await vscode.window.showInputBox({
         title: `API key for "${name}"`,
@@ -374,27 +461,41 @@ export function activate(context: vscode.ExtensionContext): void {
       baseUrl,
       command,
       args,
-      permissions: provider.kind === "openai-compatible" ? undefined : "workspace",
+      permissions: safestUsablePermission(provider.id, provider.kind),
+      responseMode: responseModeForNewAgent(configuredAgentCount),
     });
     saveState({});
-    roomsTree.setMyAgents(myAgentsForTree());
+    refreshAgentViews();
 
-    if (currentRoom) {
-      await attachAgent(id);
+    const needsModel = provider.kind === "openai-compatible" && !model;
+    let attached = false;
+    if (currentRoom && !needsModel) {
+      attached = await attachAgent(id);
     }
-    const status = currentRoom
-      ? `${labelFor(name)} joined as a general-purpose agent.`
-      : `${name} is ready and will attach when you join a room.`;
-    const choice = await vscode.window.showInformationMessage(status, "Customize Agent…");
-    if (choice === "Customize Agent…") await customizeAgent(id);
+    const status = attached
+      ? `Agent added — ${labelFor(name)} is ready in the room.`
+      : needsModel
+        ? `Agent added — choose its model from Customize before attaching.`
+      : currentRoom
+        ? `Agent added — ${labelFor(name)} is ready to attach.`
+        : `Agent added — ${name} will be ready when you join a room.`;
+    const choice = await vscode.window.showInformationMessage(status, "Customize");
+    if (choice === "Customize") await customizeAgent(id);
   }
 
-  type AgentSetting = "name" | "brief" | "permissions" | "folder" | "model" | "delete";
+  type AgentSetting =
+    | "name"
+    | "brief"
+    | "permissions"
+    | "folder"
+    | "model"
+    | "responseMode"
+    | "delete";
 
   function describePermissions(spec: AgentSpecRecord): string {
     const kind = providerById(spec.providerId)?.kind;
-    if (kind === "openai-compatible") return "conversation only";
-    if (spec.providerId !== "codex" && kind === "cli") return "managed by CLI";
+    if (kind === "openai-compatible") return "Conversation only";
+    if (spec.providerId !== "codex" && kind === "cli") return "Managed by provider";
 
     const configured = spec.permissions;
     if (!configured) {
@@ -402,13 +503,21 @@ export function activate(context: vscode.ExtensionContext): void {
         const legacy = vscode.workspace
           .getConfiguration("ripieno")
           .get<string>("agentPermissions", "ask");
-        return legacy === "bypassPermissions" ? "full access" : "asks for permission";
+        return legacy === "bypassPermissions" ? "Full computer access" : "Ask before changes";
       }
-      return "provider default";
+      return "Provider default";
     }
-    if (configured === "full") return "full computer access";
-    if (configured === "readOnly") return "read only";
-    return spec.providerId === "codex" ? "workspace only" : "asks for permission";
+    if (configured === "full") return "Full computer access";
+    if (spec.providerId === "codex" && configured === "readOnly") return "Read project";
+    return spec.providerId === "codex" ? "Trusted workspace" : "Ask before changes";
+  }
+
+  function responseModeForSpec(spec: AgentSpecRecord): AgentResponseMode {
+    return effectiveResponseMode(spec.responseMode, [...specs.keys()].indexOf(spec.id));
+  }
+
+  function describeResponseMode(spec: AgentSpecRecord): string {
+    return responseModeForSpec(spec) === "automatic" ? "Automatic replies" : "Only when named";
   }
 
   async function agentToCustomize(id?: string): Promise<AgentSpecRecord | undefined> {
@@ -462,6 +571,12 @@ export function activate(context: vscode.ExtensionContext): void {
         description: spec.cwd ?? "Current workspace",
         detail: "Choose which project this agent works in",
         setting: "folder",
+      },
+      {
+        label: "$(comment-discussion) Response mode",
+        description: describeResponseMode(spec),
+        detail: "Choose whether ordinary room messages wake this agent",
+        setting: "responseMode",
       },
     ];
     if (supportsModelSelection(spec)) {
@@ -549,6 +664,59 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
+    if (picked.setting === "responseMode") {
+      type ResponseItem = vscode.QuickPickItem & { value: AgentResponseMode };
+      const response = await vscode.window.showQuickPick<ResponseItem>(
+        [
+          {
+            label: "$(radio-tower) Automatic replies",
+            detail: "Answers ordinary room messages as this member's primary agent",
+            value: "automatic",
+          },
+          {
+            label: "$(mention) Only when named",
+            detail: "Waits until a person or agent explicitly @mentions it",
+            value: "mentions",
+          },
+        ],
+        {
+          title: `Response mode for ${labelFor(spec.label)}`,
+          placeHolder: `Current: ${describeResponseMode(spec)}`,
+          ignoreFocusOut: true,
+        }
+      );
+      if (!response || response.value === responseModeForSpec(spec)) return;
+
+      const changed = new Set<string>([spec.id]);
+      if (response.value === "automatic") {
+        for (const other of specs.values()) {
+          if (other.id !== spec.id && responseModeForSpec(other) === "automatic") {
+            other.responseMode = "mentions";
+            changed.add(other.id);
+          }
+        }
+      }
+      spec.responseMode = response.value;
+      const restart = [...changed].filter((agentId) => agents.has(agentId));
+      for (const agentId of restart) detachAgent(agentId);
+      saveState({});
+      refreshAgentViews();
+      let reattached = 0;
+      for (const agentId of restart) {
+        if (await attachAgent(agentId)) reattached += 1;
+      }
+      void vscode.window.showInformationMessage(
+        `${labelFor(spec.label)} now uses ${describeResponseMode(spec).toLocaleLowerCase()}${
+          reattached > 0
+            ? " and active agents were restarted safely"
+            : restart.length > 0
+              ? "; active agents remain detached"
+              : ""
+        }.`
+      );
+      return;
+    }
+
     const permission = await pickAgentPermissions(spec);
     if (!permission || permission === spec.permissions) return;
     if (permission === "full" && spec.permissions !== "full") {
@@ -564,6 +732,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (confirmed !== "Enable Full Access") return;
     }
     spec.permissions = permission;
+    clearSharedRoomConsent(spec.id);
     await persistAgentChange(spec, false);
   }
 
@@ -581,19 +750,35 @@ export function activate(context: vscode.ExtensionContext): void {
     );
     if (confirmed !== "Delete Agent") return;
 
-    const wasPrimary = [...specs.keys()][0] === spec.id;
-    const restart = wasPrimary
+    const wasAutomatic = responseModeForSpec(spec) === "automatic";
+    const restart = wasAutomatic
       ? [...agents.keys()].filter((agentId) => agentId !== spec.id)
       : [];
     detachAgent(spec.id);
     for (const agentId of restart) detachAgent(agentId);
     specs.delete(spec.id);
+    if (
+      wasAutomatic &&
+      ![...specs.values()].some((remaining) => responseModeForSpec(remaining) === "automatic")
+    ) {
+      const nextPrimary = [...specs.values()][0];
+      if (nextPrimary) nextPrimary.responseMode = "automatic";
+    }
 
     const sessions = { ...loadState().sessions };
     delete sessions[spec.id];
+    const agentSuffix = `:${encodeURIComponent(spec.id)}`;
+    const providerSessions = Object.fromEntries(
+      Object.entries(loadState().providerSessions).filter(([key]) => !key.endsWith(agentSuffix))
+    );
+    const handoffDeliveries = Object.fromEntries(
+      Object.entries(loadState().handoffDeliveries).filter(
+        ([key]) => !key.includes(`${agentSuffix}:`)
+      )
+    );
     await context.secrets.delete(secretKeyFor(spec.id));
-    saveState({ sessions });
-    roomsTree.setMyAgents(myAgentsForTree());
+    saveState({ sessions, providerSessions, handoffDeliveries });
+    refreshAgentViews();
     for (const agentId of restart) await attachAgent(agentId);
     void vscode.window.showInformationMessage(`${labelFor(spec.label)} deleted.`);
   }
@@ -606,15 +791,15 @@ export function activate(context: vscode.ExtensionContext): void {
     if (spec.providerId === "codex") {
       choices = [
         {
-          label: "$(shield) Workspace only",
+          label: "$(lock) Read project",
           description: "Recommended",
-          detail: "Can inspect and edit this project; access outside it is denied",
-          value: "workspace",
+          detail: "Can inspect this project, but edits and commands are denied",
+          value: "readOnly",
         },
         {
-          label: "$(lock) Read only",
-          detail: "Can inspect the project and reply, but cannot edit files or run commands",
-          value: "readOnly",
+          label: "$(shield) Trusted workspace",
+          detail: "Can edit inside this project without prompting; access outside it is denied",
+          value: "workspace",
         },
         {
           label: "$(warning) Full computer access",
@@ -625,7 +810,7 @@ export function activate(context: vscode.ExtensionContext): void {
     } else if (providerById(spec.providerId)?.kind === "claude-code") {
       choices = [
         {
-          label: "$(shield) Ask before side effects",
+          label: "$(shield) Ask before changes",
           description: "Recommended",
           detail: "File writes and commands are sent to you as approval cards",
           value: "workspace",
@@ -664,18 +849,25 @@ export function activate(context: vscode.ExtensionContext): void {
     if (freshSession) {
       const sessions = { ...loadState().sessions };
       delete sessions[spec.id];
-      saveState({ sessions });
+      const providerSessions = { ...loadState().providerSessions };
+      if (currentRoom) {
+        const activeUrl = relayUrl();
+        delete providerSessions[providerSessionScopeKey(activeUrl, currentRoom, spec.id)];
+      }
+      saveState({ sessions, providerSessions });
     } else {
       saveState({});
     }
-    roomsTree.setMyAgents(myAgentsForTree());
-    if (wasAttached) await attachAgent(spec.id);
+    refreshAgentViews();
+    const reattached = wasAttached ? await attachAgent(spec.id) : false;
     if (announce) {
       void vscode.window.showInformationMessage(
-        `${labelFor(spec.label)} updated${wasAttached ? " and restarted" : ""}.`
+        `${labelFor(spec.label)} updated${
+          reattached ? " and restarted" : wasAttached ? " and left detached" : ""
+        }.`
       );
     }
-    return wasAttached;
+    return reattached;
   }
 
   /**
@@ -960,33 +1152,70 @@ export function activate(context: vscode.ExtensionContext): void {
    */
   async function pickProvider(): Promise<ProviderPreset | undefined> {
     type ProviderItem = vscode.QuickPickItem & { preset?: ProviderPreset };
-    const item = (preset: ProviderPreset): ProviderItem => ({
+    const detectedIds = await detectLocalProviders();
+    const detected = new Set(detectedIds);
+    const item = (preset: ProviderPreset, recommended = false): ProviderItem => ({
       label: preset.id === "codex" ? `$(sparkle) ${preset.label}` : preset.label,
-      description: preset.id === "codex" ? "Recommended" : undefined,
+      description: detected.has(preset.id)
+        ? recommended
+          ? "Detected · Recommended"
+          : "Detected"
+        : preset.id === "codex"
+          ? "Recommended setup"
+          : undefined,
       detail: preset.hint,
+      picked: recommended,
       preset,
     });
     const byId = (id: string) => PROVIDERS.find((provider) => provider.id === id);
-    const codex = byId("codex");
-    const local = [byId("claude-code"), byId("gemini"), byId("cli-custom")].filter(
+    const local = [byId("codex"), byId("claude-code"), byId("gemini"), byId("cli-custom")].filter(
       (provider): provider is ProviderPreset => Boolean(provider)
     );
+    const orderedLocalIds = orderDetectedProviderIds(
+      local.map((provider) => provider.id),
+      detectedIds
+    );
+    const orderedLocal = orderedLocalIds.flatMap((id) => {
+      const provider = byId(id);
+      return provider ? [provider] : [];
+    });
     const api = PROVIDERS.filter(
       (provider) => provider.kind === "openai-compatible"
     );
     const items: ProviderItem[] = [
       { label: "Uses an account you already have", kind: vscode.QuickPickItemKind.Separator },
-      ...(codex ? [item(codex)] : []),
-      ...local.map(item),
+      ...orderedLocal.map((provider, index) => item(provider, index === 0)),
       { label: "API or local endpoint", kind: vscode.QuickPickItemKind.Separator },
-      ...api.map(item),
+      ...api.map((provider) => item(provider)),
     ];
     const picked = await vscode.window.showQuickPick(items, {
       title: "Add Agent · Choose what powers it",
-      placeHolder: "ChatGPT / Codex is the easiest way to start",
+      placeHolder:
+        detectedIds.length > 0
+          ? "A detected provider is ready to configure"
+          : "Choose a provider; ChatGPT / Codex is the recommended setup",
       ignoreFocusOut: true,
     });
     return picked?.preset;
+  }
+
+  async function detectLocalProviders(): Promise<string[]> {
+    const codexCandidate = await firstAvailableCommand([
+      "codex",
+      ...(process.platform === "darwin"
+        ? ["/Applications/ChatGPT.app/Contents/Resources/codex"]
+        : []),
+    ]);
+    const [codexReady, claudeReady, geminiReady] = await Promise.all([
+      codexCandidate ? codexIsReady(codexCandidate) : Promise.resolve(false),
+      commandExists("claude"),
+      commandExists("gemini"),
+    ]);
+    return [
+      ...(codexReady ? ["codex"] : []),
+      ...(claudeReady ? ["claude-code"] : []),
+      ...(geminiReady ? ["gemini"] : []),
+    ];
   }
 
   type ModelPick = vscode.QuickPickItem & {
@@ -1129,6 +1358,15 @@ export function activate(context: vscode.ExtensionContext): void {
             "  /agents                        — list your agents, providers, models and states",
             "  /attach [agent]                — attach one of your agents",
             "  /detach [agent]                — detach one of your agents",
+            "  /goal create <text>            — create a durable room goal",
+            "  /goal list                     — list room goals",
+            "  /goal show <id>                — show one goal",
+            "  /goal pause|resume|complete <id> — change a goal you own",
+            "  /handoff offer @member [source-agent] -- <task> — offer a bounded task",
+            "  /handoff list                  — list agent handoffs",
+            "  /handoff accept <id> [target-agent] — accept with one of your agents",
+            "  /handoff retry <id> [target-agent] — manually retry an uncertain/failed delivery",
+            "  /handoff decline|cancel <id>   — decide a pending handoff",
             "  /help                          — this list",
           ].join("\n")
         );
@@ -1157,10 +1395,195 @@ export function activate(context: vscode.ExtensionContext): void {
         void detachFromCommand(argument);
         return true;
 
+      case "goal":
+        void handleGoalCommand(trimmed);
+        return true;
+
+      case "handoff":
+        void handleHandoffCommand(trimmed);
+        return true;
+
       default:
         note(`Unknown command "/${command}". Try /help.`);
         return true;
     }
+  }
+
+  async function handleHandoffCommand(text: string): Promise<void> {
+    const command = parseHandoffCommand(text);
+    if (!command) return;
+    if (command.kind === "error") {
+      note(command.message);
+      return;
+    }
+    if (command.kind === "list") {
+      if (handoffs.length === 0) {
+        note("This room has no handoffs. Offer one with /handoff offer @member [source-agent] -- <task>.");
+        return;
+      }
+      note(
+        `Agent handoffs:\n${handoffs
+          .slice(-20)
+          .map(
+            (handoff) =>
+              `  ${displayHandoffId(handoff.id)} · ${handoff.status} · v${handoff.version} · ` +
+              `${handoff.sourceAgentLabel} (@${handoff.sourceOwnerHandle}) → @${handoff.targetHandle}\n` +
+              `    task: ${handoff.task}${handoff.decisionReason ? `\n    reason: ${handoff.decisionReason}` : ""}`
+          )
+          .join("\n")}`
+      );
+      return;
+    }
+    if (!relay || !currentRoom || !me) {
+      note("Join a room before using agent handoffs.");
+      return;
+    }
+
+    if (command.kind === "offer") {
+      const target = latestRoster.find(
+        (entry) =>
+          entry.kind !== "workspace" &&
+          entry.handle.toLowerCase() === command.targetHandle.toLowerCase()
+      );
+      if (!target?.present) {
+        note(`@${command.targetHandle} must be present before you offer a handoff.`);
+        return;
+      }
+      const mine = latestRoster.find((entry) => entry.handle === me?.handle)?.agents ?? [];
+      const source = resolveHandoffAgent(command.sourceReference, mine, "source");
+      if (!source.ok) {
+        note(source.message);
+        return;
+      }
+      relay.send({
+        t: "handoffOffer",
+        requestId: `handoffreq_${randomUUID()}`,
+        targetHandle: target.handle,
+        sourceAgentId: source.agent?.id,
+        task: command.task,
+      });
+      return;
+    }
+
+    const resolved = resolveHandoffReference(command.reference, handoffs);
+    if (!resolved.ok) {
+      note(resolved.message);
+      return;
+    }
+    let targetAgentId: string | undefined;
+    if (command.action === "accept" || command.action === "retry") {
+      const mine = latestRoster.find((entry) => entry.handle === me?.handle)?.agents ?? [];
+      const target = resolveHandoffAgent(command.targetReference, mine, "target");
+      if (!target.ok) {
+        note(target.message);
+        return;
+      }
+      targetAgentId = target.agent?.id;
+    }
+    sendHandoffDecision(
+      command.action,
+      resolved.handoff.id,
+      resolved.handoff.version,
+      targetAgentId
+    );
+  }
+
+  function sendHandoffDecision(
+    action: HandoffDecision,
+    handoffId: string,
+    expectedVersion: number,
+    targetAgentId?: string
+  ): void {
+    if (!relay || !currentRoom) {
+      note("Join a room before deciding a handoff.");
+      return;
+    }
+    const known = handoffs.find((handoff) => handoff.id === handoffId);
+    if (!known) {
+      note("That handoff is no longer in the authoritative room snapshot. Use /handoff list.");
+      return;
+    }
+    relay.send({
+      t: "handoffDecision",
+      requestId: `handoffreq_${randomUUID()}`,
+      handoffId,
+      nonce: known.nonce,
+      action,
+      expectedVersion,
+      targetAgentId: action === "accept" ? targetAgentId : undefined,
+    });
+  }
+
+  async function handleGoalCommand(text: string): Promise<void> {
+    const command = parseGoalCommand(text);
+    if (!command) return;
+    if (command.kind === "error") {
+      note(command.message);
+      return;
+    }
+    if (command.kind === "list") {
+      if (goals.length === 0) {
+        note("This room has no goals. Create one with /goal create <text>.");
+        return;
+      }
+      note(
+        `Room goals:\n${goals
+          .map(
+            (goal) =>
+              `  ${displayGoalId(goal.id)} · ${goal.status} · v${goal.version} · @${goal.ownerHandle} — ${goal.text}`
+          )
+          .join("\n")}`
+      );
+      return;
+    }
+    if (command.kind === "create") {
+      if (!relay) {
+        note("Join a room before creating a goal.");
+        return;
+      }
+      sendGoalMutation({
+        t: "goalCreate",
+        requestId: `goalreq_${randomUUID()}`,
+        text: command.text,
+      });
+      return;
+    }
+
+    const resolved = resolveGoalReference(command.reference, goals);
+    if (!resolved.ok) {
+      note(resolved.message);
+      return;
+    }
+    const goal = resolved.goal;
+    if (command.kind === "show") {
+      note(
+        [
+          `Goal ${displayGoalId(goal.id)} — ${goal.status}`,
+          goal.text,
+          `Owner: @${goal.ownerHandle} · version ${goal.version}`,
+          `Created: ${new Date(goal.createdAt).toLocaleString()}`,
+          ...(goal.completedAt ? [`Completed: ${new Date(goal.completedAt).toLocaleString()}`] : []),
+        ].join("\n")
+      );
+      return;
+    }
+    if (!relay) {
+      note("Join a room before changing a goal.");
+      return;
+    }
+    sendGoalMutation({
+      t: "goalTransition",
+      requestId: `goalreq_${randomUUID()}`,
+      goalId: goal.id,
+      action: command.action,
+      expectedVersion: goal.version,
+    });
+  }
+
+  function sendGoalMutation(message: GoalMutationMsg): void {
+    if (!relay || !currentRoom) return;
+    pendingGoalMutations.track(currentRoom, message);
+    relay.send(message);
   }
 
   async function changeModelFromCommand(argument: string): Promise<void> {
@@ -1320,24 +1743,56 @@ export function activate(context: vscode.ExtensionContext): void {
     return picked?.[0] ? { cwd: picked[0].fsPath } : undefined;
   }
 
+  function sharedConsentKey(agentId: string): string | undefined {
+    return currentRoom ? `${activeRelayUrl ?? ""}\0${currentRoom}\0${agentId}` : undefined;
+  }
+
+  function clearSharedRoomConsent(agentId: string): void {
+    const key = sharedConsentKey(agentId);
+    if (key) sharedRoomAgentConsent.delete(key);
+  }
+
   /**
    * Attaching starts a real process, which is what makes dragging an agent into
    * a room meaningful rather than a picture of state you created by hand.
    */
-  async function attachAgent(id?: string): Promise<void> {
-    const spec = id ? specs.get(id) : [...specs.values()][0];
+  async function attachAgent(id?: string): Promise<boolean> {
+    let spec = id ? specs.get(id) : undefined;
     // The room's empty-state button means "get me an agent", whether one has
     // already been configured or not. Falling through to setup removes the
     // old no-op that made a first-time user's most obvious button do nothing.
+    if (!spec && id === undefined && specs.size > 0) {
+      spec = await pickCommandAgent(
+        [...specs.values()].filter((candidate) => !agents.has(candidate.id)),
+        "Choose an agent to attach"
+      );
+    }
     if (!spec) {
       if (shouldStartAddAgentForAttach(specs.size, id)) await addAgent();
-      return;
+      return false;
     }
     if (!currentRoom || !me) {
       vscode.window.showInformationMessage("Ripieno: join a room first.");
-      return;
+      return false;
     }
-    const consentKey = `${activeRelayUrl ?? ""}\0${currentRoom}\0${spec.id}`;
+    const role = currentRole();
+    if (role !== "owner" && role !== "member") {
+      void vscode.window.showInformationMessage(
+        role === "viewer"
+          ? "This room is read-only for viewers. An owner can change your role before you attach an agent."
+          : "Wait for the room to finish joining before you attach an agent."
+      );
+      return false;
+    }
+    if (providerById(spec.providerId)?.kind === "openai-compatible" && !spec.model) {
+      const choice = await vscode.window.showInformationMessage(
+        `${labelFor(spec.label)} needs a model before it can attach.`,
+        "Customize"
+      );
+      if (choice === "Customize") await customizeAgent(spec.id);
+      return false;
+    }
+    const consentKey = sharedConsentKey(spec.id) as string;
     if (
       needsSharedRoomAgentConsent(
         isWorkspaceProvider(spec.providerId),
@@ -1359,7 +1814,7 @@ export function activate(context: vscode.ExtensionContext): void {
         },
         "Attach Agent"
       );
-      if (choice !== "Attach Agent") return;
+      if (choice !== "Attach Agent") return false;
       sharedRoomAgentConsent.add(consentKey);
     }
     const existing = agents.get(spec.id);
@@ -1369,7 +1824,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // RelayClient does not retry a 4003. Attaching again therefore has to
       // build a new one; returning here would make the tree offer an action
       // that silently does nothing.
-      if (existing.currentState !== "refused" && existing.currentState !== "error") return;
+      if (existing.currentState !== "refused" && existing.currentState !== "error") return true;
       existing.dispose();
       agents.delete(spec.id);
     }
@@ -1377,16 +1832,37 @@ export function activate(context: vscode.ExtensionContext): void {
     // The first agent a member creates answers anything not addressed to
     // someone specific; the rest speak only when named. Exactly one primary per
     // member is what keeps three agents from all replying to one question.
-    const isPrimary = [...specs.keys()][0] === spec.id;
+    const isPrimary = responseModeForSpec(spec) === "automatic";
 
     const apiKey =
       providerById(spec.providerId)?.kind === "openai-compatible"
         ? await context.secrets.get(secretKeyFor(spec.id))
         : undefined;
 
+    const hostUrl = relayUrl();
+    const hostRoom = currentRoom;
+    const sessionScope = providerSessionScopeKey(hostUrl, hostRoom, spec.id);
+    const handoffStore: HandoffDeliveryStore = {
+      get: async (deliveryId) => {
+        const key = handoffDeliveryScopeKey(hostUrl, hostRoom, spec.id, deliveryId);
+        const saved = loadState().handoffDeliveries[key];
+        return saved ? structuredClone(saved) : undefined;
+      },
+      put: async (delivery) => {
+        const key = handoffDeliveryScopeKey(hostUrl, hostRoom, spec.id, delivery.deliveryId);
+        await updateState((current) => ({
+          ...current,
+          handoffDeliveries: {
+            ...current.handoffDeliveries,
+            [key]: structuredClone(delivery),
+          },
+        }));
+      },
+    };
+
     const host = new AgentHost({
-      url: relayUrl(),
-      room: currentRoom,
+      url: hostUrl,
+      room: hostRoom,
       member: me,
       githubToken,
       id: spec.id,
@@ -1400,9 +1876,15 @@ export function activate(context: vscode.ExtensionContext): void {
       args: spec.args,
       permissions: spec.permissions,
       apiKey,
-      resumeSessionId: loadState().sessions[spec.id],
-      onSession: (agentId, sessionId) =>
-        saveState({ sessions: { ...loadState().sessions, [agentId]: sessionId } }),
+      // Never consult the legacy agent-only map: private provider context from
+      // another room must not silently appear in this one.
+      resumeSessionId: loadState().providerSessions[sessionScope],
+      onSession: (_agentId, sessionId) =>
+        void updateState((current) => ({
+          ...current,
+          providerSessions: { ...current.providerSessions, [sessionScope]: sessionId },
+        })),
+      handoffStore,
       primary: isPrimary,
       siblingLabels: [...specs.values()]
         .filter((other) => other.id !== spec.id)
@@ -1412,10 +1894,24 @@ export function activate(context: vscode.ExtensionContext): void {
       workspaceServerPath,
       token: roomToken(),
       onStateChange: (agentId, state) => onAgentState(agentId, state),
+      onHandoffRelease: (agentId, handoffId) => {
+        queueMicrotask(() => {
+          const released = agents.get(agentId);
+          if (released !== host) return;
+          released.dispose();
+          agents.delete(agentId);
+          refreshAgentViews();
+          note(
+            `${labelFor(spec.label)} handed responsibility to the recipient and detached. ` +
+              `Its provider credentials and private session stayed on this machine (${displayHandoffId(handoffId)}).`
+          );
+        });
+      },
     });
     agents.set(spec.id, host);
     host.attach();
-    roomsTree.setMyAgents(myAgentsForTree());
+    refreshAgentViews();
+    return true;
   }
 
   function detachAgent(id?: string): void {
@@ -1423,7 +1919,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!target) return;
     agents.get(target)?.dispose();
     agents.delete(target);
-    roomsTree.setMyAgents(myAgentsForTree());
+    refreshAgentViews();
   }
 
   /**
@@ -1480,7 +1976,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function onAgentState(_id: string, _state: AgentState): void {
-    roomsTree.setMyAgents(myAgentsForTree());
+    refreshAgentViews();
   }
 
   /**
@@ -1552,7 +2048,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // The agents themselves are restored during activation — see above. Only
     // rejoining the room is deferred to here, because only that is a question.
     const saved = loadState();
-    roomsTree.setMyAgents(myAgentsForTree());
+    refreshAgentViews();
     if (!saved.room) return;
 
     const choice = await vscode.window.showInformationMessage(
@@ -1771,10 +2267,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // A new room means the old agents are watching the wrong conversation.
     detachAll();
+    latestRoster = [];
     currentRoom = room;
     me = member;
     saveState({ room, relayUrl: activeRelayUrl });
-    roomsTree.setMyAgents(myAgentsForTree());
+    refreshAgentViews();
 
     relay = new RelayClient({
       url,
@@ -1822,11 +2319,20 @@ export function activate(context: vscode.ExtensionContext): void {
     relay.dispose();
     relay = undefined;
     currentRoom = undefined;
+    goals = [];
+    goalAudit = [];
+    goalsRevision = 0;
+    handoffs = [];
+    handoffAudit = [];
+    handoffRevision = 0;
+    latestRoster = [];
+    pendingGoalMutations.clear();
     setInRoomContext(false);
+    setCanAttachAgentsContext(true);
     roomView.reset();
     roomsTree.setRoom(undefined, "byo");
     roomsTree.setConnected(false);
-    roomsTree.setMyAgents(myAgentsForTree());
+    refreshAgentViews();
   }
 
   async function signIn(): Promise<void> {
@@ -1845,7 +2351,28 @@ export function activate(context: vscode.ExtensionContext): void {
     switch (msg.t) {
       case "joined":
         setInRoomContext(true);
-        roomView.setJoined(msg.room, msg.you, msg.roster, msg.transcript, msg.mode, msg.actions ?? []);
+        latestRoster = msg.roster;
+        setCanAttachAgentsContext(msg.you.role === "owner" || msg.you.role === "member");
+        goals = msg.goals ?? [];
+        goalAudit = msg.goalAudit ?? [];
+        goalsRevision = msg.roomRevision ?? 0;
+        handoffs = msg.handoffs ?? [];
+        handoffAudit = msg.handoffAudit ?? [];
+        handoffRevision = msg.handoffRevision ?? 0;
+        roomView.setJoined(
+          msg.room,
+          msg.you,
+          msg.roster,
+          msg.transcript,
+          msg.mode,
+          msg.actions ?? [],
+          goals,
+          goalAudit,
+          msg.roomRevision ?? 0,
+          handoffs,
+          handoffAudit,
+          handoffRevision
+        );
         roomsTree.setRoom(msg.room, msg.mode, msg.you.handle);
         roomsTree.setRoster(msg.roster, msg.workspaceHost);
         hostingWorkspace = msg.workspaceHost === msg.you.handle;
@@ -1855,8 +2382,16 @@ export function activate(context: vscode.ExtensionContext): void {
         // nobody hosting until the next roster broadcast.
         // A joiner should see what the room has already cost, not start at zero.
         roomsTree.setUsage(msg.usage ?? []);
+        // A socket write is not an acknowledgement. If the previous connection
+        // died after commit, replaying the same id returns the current state.
+        for (const mutation of pendingGoalMutations.forRoom(msg.room)) relay?.send(mutation);
         break;
       case "roster":
+        latestRoster = msg.roster;
+        {
+          const role = msg.roster.find((entry) => entry.handle === me?.handle)?.role;
+          setCanAttachAgentsContext(role === "owner" || role === "member");
+        }
         roomView.setRoster(msg.roster);
         roomsTree.setRoster(msg.roster, msg.workspaceHost);
         // The relay is the authority: it releases the claim when the host
@@ -1893,6 +2428,49 @@ export function activate(context: vscode.ExtensionContext): void {
         // The provenance stream doubles as cache invalidation: a write to a path
         // evicts exactly that path, so an open tab refreshes rather than lying.
         workspaceFs.noteAction(msg.entry);
+        break;
+      case "goals":
+        if (msg.roomRevision < goalsRevision) break;
+        goals = msg.goals;
+        goalAudit = msg.goalAudit;
+        goalsRevision = msg.roomRevision;
+        roomView.setGoalState(msg.goals, msg.goalAudit, msg.roomRevision);
+        break;
+      case "goalResult":
+        pendingGoalMutations.acknowledge(msg.requestId);
+        if (!msg.ok) {
+          note(msg.message ?? "The goal could not be changed.");
+        } else if (
+          msg.goals &&
+          msg.goalAudit &&
+          msg.roomRevision >= goalsRevision
+        ) {
+          goals = msg.goals;
+          goalAudit = msg.goalAudit;
+          goalsRevision = msg.roomRevision;
+          roomView.setGoalState(msg.goals, msg.goalAudit, msg.roomRevision);
+        }
+        break;
+      case "handoffs":
+        if (msg.handoffRevision < handoffRevision) break;
+        handoffs = msg.handoffs;
+        handoffAudit = msg.handoffAudit;
+        handoffRevision = msg.handoffRevision;
+        roomView.setHandoffState(msg.handoffs, msg.handoffAudit, msg.handoffRevision);
+        break;
+      case "handoffResult":
+        if (!msg.ok) {
+          note(msg.message ?? "The handoff could not be changed.");
+        } else if (
+          msg.handoffs &&
+          msg.handoffAudit &&
+          msg.handoffRevision >= handoffRevision
+        ) {
+          handoffs = msg.handoffs;
+          handoffAudit = msg.handoffAudit;
+          handoffRevision = msg.handoffRevision;
+          roomView.setHandoffState(msg.handoffs, msg.handoffAudit, msg.handoffRevision);
+        }
         break;
       case "status":
         roomView.setStatus(msg.status, msg.waitingOn);

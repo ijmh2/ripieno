@@ -22,6 +22,18 @@
   box-sizing: border-box;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 html,
 body {
   height: 100%;
@@ -186,6 +198,122 @@ body {
   }
   50% {
     opacity: 0.55;
+  }
+}
+
+/* -------------------------------------------------------------- */
+/* Three-step invite and agent onboarding                          */
+/* -------------------------------------------------------------- */
+
+.onboarding {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+
+.onboarding-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.onboarding-step {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 4px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.onboarding-step.current {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+}
+
+.onboarding-step.pending {
+  opacity: 0.58;
+}
+
+.onboarding-marker {
+  display: grid;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  place-items: center;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 50%;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.onboarding-step.complete .onboarding-marker {
+  color: var(--vscode-testing-iconPassed, #3fb950);
+  border-color: currentColor;
+}
+
+.onboarding-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.onboarding-action {
+  width: 100%;
+  min-height: 26px;
+  margin-top: 6px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: var(--ripieno-radius);
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  font: inherit;
+  cursor: pointer;
+}
+
+.onboarding-action:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.onboarding-action:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.onboarding-help {
+  margin: 5px 1px 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.onboarding.read-only .onboarding-step:nth-child(2) {
+  color: var(--vscode-descriptionForeground);
+}
+
+@media (max-width: 260px) {
+  .onboarding {
+    padding-inline: 6px;
+  }
+
+  .onboarding-steps {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .onboarding-step {
+    gap: 2px;
+    font-size: 10px;
+  }
+
+  .onboarding-marker {
+    width: 13px;
+    height: 13px;
+    flex-basis: 13px;
+    font-size: 8px;
   }
 }
 
@@ -435,6 +563,12 @@ body {
   outline-offset: 2px;
 }
 
+.handoff-button:focus-visible,
+.handoff-agent-select:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
 .send-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -566,6 +700,205 @@ body {
 
 .approval-button:hover {
   filter: brightness(1.15);
+}
+
+/* -------------------------------------------------------------- */
+/* Durable goals                                                   */
+/* -------------------------------------------------------------- */
+
+.goals {
+  border-top: 1px solid var(--vscode-panel-border);
+  flex: 0 1 auto;
+  max-height: min(30vh, 180px);
+  overflow: auto;
+}
+
+.goals-summary {
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  user-select: none;
+}
+
+.goals-summary:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
+}
+
+.goals-list {
+  padding: 0 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.goals-empty {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.goal-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  padding: 5px 6px;
+  border-left: 2px solid var(--vscode-testing-iconPassed, #3fb950);
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+}
+
+.goal-row.paused {
+  border-left-color: var(--vscode-inputValidation-warningForeground, #f4d871);
+}
+
+.goal-row.completed {
+  border-left-color: var(--vscode-descriptionForeground);
+  opacity: 0.72;
+}
+
+.goal-status {
+  margin-top: 1px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.goal-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.goal-text {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.goal-row.completed .goal-text {
+  text-decoration: line-through;
+}
+
+.goal-meta,
+.goal-provenance {
+  overflow: hidden;
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-meta {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+/* -------------------------------------------------------------- */
+/* Explicit agent handoffs                                        */
+/* -------------------------------------------------------------- */
+
+.handoffs {
+  border-top: 1px solid var(--vscode-panel-border);
+  flex: 0 1 auto;
+  max-height: min(34vh, 220px);
+  overflow-y: auto;
+  padding: 7px 10px 8px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+}
+
+.handoffs-title {
+  margin-bottom: 6px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.handoffs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.handoff-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 8px;
+  border-left: 3px solid var(--vscode-inputValidation-infoForeground, var(--vscode-focusBorder));
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+
+.handoff-title {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.handoff-task {
+  padding: 5px 6px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.handoff-meta,
+.handoff-note,
+.handoff-agent-label {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.handoff-agent-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.handoff-agent-select {
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+  border-radius: 3px;
+  background: var(--vscode-dropdown-background, var(--vscode-input-background));
+  color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
+  font: inherit;
+}
+
+.handoff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.handoff-button {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--ripieno-radius);
+  padding: 3px 8px;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.handoff-button.primary {
+  border-color: transparent;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.handoff-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 /* -------------------------------------------------------------- */
@@ -773,6 +1106,10 @@ body {
   }
 
   .actions {
+    max-height: 22vh;
+  }
+
+  .goals {
     max-height: 22vh;
   }
 }
