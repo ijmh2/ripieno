@@ -723,9 +723,10 @@
   const mentionsEl = document.getElementById("mentions");
   const slashCommands = [
     { insert: "/help", label: "/help", detail: "Show room commands", kind: "command", color: 5 },
-    { insert: "/agents", label: "/agents", detail: "List attached agents", kind: "command", color: 5 },
-    { insert: "/model", label: "/model", detail: "Choose the primary model", kind: "command", color: 5 },
-    { insert: "/detach", label: "/detach", detail: "Detach an agent", kind: "command", color: 5 },
+    { insert: "/agents", label: "/agents", detail: "List your agents, providers and models", kind: "command", color: 5 },
+    { insert: "/model", label: "/model", detail: "Choose an agent and provider model", kind: "command", color: 5 },
+    { insert: "/attach", label: "/attach", detail: "Attach one of your agents", kind: "command", color: 5 },
+    { insert: "/detach", label: "/detach", detail: "Detach one of your agents", kind: "command", color: 5 },
   ];
   let candidates = [];
   let highlighted = 0;

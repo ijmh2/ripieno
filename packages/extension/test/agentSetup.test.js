@@ -6,6 +6,7 @@ const {
   isUnusedLegacyBootstrapAgent,
   nextAgentLabel,
   agentIdFromTreeNode,
+  parseCodexModelCatalog,
 } = require("../dist/agentSetup.js");
 
 describe("first-run agent migration", () => {
@@ -71,5 +72,29 @@ describe("Codex login readiness", () => {
     assert.equal(isCodexLoginReady(1, "Logged in using ChatGPT"), false);
     assert.equal(isCodexLoginReady(0, "Not logged in"), false);
     assert.equal(isCodexLoginReady(null, ""), false);
+  });
+});
+
+describe("Codex model catalog", () => {
+  test("parses and prioritises visible models after a CLI warning", () => {
+    const output =
+      "Warning: PATH alias unavailable\n" +
+      JSON.stringify({
+        models: [
+          { slug: "hidden", visibility: "hide", priority: 0 },
+          { slug: "gpt-b", display_name: "GPT B", description: "Second", priority: 2 },
+          { slug: "gpt-a", display_name: "GPT A", description: "First", priority: 1 },
+          { slug: "gpt-a", display_name: "Duplicate", priority: 3 },
+        ],
+      }) + "\nWarning: cached catalog used";
+    assert.deepEqual(parseCodexModelCatalog(output), [
+      { slug: "gpt-a", label: "GPT A", description: "First", priority: 1 },
+      { slug: "gpt-b", label: "GPT B", description: "Second", priority: 2 },
+    ]);
+  });
+
+  test("fails closed on malformed or unrelated output", () => {
+    assert.deepEqual(parseCodexModelCatalog("not json"), []);
+    assert.deepEqual(parseCodexModelCatalog('{"models": nope}'), []);
   });
 });

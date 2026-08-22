@@ -10,7 +10,12 @@ Module._resolveFilename = function (request, ...rest) {
   return originalResolve.call(this, request, ...rest);
 };
 
-const { CliRunner, PROVIDERS, argsForAgentPermission } = require("../dist/runners.js");
+const {
+  CliRunner,
+  PROVIDERS,
+  argsForAgentModel,
+  argsForAgentPermission,
+} = require("../dist/runners.js");
 
 const context = {
   system: "You are a room agent.",
@@ -105,5 +110,39 @@ describe("per-agent Codex permissions", () => {
     const gemini = ["-p", "{prompt}"];
     assert.deepEqual(argsForAgentPermission("gemini", gemini, "full"), gemini);
     assert.deepEqual(argsForAgentPermission("codex", base), base);
+  });
+});
+
+describe("per-agent CLI models", () => {
+  test("Codex receives its documented --model override before the stdin prompt", () => {
+    assert.deepEqual(
+      argsForAgentModel("codex", ["exec", "--color", "never", "-"], "gpt-5.6-terra"),
+      ["exec", "--color", "never", "--model", "gpt-5.6-terra", "-"]
+    );
+  });
+
+  test("Gemini receives its documented --model override before --prompt", () => {
+    assert.deepEqual(argsForAgentModel("gemini", ["-p", "{prompt}"], "flash"), [
+      "--model",
+      "flash",
+      "-p",
+      "{prompt}",
+    ]);
+  });
+
+  test("a new override replaces a stale built-in flag without touching custom CLIs", () => {
+    assert.deepEqual(
+      argsForAgentModel("codex", ["exec", "-m", "old", "--model=older", "-"], "new"),
+      ["exec", "--model", "new", "-"]
+    );
+    assert.deepEqual(
+      argsForAgentModel("cli-custom", ["--model", "owned-by-custom-cli", "{prompt}"], "ignored"),
+      ["--model", "owned-by-custom-cli", "{prompt}"]
+    );
+  });
+
+  test("no saved override preserves the provider's own configured default", () => {
+    const args = ["exec", "--model", "from-configured-args", "-"];
+    assert.deepEqual(argsForAgentModel("codex", args), args);
   });
 });

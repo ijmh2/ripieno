@@ -138,6 +138,22 @@ import an existing ChatGPT conversation or a custom GPT. Codex installation and
 ChatGPT sign-in are documented in
 [OpenAI's Codex CLI guide](https://learn.chatgpt.com/docs/codex/cli).
 
+### Room commands
+
+Type `/` in the room composer to see the commands Ripieno handles locally:
+
+- `/model` opens a provider-aware model picker for one agent.
+- `/model <model> [agent]` applies an exact model ID, such as
+  `/model gpt-5.6-terra agent 2`; `/model default [agent]` returns to the
+  provider default.
+- `/agents` shows each agent's provider, model and connection state.
+- `/attach [agent]` and `/detach [agent]` act on one agent, using a picker when
+  the name is omitted.
+
+Codex and Gemini receive the selected model through their CLI model option;
+Claude and OpenAI-compatible agents receive it through their existing provider
+configuration. Custom CLI agents keep model selection in their own arguments.
+
 ## Adding people
 
 Set `ripieno.relayUrl` to a relay you can both reach, then **Copy Invite Link**. The
@@ -297,7 +313,7 @@ they were present for.
 ## Tests
 
 ```bash
-npm test          # 357 across five packages, ~1 minute
+npm test          # 413 across five packages, ~1 minute
 npm run typecheck
 ```
 

@@ -66,6 +66,62 @@ export function agentIdFromTreeNode(node: unknown, ownerHandle?: string): string
   return id || undefined;
 }
 
+export interface CodexModelChoice {
+  slug: string;
+  label: string;
+  description?: string;
+  priority: number;
+}
+
+/** Parse `codex debug models` while tolerating a warning printed before its JSON. */
+export function parseCodexModelCatalog(output: string): CodexModelChoice[] {
+  const start = output.indexOf('{"models"');
+  if (start < 0) return [];
+  const end = output.lastIndexOf("}");
+  if (end < start) return [];
+  try {
+    const parsed = JSON.parse(output.slice(start, end + 1)) as {
+      models?: Array<{
+        slug?: unknown;
+        display_name?: unknown;
+        description?: unknown;
+        visibility?: unknown;
+        priority?: unknown;
+      }>;
+    };
+    if (!Array.isArray(parsed.models)) return [];
+    const seen = new Set<string>();
+    return parsed.models
+      .filter((model) => {
+        if (
+          typeof model.slug !== "string" ||
+          model.slug.length === 0 ||
+          model.visibility === "hide" ||
+          seen.has(model.slug)
+        ) {
+          return false;
+        }
+        seen.add(model.slug);
+        return true;
+      })
+      .map((model) => ({
+        slug: model.slug as string,
+        label:
+          typeof model.display_name === "string" && model.display_name
+            ? model.display_name
+            : (model.slug as string),
+        description:
+          typeof model.description === "string" && model.description
+            ? model.description
+            : undefined,
+        priority: typeof model.priority === "number" ? model.priority : Number.MAX_SAFE_INTEGER,
+      }))
+      .sort((left, right) => left.priority - right.priority || left.label.localeCompare(right.label));
+  } catch {
+    return [];
+  }
+}
+
 /** `codex login status` is the authority; the text protects against false-zero wrappers. */
 export function isCodexLoginReady(exitCode: number | null, output: string): boolean {
   return exitCode === 0 && /(?:^|\n)\s*logged in\b/i.test(output);

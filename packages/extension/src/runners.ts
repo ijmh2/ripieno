@@ -493,6 +493,31 @@ export function argsForAgentPermission(
   return cleaned;
 }
 
+/** Put a saved model override onto the built-in CLIs that document `--model`. */
+export function argsForAgentModel(
+  providerId: string,
+  args: readonly string[],
+  model?: string
+): string[] {
+  if ((providerId !== "codex" && providerId !== "gemini") || !model) return [...args];
+
+  const cleaned: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--model" || arg === "-m") {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--model=")) continue;
+    cleaned.push(arg);
+  }
+
+  if (providerId === "gemini") return ["--model", model, ...cleaned];
+  const promptAt = cleaned.findIndex((arg) => arg === "-" || arg.includes("{prompt}"));
+  cleaned.splice(promptAt < 0 ? cleaned.length : promptAt, 0, "--model", model);
+  return cleaned;
+}
+
 /**
  * Presets, not a closed list — "Custom" takes any OpenAI-compatible endpoint,
  * which is also how a local Ollama joins.

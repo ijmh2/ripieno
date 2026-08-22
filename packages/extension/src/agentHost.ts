@@ -31,6 +31,7 @@ import {
   providerById,
   isWorkspaceProvider,
   argsForAgentPermission,
+  argsForAgentModel,
   type AgentPermission,
   type ModelRunner,
   type RunnerCapability,
@@ -563,10 +564,14 @@ export class AgentHost implements vscode.Disposable {
       }
       this.runner = new CliRunner({
         command: this.opts.command,
-        args: argsForAgentPermission(
+        args: argsForAgentModel(
           providerId,
-          this.opts.args ?? ["{prompt}"],
-          this.opts.permissions
+          argsForAgentPermission(
+            providerId,
+            this.opts.args ?? ["{prompt}"],
+            this.opts.permissions
+          ),
+          this.opts.model
         ),
         label: this.opts.label,
         timeoutMs: 300_000,

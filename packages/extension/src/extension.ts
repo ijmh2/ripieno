@@ -30,7 +30,9 @@ import {
   isCodexLoginReady,
   isUnusedLegacyBootstrapAgent,
   nextAgentLabel,
+  parseCodexModelCatalog,
 } from "./agentSetup";
+import { parseModelValue, resolveModelRequest } from "./agentCommands";
 
 export function activate(context: vscode.ExtensionContext): void {
   const toolExecutor = new ToolExecutor();
@@ -442,11 +444,11 @@ export function activate(context: vscode.ExtensionContext): void {
         setting: "folder",
       },
     ];
-    if (provider?.kind === "claude-code") {
+    if (supportsModelSelection(spec)) {
       settings.push({
-        label: "$(symbol-method) Claude model",
+        label: `$(symbol-method) ${modelSettingLabel(spec)}`,
         description: spec.model ?? "Provider default",
-        detail: "Choose Opus, Sonnet, Haiku or your configured default",
+        detail: `Choose the model used by ${provider?.label ?? spec.providerId}`,
         setting: "model",
       });
     }
@@ -520,7 +522,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     if (picked.setting === "model") {
-      const model = await pickModel(spec.label);
+      const model = await pickModelForAgent(spec);
       if (!model || model.model === spec.model) return;
       spec.model = model.model;
       await persistAgentChange(spec, true);
@@ -631,7 +633,11 @@ export function activate(context: vscode.ExtensionContext): void {
     )?.value;
   }
 
-  async function persistAgentChange(spec: AgentSpecRecord, freshSession: boolean): Promise<void> {
+  async function persistAgentChange(
+    spec: AgentSpecRecord,
+    freshSession: boolean,
+    announce = true
+  ): Promise<boolean> {
     const wasAttached = agents.has(spec.id);
     if (wasAttached) detachAgent(spec.id);
 
@@ -644,9 +650,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     roomsTree.setMyAgents(myAgentsForTree());
     if (wasAttached) await attachAgent(spec.id);
-    void vscode.window.showInformationMessage(
-      `${labelFor(spec.label)} updated${wasAttached ? " and restarted" : ""}.`
-    );
+    if (announce) {
+      void vscode.window.showInformationMessage(
+        `${labelFor(spec.label)} updated${wasAttached ? " and restarted" : ""}.`
+      );
+    }
+    return wasAttached;
   }
 
   /**
@@ -960,20 +969,121 @@ export function activate(context: vscode.ExtensionContext): void {
     return picked?.preset;
   }
 
-  /** Models an agent can run on. Aliases track the latest of each family. */
-  const MODELS = [
-    { label: "$(sparkle) Opus", description: "most capable — deep reasoning, harder problems", value: "opus" },
-    { label: "$(zap) Sonnet", description: "faster and cheaper — good for routine work", value: "sonnet" },
-    { label: "$(dashboard) Haiku", description: "fastest — quick lookups and simple edits", value: "haiku" },
-    { label: "$(gear) Default", description: "whatever your Claude Code is configured to use", value: "" },
-  ];
+  type ModelPick = vscode.QuickPickItem & {
+    choice: "default" | "model" | "custom";
+    value?: string;
+  };
 
-  async function pickModel(name: string): Promise<{ model?: string } | undefined> {
-    const choice = await vscode.window.showQuickPick(MODELS, {
-      title: `Claude model for "${name}"`,
+  function supportsModelSelection(spec: AgentSpecRecord): boolean {
+    const kind = providerById(spec.providerId)?.kind;
+    return (
+      kind === "claude-code" ||
+      kind === "openai-compatible" ||
+      spec.providerId === "codex" ||
+      spec.providerId === "gemini"
+    );
+  }
+
+  function modelSettingLabel(spec: AgentSpecRecord): string {
+    if (spec.providerId === "codex") return "Codex model";
+    if (spec.providerId === "gemini") return "Gemini model";
+    if (spec.providerId === "claude-code") return "Claude model";
+    return "Model";
+  }
+
+  async function pickModelForAgent(
+    spec: AgentSpecRecord
+  ): Promise<{ model?: string } | undefined> {
+    if (spec.providerId === "codex") return pickCodexModel(spec);
+    if (spec.providerId === "gemini") {
+      return pickKnownOrCustomModel(spec, [
+        { label: "$(gear) Provider default", detail: "Use Gemini CLI's configured default", choice: "default" },
+        { label: "Auto", detail: "Let Gemini route to an appropriate available model", choice: "model", value: "auto" },
+        { label: "Pro", detail: "Gemini CLI's current Pro alias", choice: "model", value: "pro" },
+        { label: "Flash", detail: "Gemini CLI's current fast alias", choice: "model", value: "flash" },
+        { label: "Flash Lite", detail: "Gemini CLI's fastest alias", choice: "model", value: "flash-lite" },
+        { label: "$(edit) Enter exact model ID…", choice: "custom" },
+      ]);
+    }
+    if (spec.providerId === "claude-code") {
+      return pickKnownOrCustomModel(spec, [
+        { label: "$(gear) Provider default", detail: "Use Claude Code's configured default", choice: "default" },
+        { label: "$(sparkle) Opus", detail: "Claude Code's Opus alias", choice: "model", value: "opus" },
+        { label: "$(zap) Sonnet", detail: "Claude Code's Sonnet alias", choice: "model", value: "sonnet" },
+        { label: "$(dashboard) Haiku", detail: "Claude Code's Haiku alias", choice: "model", value: "haiku" },
+        { label: "$(edit) Enter exact model ID…", choice: "custom" },
+      ]);
+    }
+
+    const provider = providerById(spec.providerId);
+    if (provider?.kind === "openai-compatible") {
+      return inputExactModel(spec, provider.suggestedModel);
+    }
+    void vscode.window.showInformationMessage(
+      `${labelFor(spec.label)} uses a custom CLI. Set its model in that CLI's arguments or configuration.`
+    );
+    return undefined;
+  }
+
+  async function pickKnownOrCustomModel(
+    spec: AgentSpecRecord,
+    choices: ModelPick[]
+  ): Promise<{ model?: string } | undefined> {
+    const picked = await vscode.window.showQuickPick(choices, {
+      title: `${modelSettingLabel(spec)} for ${labelFor(spec.label)}`,
+      placeHolder: `Current: ${spec.model ?? "provider default"}`,
       ignoreFocusOut: true,
     });
-    return choice ? { model: choice.value || undefined } : undefined;
+    if (!picked) return undefined;
+    if (picked.choice === "default") return { model: undefined };
+    if (picked.choice === "custom") return inputExactModel(spec);
+    return { model: picked.value };
+  }
+
+  async function pickCodexModel(
+    spec: AgentSpecRecord
+  ): Promise<{ model?: string } | undefined> {
+    const command = spec.command ?? "codex";
+    let result = await probeCommand(command, ["debug", "models"], 10_000);
+    let catalog = result.code === 0 ? parseCodexModelCatalog(result.output) : [];
+    if (catalog.length === 0) {
+      result = await probeCommand(command, ["debug", "models", "--bundled"], 10_000);
+      catalog = result.code === 0 ? parseCodexModelCatalog(result.output) : [];
+    }
+
+    const choices: ModelPick[] = [
+      {
+        label: "$(gear) Provider default",
+        detail: "Use the model configured by Codex",
+        choice: "default",
+      },
+      ...catalog.map((model) => ({
+        label: model.label,
+        description: model.slug,
+        detail: model.description,
+        choice: "model" as const,
+        value: model.slug,
+      })),
+      { label: "$(edit) Enter exact model ID…", choice: "custom" },
+    ];
+    return pickKnownOrCustomModel(spec, choices);
+  }
+
+  async function inputExactModel(
+    spec: AgentSpecRecord,
+    fallback?: string
+  ): Promise<{ model?: string } | undefined> {
+    const value = await vscode.window.showInputBox({
+      title: `${modelSettingLabel(spec)} for ${labelFor(spec.label)}`,
+      prompt: "Enter the exact model ID accepted by this provider.",
+      value: spec.model ?? fallback ?? "",
+      ignoreFocusOut: true,
+      validateInput: (raw) => {
+        const parsed = parseModelValue(raw);
+        return parsed.ok ? undefined : parsed.message;
+      },
+    });
+    return value === undefined ? undefined : { model: value.trim() };
   }
 
   /**
@@ -994,10 +1104,12 @@ export function activate(context: vscode.ExtensionContext): void {
         note(
           [
             "Room commands (handled here, not sent to the room):",
-            "  /model <opus|sonnet|haiku|default> [agent]  — set the model for your agents",
-            "  /agents                                     — list your agents",
-            "  /detach [agent]                             — stop an agent",
-            "  /help                                       — this list",
+            "  /model                         — choose an agent and one of its provider's models",
+            "  /model <model> [agent]         — set an exact model; default clears the override",
+            "  /agents                        — list your agents, providers, models and states",
+            "  /attach [agent]                — attach one of your agents",
+            "  /detach [agent]                — detach one of your agents",
+            "  /help                          — this list",
           ].join("\n")
         );
         return true;
@@ -1006,55 +1118,138 @@ export function activate(context: vscode.ExtensionContext): void {
         const rows = [...specs.values()].map((spec) => {
           const state = agents.get(spec.id)?.currentState ?? "detached";
           const where = spec.cwd ? ` · ${spec.cwd}` : "";
-          return `  ${labelFor(spec.label)} — ${state} · ${spec.model ?? "default model"}${where}`;
+          const provider = providerById(spec.providerId)?.label.replace(" (local)", "") ?? spec.providerId;
+          return `  ${labelFor(spec.label)} — ${state} · ${provider} · ${spec.model ?? "provider default"}${where}`;
         });
         note(rows.length > 0 ? `Your agents:\n${rows.join("\n")}` : "You have no agents.");
         return true;
       }
 
-      case "model": {
-        const [wanted, target] = argument.split(/\s+/);
-        if (!wanted) {
-          note("Usage: /model <opus|sonnet|haiku|default> [agent name]");
-          return true;
-        }
-        const value = wanted.toLowerCase() === "default" ? undefined : wanted.toLowerCase();
-        const matched = [...specs.values()].filter(
-          (spec) => !target || spec.label.toLowerCase().includes(target.toLowerCase())
-        );
-        if (matched.length === 0) {
-          note(`No agent matching "${target}".`);
-          return true;
-        }
-        for (const spec of matched) {
-          spec.model = value;
-          // Restart so the change takes effect now rather than next attach; the
-          // session is per-process, so there is no way to switch mid-session.
-          if (agents.has(spec.id)) {
-            detachAgent(spec.id);
-            void attachAgent(spec.id);
-          }
-        }
-        note(
-          `${matched.map((s) => labelFor(s.label)).join(", ")} now on ${value ?? "the default model"}` +
-            (matched.some((s) => agents.has(s.id)) ? " (restarted — its session starts fresh)." : ".")
-        );
+      case "model":
+        void changeModelFromCommand(argument);
         return true;
-      }
 
-      case "detach": {
-        const matched = [...specs.values()].filter(
-          (spec) => !argument || spec.label.toLowerCase().includes(argument.toLowerCase())
-        );
-        for (const spec of matched) detachAgent(spec.id);
-        note(`Detached ${matched.map((s) => labelFor(s.label)).join(", ") || "nothing"}.`);
+      case "attach":
+        void attachFromCommand(argument);
         return true;
-      }
+
+      case "detach":
+        void detachFromCommand(argument);
+        return true;
 
       default:
         note(`Unknown command "/${command}". Try /help.`);
         return true;
     }
+  }
+
+  async function changeModelFromCommand(argument: string): Promise<void> {
+    const request = resolveModelRequest(argument, [...specs.values()]);
+    if (request.kind === "error") {
+      note(request.message);
+      return;
+    }
+
+    let spec = request.targetId ? specs.get(request.targetId) : undefined;
+    if (request.kind === "pick" && !spec) {
+      spec = await pickCommandAgent([...specs.values()], "Choose an agent to change");
+    }
+    if (!spec) return;
+
+    if (request.kind === "pick") {
+      const picked = await pickModelForAgent(spec);
+      if (!picked) return;
+      await setAgentModel(spec, picked.model);
+      return;
+    }
+    await setAgentModel(spec, request.model);
+  }
+
+  async function setAgentModel(spec: AgentSpecRecord, model?: string): Promise<void> {
+    if (!supportsModelSelection(spec)) {
+      note(
+        `${labelFor(spec.label)} uses a custom CLI. Set its model in that CLI's arguments or configuration.`
+      );
+      return;
+    }
+    if (providerById(spec.providerId)?.kind === "openai-compatible" && !model) {
+      note(`${labelFor(spec.label)} needs an explicit model name; this endpoint has no shared default.`);
+      return;
+    }
+    if (spec.model === model) {
+      note(`${labelFor(spec.label)} already uses ${model ?? "its provider default"}.`);
+      return;
+    }
+
+    spec.model = model;
+    const restarted = await persistAgentChange(spec, true, false);
+    note(
+      `${labelFor(spec.label)} now uses ${model ?? "its provider default"}` +
+        (restarted ? " (restarted with a fresh session)." : ".")
+    );
+  }
+
+  async function attachFromCommand(argument: string): Promise<void> {
+    if (specs.size === 0) {
+      await addAgent();
+      return;
+    }
+    const available = [...specs.values()].filter((spec) => {
+      const host = agents.get(spec.id);
+      return !host || host.currentState === "error" || host.currentState === "refused";
+    });
+    const spec = await pickCommandAgent(available, "Choose an agent to attach", argument);
+    if (!spec) {
+      if (specs.size > 0 && available.length === 0) note("All of your agents are already attached.");
+      return;
+    }
+    await attachAgent(spec.id);
+    note(`Attaching ${labelFor(spec.label)}.`);
+  }
+
+  async function detachFromCommand(argument: string): Promise<void> {
+    const attached = [...specs.values()].filter((spec) => agents.has(spec.id));
+    const spec = await pickCommandAgent(attached, "Choose an agent to detach", argument);
+    if (!spec) {
+      if (attached.length === 0) note("None of your agents are attached.");
+      return;
+    }
+    detachAgent(spec.id);
+    note(`Detached ${labelFor(spec.label)}.`);
+  }
+
+  async function pickCommandAgent(
+    choices: AgentSpecRecord[],
+    title: string,
+    query = ""
+  ): Promise<AgentSpecRecord | undefined> {
+    let matching = choices;
+    if (query.trim()) {
+      const wanted = query.trim().toLocaleLowerCase();
+      const exact = choices.find((spec) => spec.label.toLocaleLowerCase() === wanted);
+      matching = exact
+        ? [exact]
+        : choices.filter((spec) => spec.label.toLocaleLowerCase().includes(wanted));
+      if (matching.length === 0) {
+        note(`No agent matching "${query.trim()}".`);
+        return undefined;
+      }
+    }
+    if (matching.length === 0) return undefined;
+    if (matching.length === 1) return matching[0];
+
+    type AgentItem = vscode.QuickPickItem & { spec: AgentSpecRecord };
+    return (
+      await vscode.window.showQuickPick<AgentItem>(
+        matching.map((spec) => ({
+          label: labelFor(spec.label),
+          description: providerById(spec.providerId)?.label ?? spec.providerId,
+          detail: `${spec.model ?? "Provider default"} · ${agents.get(spec.id)?.currentState ?? "detached"}`,
+          spec,
+        })),
+        { title, ignoreFocusOut: true }
+      )
+    )?.spec;
   }
 
   /** Local-only feedback: shown to you, not broadcast to the room. */

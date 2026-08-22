@@ -18,3 +18,9 @@ test("only the signed-in member's human messages use the outgoing side", () => {
   assert.match(styles, /\.row\.human\.mine \.bubble\s*\{[^}]*border-right:\s*3px/s);
 });
 
+test("the composer offers every implemented room command", () => {
+  for (const command of ["/help", "/agents", "/model", "/attach", "/detach"]) {
+    assert.match(script, new RegExp(`insert: "${command.replace("/", "\\/")}"`));
+  }
+  assert.match(script, /\/model.*Choose an agent and provider model/);
+});
