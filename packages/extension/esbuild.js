@@ -1,4 +1,5 @@
 const esbuild = require("esbuild");
+const fs = require("node:fs");
 
 const production = process.argv.includes("--production");
 const watch = process.argv.includes("--watch");
@@ -12,7 +13,7 @@ async function main() {
     // agentHost is emitted separately so the turn it builds can be tested
     // against a real relay and a real subprocess, rather than by opening two
     // editor windows and reading the output channel.
-    entryPoints: ["src/extension.ts", "src/permissionServer.ts", "src/workspaceFs.ts", "src/workspaceServer.ts", "src/addressing.ts", "src/soloRelay.ts", "src/invite.ts", "src/agentHost.ts", "src/runners.ts", "src/approvalScope.ts", "src/approvalSummary.ts", "src/roomViewMessages.ts", "src/agentSetup.ts", "src/agentCommands.ts"],
+    entryPoints: ["src/extension.ts", "src/permissionServer.ts", "src/workspaceFs.ts", "src/workspaceServer.ts", "src/addressing.ts", "src/soloRelay.ts", "src/invite.ts", "src/relaySecurity.ts", "src/agentHost.ts", "src/runners.ts", "src/approvalScope.ts", "src/approvalSummary.ts", "src/roomViewMessages.ts", "src/agentSetup.ts", "src/agentCommands.ts"],
     bundle: true,
     format: "cjs",
     platform: "node",
@@ -25,6 +26,7 @@ async function main() {
     external: ["vscode", "@anthropic-ai/sdk"],
     sourcemap: !production,
     minify: production,
+    metafile: true,
     logLevel: "info",
   });
 
@@ -32,7 +34,8 @@ async function main() {
     await ctx.watch();
     console.log("[esbuild] watching…");
   } else {
-    await ctx.rebuild();
+    const result = await ctx.rebuild();
+    fs.writeFileSync("dist/esbuild-meta.json", JSON.stringify(result.metafile));
     await ctx.dispose();
   }
 }

@@ -1,4 +1,10 @@
-import { startServer, resolveRequireGithub, type RelayMode } from "./server.js";
+import {
+  startServer,
+  resolveRelayHost,
+  resolveStandaloneRequireGithub,
+  validateStandaloneRelayExposure,
+  type RelayMode,
+} from "./server.js";
 
 // Railway (and most hosts) inject PORT. Honour it first so a deploy needs no
 // bespoke config, then fall back to our own variable, then a local default.
@@ -13,9 +19,9 @@ const workspaceToken = process.env.RIPIENO_WORKSPACE_TOKEN;
 // Point this at a mounted volume and room history survives redeploys too.
 const dataDir = process.env.RIPIENO_DATA_DIR;
 // A deployed relay must listen on all interfaces; a local one need not.
-const host = process.env.RIPIENO_HOST ?? (process.env.PORT ? "0.0.0.0" : undefined);
+const host = resolveRelayHost(process.env.RIPIENO_HOST, Boolean(process.env.PORT));
 
-const requireGithub = resolveRequireGithub(process.env.RIPIENO_REQUIRE_GITHUB, host);
+const requireGithub = resolveStandaloneRequireGithub(process.env.RIPIENO_REQUIRE_GITHUB);
 
 // BYO is the default because it needs nothing: no API key, no agent, no
 // environment, no credit balance. Members attach their own agents instead.
@@ -31,10 +37,11 @@ const requireGithub = resolveRequireGithub(process.env.RIPIENO_REQUIRE_GITHUB, h
 // Refuse to serve the public internet with no gate at all. The token is not
 // authentication — a holder can still claim any handle — but without it the
 // room is readable and writable by anyone who finds the URL.
-if (process.env.PORT && !token) {
+const exposureError = validateStandaloneRelayExposure(token);
+if (exposureError) {
   console.error(
     [
-      "Refusing to start: this looks like a hosted deployment (PORT is set) but RIPIENO_TOKEN is empty.",
+      exposureError,
       "",
       "Without it, anyone who finds the URL can join any room, read the transcript and post as anyone.",
       "Set RIPIENO_TOKEN to a long random string and give it to members alongside the relay URL.",

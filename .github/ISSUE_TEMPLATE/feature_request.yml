@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest a launch or workflow improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user workflow or friction, not only a proposed control.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: trust
+    attributes:
+      label: Permission, privacy or compatibility impact
+      description: Note whether this affects files, commands, credentials, relays or editor forks.

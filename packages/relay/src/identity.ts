@@ -54,7 +54,10 @@ interface CacheEntry {
 export class GithubVerifier {
   private readonly cache = new Map<string, CacheEntry>();
 
-  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  constructor(
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly cacheTtlMs = CACHE_TTL_MS
+  ) {}
 
   async verify(token: string | undefined): Promise<Verification> {
     if (!token || token.trim() === "") {
@@ -63,9 +66,10 @@ export class GithubVerifier {
 
     const key = createHash("sha256").update(token).digest("hex");
     const hit = this.cache.get(key);
-    if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
+    if (hit && Date.now() - hit.at < this.cacheTtlMs) {
       return { ok: true, identity: hit.identity };
     }
+    if (hit) this.cache.delete(key);
 
     let res: Response;
     try {
@@ -103,17 +107,26 @@ export class GithubVerifier {
       displayName: typeof data.name === "string" && data.name !== "" ? data.name : data.login,
       avatarUrl: typeof data.avatar_url === "string" ? data.avatar_url : undefined,
     };
-    this.cache.set(key, { identity, at: Date.now() });
+    const at = Date.now();
+    this.cache.set(key, { identity, at });
+    const expiry = setTimeout(() => {
+      if (this.cache.get(key)?.at === at) this.cache.delete(key);
+    }, this.cacheTtlMs);
+    expiry.unref();
     this.prune();
     return { ok: true, identity };
   }
 
   /** Bounded, because a public relay sees an unbounded number of tokens. */
   private prune(): void {
-    if (this.cache.size <= 500) return;
-    const cutoff = Date.now() - CACHE_TTL_MS;
+    const cutoff = Date.now() - this.cacheTtlMs;
     for (const [key, entry] of this.cache) {
       if (entry.at < cutoff) this.cache.delete(key);
+    }
+    while (this.cache.size > 500) {
+      const oldest = this.cache.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.cache.delete(oldest);
     }
   }
 }

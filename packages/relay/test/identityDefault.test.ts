@@ -14,7 +14,15 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { resolveRequireGithub } from "../src/server.js";
+import {
+  isLoopbackHost,
+  resolveRelayHost,
+  resolveRequireGithub,
+  resolveStandaloneRequireGithub,
+  startServer,
+  validateRelayExposure,
+  validateStandaloneRelayExposure,
+} from "../src/server.js";
 
 describe("a relay other machines can reach checks identity by default", () => {
   test("a deployed relay listens on all interfaces, so it checks", () => {
@@ -35,6 +43,58 @@ describe("a relay other machines can reach checks identity by default", () => {
 
   test("no host at all is a local default, so it does not", () => {
     assert.equal(resolveRequireGithub(undefined, undefined), false);
+  });
+});
+
+describe("relay exposure defaults", () => {
+  test("a local start binds loopback instead of Node's implicit all-interface default", () => {
+    assert.equal(resolveRelayHost(undefined, false), "127.0.0.1");
+    assert.equal(isLoopbackHost(resolveRelayHost(undefined, false)), true);
+  });
+
+  test("a hosting platform bind stays public and therefore requires a token", () => {
+    const host = resolveRelayHost(undefined, true);
+    assert.equal(host, "0.0.0.0");
+    assert.match(validateRelayExposure(host, undefined) ?? "", /requires RIPIENO_TOKEN/);
+    assert.match(validateRelayExposure(host, "   ") ?? "", /requires RIPIENO_TOKEN/);
+    assert.equal(validateRelayExposure(host, "long-secret"), undefined);
+  });
+
+  test("an explicit public bind cannot bypass the gate by omitting PORT", () => {
+    for (const host of ["0.0.0.0", "::", "10.0.0.4"]) {
+      assert.ok(validateRelayExposure(host, undefined), host);
+    }
+  });
+
+  test("loopback spellings remain usable without a token", () => {
+    for (const host of ["127.0.0.1", "127.1.2.3", "localhost", "dev.localhost", "::1"]) {
+      assert.equal(validateRelayExposure(host, undefined), undefined, host);
+    }
+  });
+
+  test("a hostname beginning with 127 is not mistaken for loopback", () => {
+    assert.equal(isLoopbackHost("127.attacker.example"), false);
+    assert.ok(validateRelayExposure("127.attacker.example", undefined));
+  });
+
+  test("the exported server boundary also rejects an unsafe direct call", () => {
+    assert.throws(
+      () => startServer({ port: 0, mode: "byo", host: "0.0.0.0" }),
+      /requires RIPIENO_TOKEN/
+    );
+  });
+});
+
+describe("the standalone relay remains safe behind a reverse proxy", () => {
+  test("it requires a gate even when its process binds to loopback", () => {
+    assert.match(validateStandaloneRelayExposure(undefined) ?? "", /requires RIPIENO_TOKEN/);
+    assert.match(validateStandaloneRelayExposure("  ") ?? "", /requires RIPIENO_TOKEN/);
+    assert.equal(validateStandaloneRelayExposure("long-secret"), undefined);
+  });
+
+  test("identity verification defaults on regardless of the process bind", () => {
+    assert.equal(resolveStandaloneRequireGithub(undefined), true);
+    assert.equal(resolveStandaloneRequireGithub("0"), false);
   });
 });
 

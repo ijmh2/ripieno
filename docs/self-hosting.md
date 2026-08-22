@@ -1,9 +1,9 @@
 # Running your own relay
 
-**There is no shared service.** Nobody is hosting a relay for you, and this
-project will never point you at one. A room lives on infrastructure you control:
-your laptop, or a server you deployed. That is a deliberate design decision, not
-a missing feature — see [Why there is no hosted option](#why-there-is-no-hosted-option).
+**There is no shared service in this Preview.** A room lives on infrastructure
+you control: your laptop, or a server you deployed. That is a deliberate current
+product boundary, not a hidden dependency — see
+[Why there is no hosted option](#why-there-is-no-hosted-option).
 
 Three ways to run one, in increasing order of effort.
 
@@ -27,13 +27,14 @@ Anywhere Node 20+ runs:
 ```bash
 git clone <this repo> && cd <this repo>
 npm ci
-RIPIENO_TOKEN=$(openssl rand -hex 24) RIPIENO_DATA_DIR=./data npm start
+RIPIENO_HOST=0.0.0.0 RIPIENO_TOKEN=$(openssl rand -hex 24) RIPIENO_DATA_DIR=./data npm start
 ```
 
 It listens on `8787` by default. For other people to reach it they need a route
-to that port — a LAN address, a Tailscale/WireGuard address, or an SSH tunnel. A
-private network is a perfectly good answer here and avoids exposing anything to
-the internet.
+to that port. Ripieno clients require encrypted `wss://` transport away from
+loopback, so terminate TLS in front of the relay or use an SSH tunnel that maps
+the remote port to loopback. A private Tailscale/WireGuard network still needs
+TLS unless each member uses a loopback tunnel.
 
 Print the token once and give it to the people joining, alongside the URL. Or
 use **Copy Invite Link** in the extension, which packages the URL, the room and
@@ -65,12 +66,12 @@ message, per room).
 
 | Variable | Default | What it does |
 |---|---|---|
-| `RIPIENO_TOKEN` | none | Shared secret required to join. **Mandatory** when `PORT` is set — the relay refuses to start on a deployment without one. |
+| `RIPIENO_TOKEN` | none | Shared secret required to join. **Mandatory for the standalone relay**, including a loopback bind behind a proxy or tunnel. Embedded solo mode is exempt. |
 | `RIPIENO_DATA_DIR` | none | Where room history is written. Without it, a restart empties every room. Point it at a mounted volume. |
-| `RIPIENO_REQUIRE_GITHUB` | on, unless loopback | Verify members against GitHub rather than believing the handle they send. Set `0` to turn it off — see below. |
+| `RIPIENO_REQUIRE_GITHUB` | on for the standalone relay | Verify members against GitHub rather than believing the handle they send. Set `0` to turn it off — see below. |
 | `RIPIENO_WORKSPACE_TOKEN` | none | Separate secret for the shared-workspace container. Without it the workspace role is refused entirely. |
 | `RIPIENO_PORT` / `PORT` | 8787 | `PORT` wins, so most hosts need no configuration. |
-| `RIPIENO_HOST` | `0.0.0.0` when `PORT` is set | Interface to bind. |
+| `RIPIENO_HOST` | `127.0.0.1` locally; `0.0.0.0` when `PORT` is injected | Interface to bind. Setting any non-loopback host also requires `RIPIENO_TOKEN`. |
 
 ### The token is a gate, not a login
 
@@ -79,8 +80,8 @@ are: without identity verification, a token holder can claim any handle,
 including yours, and the attribution the room displays is then a convention
 rather than a fact.
 
-So on any relay another machine can reach, `RIPIENO_REQUIRE_GITHUB` is **on by
-default**. Members sign in with GitHub, the relay asks GitHub who the token
+The standalone relay keeps `RIPIENO_REQUIRE_GITHUB` **on by default**, even if
+it binds to loopback behind a reverse proxy. Members sign in with GitHub, the relay asks GitHub who the token
 belongs to, and the handle in the transcript is the one GitHub returned. If
 GitHub cannot be reached, joins are refused rather than trusted — "cannot check"
 is the state the feature exists to replace.
@@ -90,8 +91,9 @@ where the token is already the boundary. That is a reasonable choice; it is not
 a default, because a default that quietly weakens the product's central claim is
 worse than not making the claim.
 
-Loopback relays skip it. There is nobody else on loopback, and demanding a
-GitHub sign-in to talk to your own laptop is ceremony rather than security.
+The extension's embedded solo relay skips both the shared token and GitHub
+verification. A standalone loopback relay is different: a proxy or tunnel can
+make it externally reachable, so it retains the secure standalone defaults.
 
 ## Why there is no hosted option
 

@@ -7,6 +7,8 @@ const {
   nextAgentLabel,
   agentIdFromTreeNode,
   parseCodexModelCatalog,
+  shouldStartAddAgentForAttach,
+  needsSharedRoomAgentConsent,
 } = require("../dist/agentSetup.js");
 
 describe("first-run agent migration", () => {
@@ -48,6 +50,39 @@ describe("agent tree command targeting", () => {
     assert.equal(
       agentIdFromTreeNode({ id: "attached:mira::local:test:1" }, "ivan"),
       "mira::local:test:1"
+    );
+  });
+});
+
+describe("attach command onboarding", () => {
+  test("starts Add Agent only for the untargeted first-run CTA", () => {
+    assert.equal(shouldStartAddAgentForAttach(0, undefined), true);
+    assert.equal(shouldStartAddAgentForAttach(1, undefined), false);
+    assert.equal(shouldStartAddAgentForAttach(0, "local:missing"), false);
+    assert.equal(shouldStartAddAgentForAttach(2, "local:missing"), false);
+  });
+});
+
+describe("shared-room workspace consent", () => {
+  test("asks before a remote room can steer a local workspace agent", () => {
+    assert.equal(
+      needsSharedRoomAgentConsent(true, "wss://relay.example", undefined, "standup", false),
+      true
+    );
+  });
+
+  test("does not ask for conversation-only agents, solo rooms, or an approved attach", () => {
+    assert.equal(
+      needsSharedRoomAgentConsent(false, "wss://relay.example", undefined, "standup", false),
+      false
+    );
+    assert.equal(
+      needsSharedRoomAgentConsent(true, "ws://127.0.0.1:1234", "ws://127.0.0.1:1234", "solo", false),
+      false
+    );
+    assert.equal(
+      needsSharedRoomAgentConsent(true, "wss://relay.example", undefined, "standup", true),
+      false
     );
   });
 });

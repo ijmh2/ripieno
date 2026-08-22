@@ -14,6 +14,7 @@
 
 import { spawn, type ChildProcess } from "child_process";
 import type { TurnUsage } from "@ripieno/protocol";
+import { validateProviderBaseUrl } from "./relaySecurity";
 
 /** What an agent can actually do, which the room shows rather than implies. */
 export type RunnerCapability = "workspace" | "conversation";
@@ -255,11 +256,16 @@ export class OpenAiCompatRunner implements ModelRunner {
 
     const controller = new AbortController();
     this.controller = controller;
-    log(`thinking (${this.opts.model} via ${this.opts.baseUrl})`);
+    const endpoint = validateProviderBaseUrl(this.opts.baseUrl);
+    if (!endpoint.ok) {
+      this.controller = undefined;
+      throw new Error(`${this.opts.label}: ${endpoint.reason}`);
+    }
+    log(`thinking (${this.opts.model} via ${endpoint.url})`);
 
     let response: Response;
     try {
-      response = await fetch(`${this.opts.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      response = await fetch(`${endpoint.url}/chat/completions`, {
         method: "POST",
         headers: {
           "content-type": "application/json",

@@ -4,6 +4,7 @@
 // the UI just renders whatever `getState()` says.
 
 import WebSocket = require("ws");
+import { isIP } from "node:net";
 import type { ClientMsg, ConnectionRole, JoinMsg, Member, ServerMsg } from "@ripieno/protocol";
 
 export type ConnectionState = "connecting" | "online" | "offline";
@@ -14,6 +15,51 @@ const PING_INTERVAL_MS = 25_000;
 /** Relay close codes that must not be retried. */
 const EVICTED_CODE = 4000;
 const UNAUTHORISED_CODE = 4003;
+
+export type RelayUrlValidation =
+  | { ok: true; url: string }
+  | { ok: false; reason: string };
+
+export function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "::1" ||
+    (isIP(host) === 4 && host.startsWith("127."))
+  );
+}
+
+/** The last boundary before any room or identity credential reaches a socket. */
+export function validateRelayTransportUrl(raw: string): RelayUrlValidation {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw.trim());
+  } catch {
+    return { ok: false, reason: `"${raw}" is not a valid address` };
+  }
+  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+    return {
+      ok: false,
+      reason: `a relay address must start with ws:// or wss://, not ${parsed.protocol}`,
+    };
+  }
+  if (parsed.username || parsed.password) {
+    return { ok: false, reason: "a relay address must not contain a username or password" };
+  }
+  if (parsed.protocol === "ws:" && !isLoopbackHostname(parsed.hostname)) {
+    return {
+      ok: false,
+      reason: "a relay outside this machine must use wss:// so credentials are encrypted",
+    };
+  }
+  parsed.hash = "";
+  const normalized = parsed.toString();
+  return {
+    ok: true,
+    url: parsed.pathname === "/" && !parsed.search ? normalized.replace(/\/$/, "") : normalized,
+  };
+}
 
 export interface RelayClientOptions {
   url: string;
@@ -65,7 +111,13 @@ export class RelayClient {
   private queue: ClientMsg[] = [];
   private disposed = false;
 
-  constructor(private readonly opts: RelayClientOptions) {}
+  private readonly opts: RelayClientOptions;
+
+  constructor(opts: RelayClientOptions) {
+    const checked = validateRelayTransportUrl(opts.url);
+    if (!checked.ok) throw new Error(checked.reason);
+    this.opts = { ...opts, url: checked.url };
+  }
 
   connect(): void {
     if (this.disposed) {

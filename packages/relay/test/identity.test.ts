@@ -87,6 +87,20 @@ describe("the relay decides who you are", () => {
     await verifier.verify("tok");
     assert.equal(calls, 1);
   });
+
+  test("a cached token hash and profile are removed when their reuse window expires", async () => {
+    let calls = 0;
+    const counting = ((...args: unknown[]) => {
+      calls++;
+      return fakeGithub({ tok: { login: "mellery" } })(...(args as Parameters<typeof fetch>));
+    }) as unknown as typeof fetch;
+    const verifier = new GithubVerifier(counting, 5);
+
+    await verifier.verify("tok");
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    await verifier.verify("tok");
+    assert.equal(calls, 2);
+  });
 });
 
 describe("a relay that requires identity", () => {

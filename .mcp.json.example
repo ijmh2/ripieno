@@ -3,11 +3,12 @@
     "room": {
       "command": "node",
       "args": [
-        "packages/mcp/dist/index.js"
+        "/absolute/path/to/ripieno/packages/mcp/dist/index.js"
       ],
       "env": {
         "RIPIENO_RELAY_URL": "wss://your-relay.up.railway.app",
         "RIPIENO_TOKEN": "set-me-the-relay-token",
+        "RIPIENO_GITHUB_TOKEN": "set-me-if-the-relay-verifies-github",
         "RIPIENO_ROOM": "demo",
         "RIPIENO_HANDLE": "your-github-handle",
         "RIPIENO_NAME": "Your Name"

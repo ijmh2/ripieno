@@ -6,6 +6,13 @@
   "version": "0.0.1",
   "publisher": "ijmh2",
   "license": "MIT",
+  "preview": true,
+  "pricing": "Free",
+  "icon": "media/icon.png",
+  "homepage": "https://github.com/ijmh2/ripieno#readme",
+  "bugs": {
+    "url": "https://github.com/ijmh2/ripieno/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -16,6 +23,16 @@
   "extensionKind": [
     "workspace"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Ripieno can launch local coding agents and execute approved workspace tools, so enable it only in a workspace you trust."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Ripieno agents and workspace tools require a local filesystem-backed workspace."
+    }
+  },
   "activationEvents": [
     "onUri"
   ],
@@ -111,7 +128,7 @@
       },
       {
         "command": "ripieno.setRole",
-        "title": "Change Role\u2026",
+        "title": "Change Role…",
         "category": "Ripieno"
       }
     ],
@@ -214,7 +231,7 @@
         "ripieno.relayUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "WebSocket URL of the relay hosting the room.\n\n**Leave empty to work solo** \u2014 the extension runs a relay on this machine, so a room needs no server, no token and no second person. Set a URL when you want other people in the room with you."
+          "markdownDescription": "WebSocket URL of the relay hosting the room. Remote relays must use `wss://`; plaintext `ws://` is accepted only on loopback.\n\n**Leave empty to work solo** — the extension runs a relay on this machine, so a room needs no server, no token and no second person. Set a URL when you want other people in the room with you."
         },
         "ripieno.commandApproval": {
           "type": "string",
@@ -251,7 +268,7 @@
             "bypassPermissions"
           ],
           "enumDescriptions": [
-            "Your agent asks you before anything with side effects \u2014 running code, launching apps, git writes. The prompt appears in your editor, so it is a real decision rather than a stalled request.",
+            "Your agent asks you before anything with side effects — running code, launching apps, git writes. The prompt appears in your editor, so it is a real decision rather than a stalled request.",
             "Your agent runs everything without asking, like an ordinary Claude Code session. Remember the room steers it: anyone in the room can talk your agent into running things on your machine."
           ],
           "default": "ask",
@@ -270,7 +287,7 @@
         "ripieno.roomToken": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Shared secret required by a deployed relay. Leave empty for a local relay. This is a gate, not a login \u2014 a holder can still claim any handle, so treat it as the key to the whole room."
+          "markdownDescription": "Legacy/configuration fallback for the shared relay gate. Invite tokens are kept in SecretStorage and scoped to their relay. Leave empty for embedded solo mode. This is a gate, not a login — without identity verification a holder can still claim any handle."
         }
       }
     }
@@ -280,24 +297,27 @@
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node esbuild.js && node --test test/*.test.js",
+    "test:extension-host": "node test-host/run.js",
     "package": "mkdir -p ../../dist && vsce package --no-dependencies --out ../../dist/",
+    "publish:marketplace": "vsce publish --no-dependencies",
     "vscode:prepublish": "node esbuild.js --production"
   },
   "dependencies": {
-    "ws": "^8.18.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "zod": "^3.23.0",
-    "@ripieno/workspace-core": "*",
+    "@ripieno/relay": "*",
     "@ripieno/relay-client": "*",
-    "@ripieno/relay": "*"
+    "@ripieno/workspace-core": "*",
+    "ws": "^8.18.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "1.85.0",
     "@types/ws": "^8.5.12",
-    "esbuild": "^0.23.0",
-    "typescript": "^5.6.0",
-    "@vscode/vsce": "^3.6.0"
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.6.0"
   },
   "repository": {
     "type": "git",

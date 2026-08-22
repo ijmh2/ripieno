@@ -7,6 +7,7 @@
  */
 
 import WebSocket = require("ws");
+import { validateRelayTransportUrl } from "@ripieno/relay-client";
 import type {
   ActionEntry,
   ClientMsg,
@@ -50,7 +51,13 @@ export class RoomClient {
   /** Index of the last entry already handed to the agent, so reads are incremental. */
   private cursor = 0;
 
-  constructor(private readonly config: RoomClientConfig) {}
+  private readonly config: RoomClientConfig;
+
+  constructor(config: RoomClientConfig) {
+    const checked = validateRelayTransportUrl(config.url);
+    if (!checked.ok) throw new Error(checked.reason);
+    this.config = { ...config, url: checked.url };
+  }
 
   connect(): Promise<void> {
     if (this.ready) return this.ready;

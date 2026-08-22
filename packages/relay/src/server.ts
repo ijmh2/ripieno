@@ -6,6 +6,7 @@
  */
 
 import { createServer } from "node:http";
+import { isIP } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientMsg, ConnectionRole, Member } from "@ripieno/protocol";
 import { WORKSPACE_HANDLE } from "@ripieno/protocol";
@@ -103,10 +104,52 @@ export type Relay = WebSocketServer & {
  */
 export function resolveRequireGithub(raw: string | undefined, host: string | undefined): boolean {
   if (raw !== undefined) return raw !== "0" && raw !== "" && raw.toLowerCase() !== "false";
-  return host !== undefined && host !== "127.0.0.1" && host !== "localhost" && host !== "::1";
+  return !isLoopbackHost(host);
+}
+
+/** Node otherwise treats an omitted host as all interfaces, which is unsafe here. */
+export function isLoopbackHost(host: string | undefined): boolean {
+  if (host === undefined) return true;
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return (
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized === "::1" ||
+    (isIP(normalized) === 4 && normalized.startsWith("127."))
+  );
+}
+
+/** Default locally to loopback; hosting platforms that inject PORT are explicit deployments. */
+export function resolveRelayHost(raw: string | undefined, deployed: boolean): string {
+  const configured = raw?.trim();
+  return configured || (deployed ? "0.0.0.0" : "127.0.0.1");
+}
+
+/** Refuse every externally reachable bind without a room gate, not only Railway's PORT shape. */
+export function validateRelayExposure(host: string | undefined, token: string | undefined): string | undefined {
+  if (isLoopbackHost(host) || token?.trim()) return undefined;
+  return "Refusing to start: a relay reachable outside this machine requires RIPIENO_TOKEN.";
+}
+
+/**
+ * A standalone process may bind to loopback and still sit behind a public
+ * reverse proxy or tunnel. Unlike the extension's in-process solo relay, it
+ * therefore always needs an explicit shared gate.
+ */
+export function validateStandaloneRelayExposure(token: string | undefined): string | undefined {
+  if (token?.trim()) return undefined;
+  return "A standalone Ripieno relay requires RIPIENO_TOKEN, including when it binds to loopback.";
+}
+
+/** The standalone relay verifies identity unless the operator explicitly opts out. */
+export function resolveStandaloneRequireGithub(raw: string | undefined): boolean {
+  return resolveRequireGithub(raw, "0.0.0.0");
 }
 
 export function startServer(config: ServerConfig): Relay {
+  const bindHost = config.host ?? "127.0.0.1";
+  const exposureError = validateRelayExposure(bindHost, config.token);
+  if (exposureError) throw new Error(exposureError);
   const rooms = new Map<string, Room>();
   const store = createRoomStore(config.dataDir);
   const verifier = config.verifier ?? new GithubVerifier();
@@ -178,7 +221,7 @@ export function startServer(config: ServerConfig): Relay {
    * the concern was handled on the disk path and missed on the wire.
    */
   const wss = new WebSocketServer({ server: http, maxPayload: MAX_FRAME_BYTES });
-  http.listen(config.port, config.host);
+  http.listen(config.port, bindHost);
 
   function roomFor(code: string): Promise<Room> {
     const existing = rooms.get(code);
@@ -482,11 +525,11 @@ export function startServer(config: ServerConfig): Relay {
   });
 
   log(
-    `relay listening on ${config.host ?? "0.0.0.0"}:${config.port} ` +
+    `relay listening on ${bindHost}:${config.port} ` +
       `(${config.mode} mode, ${config.token ? "token required" : "OPEN — no token"}, ` +
       `${config.dataDir ? `history in ${config.dataDir}` : "history in memory only"})`
   );
-  if (!config.token && config.host !== "127.0.0.1") {
+  if (!config.token && !isLoopbackHost(bindHost)) {
     log("  warning: no RIPIENO_TOKEN set. Anyone who can reach this port can join any room.");
   }
   const relay = wss as Relay;

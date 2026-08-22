@@ -25,6 +25,7 @@ import { WorkspaceHost } from "../src/host.js";
 const execAsync = promisify(exec);
 const PORT = 8912;
 const URL = `ws://127.0.0.1:${PORT}`;
+const ROOM_TOKEN = "room-secret";
 const WORKSPACE_TOKEN = "workspace-secret";
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -48,6 +49,7 @@ class Agent {
         t: "join",
         room,
         member: { handle, displayName: handle },
+        token: ROOM_TOKEN,
         role: "agent",
         agentId: "a1",
         agentLabel: label,
@@ -106,7 +108,13 @@ describe("a container hosts the room's workspace", () => {
     // gates and the workspace-token check are exercised rather than bypassed.
     relay = spawn("node", ["dist/src/index.js"], {
       cwd: path.resolve(__dirname, "..", "..", "..", "relay"),
-      env: { ...process.env, RIPIENO_PORT: String(PORT), RIPIENO_WORKSPACE_TOKEN: WORKSPACE_TOKEN },
+      env: {
+        ...process.env,
+        RIPIENO_PORT: String(PORT),
+        RIPIENO_TOKEN: ROOM_TOKEN,
+        RIPIENO_REQUIRE_GITHUB: "0",
+        RIPIENO_WORKSPACE_TOKEN: WORKSPACE_TOKEN,
+      },
       stdio: "ignore",
     });
     await wait(900);
@@ -117,6 +125,7 @@ describe("a container hosts the room's workspace", () => {
       root: checkout,
       keyDir: path.join(base, "keys"),
       workspaceToken: WORKSPACE_TOKEN,
+      token: ROOM_TOKEN,
       // A local bare repo stands in for GitHub, through the same binding a
       // self-hosted forge would use.
       repo: { owner: "test", name: "shared", branch: "main", url: origin },
@@ -201,6 +210,7 @@ describe("a container hosts the room's workspace", () => {
       root: checkout,
       keyDir: path.join(base, "keys2"),
       workspaceToken: "wrong-token",
+      token: ROOM_TOKEN,
       policy: { allow: [], allowAll: false },
       onEvicted: (reason) => evictions.push(reason),
     });

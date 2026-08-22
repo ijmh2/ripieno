@@ -7,8 +7,11 @@
 .vscode/**
 src/**
 test/**
+test-host/**
 node_modules/**
 preview/**
+media/icon-source.svg
+dist/esbuild-meta.json
 tsconfig.json
 esbuild.js
 **/*.map

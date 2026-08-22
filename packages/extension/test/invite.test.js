@@ -63,6 +63,14 @@ describe("a bad link says what is wrong instead of doing nothing", () => {
     assert.match(parseInvite(q({ relay: "not a url", room: "x" })).reason, /not a valid address/);
   });
 
+  test("a remote plaintext invite is refused before its token can be sent", () => {
+    for (const relay of ["ws://relay.example", "ws://127.attacker.example"]) {
+      const result = parseInvite(q({ relay, room: "x", token: "secret" }));
+      assert.equal(result.ok, false, relay);
+      assert.match(result.reason, /must use wss:\/\//);
+    }
+  });
+
   test("a room code is checked before connecting", () => {
     for (const room of ["../etc", "has space", "a".repeat(65), "semi;colon"]) {
       const r = parseInvite(q({ relay: "wss://r.example", room }));

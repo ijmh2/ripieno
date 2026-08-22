@@ -1,0 +1,43 @@
+name: Build audited Preview VSIX
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vsix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm audit --omit=dev
+      - run: npm run typecheck
+      - name: Give git an identity for integration tests
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name CI
+      - run: npm test
+      - name: Verify required Marketplace files are in the package list
+        run: |
+          npx vsce ls --no-dependencies > "$RUNNER_TEMP/vsix-files.txt"
+          for file in README.md CHANGELOG.md LICENSE THIRD_PARTY_NOTICES.md media/icon.png; do
+            grep -Fx "$file" "$RUNNER_TEMP/vsix-files.txt"
+          done
+        working-directory: packages/extension
+      - run: npm run package
+      - run: xvfb-run -a npm run test:extension-host -w ripieno
+      - name: Write artifact checksum
+        run: sha256sum dist/*.vsix > dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ripieno-preview-vsix
+          path: |
+            dist/*.vsix
+            dist/SHA256SUMS.txt
+          if-no-files-found: error

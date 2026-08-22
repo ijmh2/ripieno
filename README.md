@@ -5,7 +5,8 @@
 
 A shared workspace in your editor where several **people** and several **AI
 agents** work on one codebase at once — **self-hosted**, with **each person
-bringing their own agent** on their own subscription, from **any vendor**.
+bringing their own agent** through the supported local CLI or OpenAI-compatible
+provider paths.
 
 Everything is attributed to a named actor: a specific agent belonging to a
 specific person, rather than whoever's machine happened to run it.
@@ -29,10 +30,10 @@ honour, or whose filesystem the next write lands on. Here every message the agen
 receives carries its author as structure the relay maintains, and every workspace
 action runs on the asking member's own machine under their own permissions.
 
-There is no hosted service and there will not be one. A relay sees every message
-and routes every tool call; asking you to trust an unaudited third party with
-that would contradict the argument on the first page. You run your own, or you
-run none at all — solo mode needs no relay, no account and no token. See
+This project does not operate a hosted service. A relay sees every message and
+routes every tool call, so the current model is deliberately self-hosted. You
+run your own, or you run none at all — solo mode needs no separately deployed
+relay, account or token. See
 [docs/self-hosting.md](docs/self-hosting.md).
 
 Two agents belonging to two different people can write to the same repository
@@ -65,14 +66,14 @@ Honest, because an unknown repository has no other way to earn it.
 
 | | |
 |---|---|
-| **Works, used** | Solo mode, invite links, rooms over a deployed relay, several agents per member across providers, remote tool execution with approval, action log, per-agent usage, verified GitHub identity, owner/member/viewer roles, room history that survives a redeploy |
-| **Built and tested, never deployed** | The shared-workspace container (`packages/workspace-host`) — 43 tests including real git integration, and it has never run anywhere but a test |
+| **Works, used** | Solo mode, invite links, rooms over a deployed relay, several agents per member across supported providers, remote workspace tools, approval-gated side effects, action log, per-agent usage, verified GitHub identity, owner/member/viewer roles, and room history that survives a redeploy when the relay has persistent storage |
+| **Built and tested, never deployed** | The shared-workspace container (`packages/workspace-host`) — including real git integration tests, and it has never run anywhere but a test |
 | **Not shipped** | Hosted mode. Built against the same driver interface, compiles, unit tests pass — and it has never run against a live Managed Agents session, so it is not shipped and not described here as a feature |
 
-There are 400 tests (`npm test`) across the five packages that have them
-(`relay-client` and `mcp` do not), and six exploitable defects found by an
-adversarial audit have been fixed, each with a regression test written from the
-exploit.
+`npm test` builds the monorepo and runs every package that currently has a test
+script. Exact totals are intentionally left to the test runner so this page
+does not go stale as coverage changes. Security fixes found by adversarial
+review have regression coverage in the affected packages.
 
 The more useful thing to say is where tests did *not* help. Several bugs were
 found only by two people using it, and several more by an outside reading of the
@@ -165,12 +166,16 @@ being published.
 Run a relay anywhere Node runs:
 
 ```bash
-RIPIENO_TOKEN=$(openssl rand -hex 24) RIPIENO_DATA_DIR=./data npm start
+RIPIENO_HOST=0.0.0.0 RIPIENO_TOKEN=$(openssl rand -hex 24) RIPIENO_DATA_DIR=./data npm start
 ```
 
 `RIPIENO_TOKEN` gates who may reach it. `RIPIENO_DATA_DIR` is where room history lives —
-without it a restart empties every room. `RIPIENO_REQUIRE_GITHUB=1` makes the relay
-verify identities rather than believing the handle a client sends.
+without it a restart empties every room. Put TLS in front and give members its
+`wss://` URL; remote plaintext connections are refused so credentials cannot
+cross the network unencrypted. The standalone relay verifies GitHub identities
+by default even if it binds to loopback behind a proxy;
+`RIPIENO_REQUIRE_GITHUB=0` is an explicit opt-out for a trusted private
+deployment. The extension's embedded solo relay remains tokenless and local.
 
 ## Bring your own agent
 
@@ -205,9 +210,12 @@ tokens would have cost on the API and nobody is billed a penny of it — and nex
 to a colleague's agent on a different plan, the two figures do not mean the same
 thing.
 
-An agent can also join over MCP instead — copy `.mcp.json.example` to `.mcp.json`
-and fill in `RIPIENO_ROOM` / `RIPIENO_HANDLE` / `RIPIENO_NAME`. That path gets ten tools
-(`room_read`, `room_post`, `room_roster`, `room_actions` and six `workspace_*`).
+An agent can also join over MCP instead. See the
+[MCP setup guide](docs/mcp.md) before copying `.mcp.json.example`: remote relays
+need a room token and verified relays additionally need a GitHub token, and MCP
+client configuration commonly stores those values as plain text. That path gets
+ten tools (`room_read`, `room_post`, `room_roster`, `room_actions` and six
+`workspace_*`).
 
 ## The shared workspace
 
@@ -223,17 +231,19 @@ merge, because there is only ever one of it. Mount it in your own explorer and
 you get a live read-only view of the host's actual disk, fetched on demand rather
 than copied to yours.
 
-**Current within half a second.** The host watches its workspace and publishes
-every change to the room, debounced at 400ms and ignoring the churn nobody
-browses — `node_modules`, `.git`, build output. The relay checks the sender
-really is the host before rebroadcasting, so a member cannot invalidate everyone
-else's view of a workspace that is not theirs. Every member drops the stale paths
-and re-reads on next access.
+**Invalidated after a short debounce.** The host watches its workspace and
+publishes changes after a 400ms debounce, ignoring the churn nobody browses —
+`node_modules`, `.git`, build output. Network and editor scheduling mean this is
+not an end-to-end half-second guarantee. The relay checks the sender really is
+the host before rebroadcasting, so a member cannot invalidate everyone else's
+view of a workspace that is not theirs. Every member drops the stale paths and
+re-reads on next access.
 
-**Writes stop at a person.** An agent's write raises a diff on the host's machine
-naming the agent that asked, and nothing lands until they accept. It then appears
-in the room's action log, so other agents can see what has been done instead of
-redoing it.
+**Member-hosted writes stop at a person.** An agent's write raises a diff on the
+member host's machine naming the agent that asked, and nothing lands until they
+accept. It then appears in the room's action log, so other agents can see what
+has been done instead of redoing it. The headless container has no person to
+prompt; it uses its explicit command/write policy instead.
 
 The container (`packages/workspace-host`) is the version that outlives everyone:
 it clones a git repository, serves the same tool calls, and commits each write as
@@ -272,10 +282,11 @@ interface, which is the evidence the seam is real rather than hypothetical.
   context. Request ids are minted by the relay, never taken from a client — two
   clients each counting from zero used to collide and deliver one agent's file to
   another.
-- **Writes and commands are approved by the member whose machine runs them**, and
+- **Member-hosted remote writes and commands are approved by that member**, and
   the approval names the agent that asked and whose workspace it will touch.
-  Local-agent permissions are stored per agent and can be changed from its gear;
-  full access requires an explicit warning confirmation.
+  The unattended container uses an operator-defined allowlist rather than a
+  human prompt. Local-agent permissions are stored per agent and can be changed
+  from its gear; full access requires an explicit warning confirmation.
 - **Roles are enforced in the relay**, not the UI. Hiding a button is
   presentation; anyone can send the message the button would have sent. They only
   *mean* something with `RIPIENO_REQUIRE_GITHUB`, because a handle is otherwise
@@ -313,7 +324,7 @@ they were present for.
 ## Tests
 
 ```bash
-npm test          # 413 across five packages, ~1 minute
+npm test          # builds first, then runs every package that has a test script
 npm run typecheck
 ```
 
@@ -334,7 +345,10 @@ CLI provider had been quietly running Claude Code instead.
 
 - **The container is not deployed.** It is built and tested; deploying it is
   infrastructure work that produces nothing a reader can see.
-- **Nothing is published to a marketplace.** Build the `.vsix` and install it.
+- **The extension is a 0.0.x Preview and is not yet published to a marketplace.**
+  Build the `.vsix` and install it. A public release still requires the
+  Marketplace publisher/release steps; the manifest version alone is not a
+  claim that a release exists.
 - **Hosted mode is not shipped**, because it has never run against a live session.
 - **Agents stop talking to each other quickly.** One may name another and get an
   answer — report, check, respond — and then it stops until a person speaks. The
@@ -345,6 +359,11 @@ CLI provider had been quietly running Claude Code instead.
 ---
 
 Built by **Ivan Hart** ([@ijmh2](https://github.com/ijmh2)). MIT licensed.
+
+Before using a shared room, read the [security model](SECURITY.md) and
+[privacy and data-flow disclosure](PRIVACY.md). Help and issue-reporting guidance
+is in [SUPPORT.md](SUPPORT.md); bundled dependency licenses are in
+[packages/extension/THIRD_PARTY_NOTICES.md](packages/extension/THIRD_PARTY_NOTICES.md).
 
 The names in the tests and screenshots — Mira Ellery, Sam Whitfield, Kate
 Nakamura, Alex — are fictional. Addressing is decided by matching a first name

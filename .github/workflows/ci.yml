@@ -1,6 +1,7 @@
 # The suite is the main claim this repository makes about itself, and a reader
-# has no reason to take it on trust. Node 20 because that is what VS Code ships,
-# so the extension is built against the runtime it will actually load in.
+# has no reason to take it on trust. Node 20 is the repository runtime; a
+# separate compatibility job exercises the extension on Node 18 because the
+# declared VS Code 1.85 floor used that extension-host generation.
 name: CI
 
 on:
@@ -29,3 +30,18 @@ jobs:
           git config --global user.email ci@example.com
           git config --global user.name CI
       - run: npm test
+
+  extension-node18:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+      - run: npm ci
+      # A fresh checkout has no workspace dist directories. Build the private
+      # packages before resolving them from the extension's typecheck/tests.
+      - run: npm run build
+      - run: npm run typecheck -w ripieno
+      - run: npm test -w ripieno

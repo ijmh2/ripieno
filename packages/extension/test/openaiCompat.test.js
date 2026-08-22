@@ -132,6 +132,27 @@ describe("an OpenAI-compatible endpoint is driven correctly", () => {
 });
 
 describe("failures say which of the likely causes it was", () => {
+  test("a remote plaintext endpoint is rejected before its Bearer key reaches fetch", async () => {
+    const originalFetch = globalThis.fetch;
+    let called = false;
+    globalThis.fetch = async () => {
+      called = true;
+      throw new Error("fetch should not run");
+    };
+    try {
+      const runner = new OpenAiCompatRunner({
+        baseUrl: "http://127.attacker.example/v1",
+        model: "m",
+        apiKey: "must-not-leak",
+        label: "Mira's coder",
+      });
+      await assert.rejects(() => runner.run(ctx(), () => {}), /must use https:\/\//);
+      assert.equal(called, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("a rejected key surfaces the body, not just the status", async () => {
     // A bare 401 leaves a member guessing between a bad key and a bad model id.
     const e = await endpoint({ error: { message: "Incorrect API key provided" } }, 401);

@@ -4,9 +4,15 @@ import type { Member, RosterEntry, ServerMsg } from "@ripieno/protocol";
 import { resolveIdentity, resolveIdentityWithToken, relayRequiresIdentity } from "./identity";
 import { SoloRelay } from "./soloRelay";
 import { buildInvite, describeInvite, parseInvite } from "./invite";
+import {
+  canUseLegacyRoomToken,
+  roomTokenSecretKey,
+  validateProviderBaseUrl,
+  validateRelayUrl,
+} from "./relaySecurity";
 
 /** Where the room token lives, when it did not come from settings. */
-const ROOM_TOKEN_SECRET = "ripieno.roomToken";
+const LEGACY_ROOM_TOKEN_SECRET = "ripieno.roomToken";
 import * as os from "node:os";
 import { RelayClient, type ConnectionState } from "@ripieno/relay-client";
 import { ToolExecutor, registerProposedDocuments } from "./toolExecutor";
@@ -31,6 +37,8 @@ import {
   isUnusedLegacyBootstrapAgent,
   nextAgentLabel,
   parseCodexModelCatalog,
+  needsSharedRoomAgentConsent,
+  shouldStartAddAgentForAttach,
 } from "./agentSetup";
 import { parseModelValue, resolveModelRequest } from "./agentCommands";
 
@@ -64,6 +72,8 @@ export function activate(context: vscode.ExtensionContext): void {
   /** Resolved on join: either the configured relay, or the one we run ourselves. */
   let activeRelayUrl: string | undefined;
   let cachedRoomToken: string | undefined;
+  /** Approved local-agent attaches, scoped to this extension-host session. */
+  const sharedRoomAgentConsent = new Set<string>();
   const solo = new SoloRelay();
   let inRoomContext: boolean | undefined;
 
@@ -323,9 +333,19 @@ export function activate(context: vscode.ExtensionContext): void {
           prompt: "Base URL of an OpenAI-compatible API. /chat/completions is appended.",
           placeHolder: "https://api.example.com/v1",
           ignoreFocusOut: true,
+          validateInput: (value) => {
+            const checked = validateProviderBaseUrl(value);
+            return checked.ok ? undefined : checked.reason;
+          },
         });
         if (!baseUrl) return;
       }
+      const checkedBaseUrl = validateProviderBaseUrl(baseUrl);
+      if (!checkedBaseUrl.ok) {
+        void vscode.window.showErrorMessage(`Ripieno: ${checkedBaseUrl.reason}.`);
+        return;
+      }
+      baseUrl = checkedBaseUrl.url;
       model = await vscode.window.showInputBox({
         title: `Model for "${name}"`,
         prompt: `Model name as ${provider.label} expects it.`,
@@ -1310,12 +1330,37 @@ export function activate(context: vscode.ExtensionContext): void {
     // already been configured or not. Falling through to setup removes the
     // old no-op that made a first-time user's most obvious button do nothing.
     if (!spec) {
-      await addAgent();
+      if (shouldStartAddAgentForAttach(specs.size, id)) await addAgent();
       return;
     }
     if (!currentRoom || !me) {
       vscode.window.showInformationMessage("Ripieno: join a room first.");
       return;
+    }
+    const consentKey = `${activeRelayUrl ?? ""}\0${currentRoom}\0${spec.id}`;
+    if (
+      needsSharedRoomAgentConsent(
+        isWorkspaceProvider(spec.providerId),
+        activeRelayUrl,
+        solo.address,
+        currentRoom,
+        sharedRoomAgentConsent.has(consentKey)
+      )
+    ) {
+      const choice = await vscode.window.showWarningMessage(
+        `Attach ${labelFor(spec.label)} to this shared room?`,
+        {
+          modal: true,
+          detail:
+            `Everyone in "${currentRoom}" can prompt this local agent. ` +
+            `Its configured provider permissions may let it read, edit, or run code in ` +
+            `${spec.cwd ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "this editor's workspace"}. ` +
+            "Attach it only if you trust the room with that access.",
+        },
+        "Attach Agent"
+      );
+      if (choice !== "Attach Agent") return;
+      sharedRoomAgentConsent.add(consentKey);
     }
     const existing = agents.get(spec.id);
     if (existing) {
@@ -1446,11 +1491,23 @@ export function activate(context: vscode.ExtensionContext): void {
    * how shared secrets usually escape — but the setting stays supported so
    * anyone already using it is not broken by this.
    */
-  async function loadRoomToken(): Promise<void> {
-    const stored = await context.secrets.get(ROOM_TOKEN_SECRET);
-    const configured = vscode.workspace.getConfiguration("ripieno").get<string>("roomToken", "").trim();
-    cachedRoomToken = stored ?? configured ?? undefined;
-    if (cachedRoomToken === "") cachedRoomToken = undefined;
+  async function loadRoomToken(url: string, allowFirstUseLegacy = false): Promise<void> {
+    cachedRoomToken = await context.secrets.get(roomTokenSecretKey(url));
+    if (cachedRoomToken) return;
+
+    const savedRelayUrl = loadState().relayUrl;
+    if (!canUseLegacyRoomToken(savedRelayUrl, url, allowFirstUseLegacy)) return;
+
+    const stored = await context.secrets.get(LEGACY_ROOM_TOKEN_SECRET);
+    const configured = vscode.workspace
+      .getConfiguration("ripieno")
+      .get<string>("roomToken", "")
+      .trim();
+    cachedRoomToken = stored || configured || undefined;
+    if (cachedRoomToken) {
+      await context.secrets.store(roomTokenSecretKey(url), cachedRoomToken);
+      if (stored) await context.secrets.delete(LEGACY_ROOM_TOKEN_SECRET);
+    }
   }
 
   function roomToken(): string | undefined {
@@ -1464,14 +1521,20 @@ export function activate(context: vscode.ExtensionContext): void {
    * uses that. It is the same relay a team shares, so nothing about how the room
    * behaves changes when a second person arrives — only the URL does.
    */
-  async function ensureRelayUrl(): Promise<string> {
+  async function ensureRelayUrl(): Promise<string | undefined> {
     const configured = vscode.workspace
       .getConfiguration("ripieno")
       .get<string>("relayUrl", "")
       .trim();
     if (configured) {
-      activeRelayUrl = configured;
-      return configured;
+      const checked = validateRelayUrl(configured);
+      if (!checked.ok) {
+        activeRelayUrl = undefined;
+        void vscode.window.showErrorMessage(`Ripieno: ${checked.reason}.`);
+        return undefined;
+      }
+      activeRelayUrl = checked.url;
+      return checked.url;
     }
     activeRelayUrl = await solo.start(context.globalStorageUri.fsPath);
     return activeRelayUrl;
@@ -1529,9 +1592,12 @@ export function activate(context: vscode.ExtensionContext): void {
     // `git add .` away from being published, which is how shared secrets usually
     // escape.
     if (parsed.invite.token) {
-      await context.secrets.store(ROOM_TOKEN_SECRET, parsed.invite.token);
+      await context.secrets.store(
+        roomTokenSecretKey(parsed.invite.relayUrl),
+        parsed.invite.token
+      );
     }
-    await connect(parsed.invite.room);
+    await connect(parsed.invite.room, false);
   }
 
   /**
@@ -1670,9 +1736,10 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   /** Everything joining a room does, however the room code arrived. */
-  async function connect(room: string): Promise<void> {
+  async function connect(room: string, allowFirstUseLegacy = true): Promise<void> {
     const url = await ensureRelayUrl();
-    await loadRoomToken();
+    if (!url) return;
+    await loadRoomToken(url, allowFirstUseLegacy);
 
     // Only ask to sign in where the answer is actually checked.
     //
@@ -1710,7 +1777,7 @@ export function activate(context: vscode.ExtensionContext): void {
     roomsTree.setMyAgents(myAgentsForTree());
 
     relay = new RelayClient({
-      url: await ensureRelayUrl(),
+      url,
       room,
       member,
       token: roomToken(),

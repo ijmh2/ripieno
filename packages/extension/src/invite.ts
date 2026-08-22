@@ -12,6 +12,8 @@
  * join before it happens.
  */
 
+import { validateRelayUrl } from "./relaySecurity";
+
 export interface Invite {
   relayUrl: string;
   room: string;
@@ -35,19 +37,8 @@ export function parseInvite(query: string): { ok: true; invite: Invite } | { ok:
     return { ok: false, reason: "the link is missing the relay address or the room code" };
   }
 
-  let parsed: URL;
-  try {
-    parsed = new URL(relay);
-  } catch {
-    return { ok: false, reason: `"${relay}" is not a valid address` };
-  }
-
-  // Only WebSocket schemes. Without this a link could point the extension at
-  // file: or a scheme with side effects, and "click to join a room" is not
-  // something anyone reads carefully.
-  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
-    return { ok: false, reason: `a relay address must start with ws:// or wss://, not ${parsed.protocol}` };
-  }
+  const checkedRelay = validateRelayUrl(relay);
+  if (!checkedRelay.ok) return checkedRelay;
 
   // The same shape the relay accepts, checked here so a bad code fails with an
   // explanation rather than a silent refusal after connecting.
@@ -55,7 +46,7 @@ export function parseInvite(query: string): { ok: true; invite: Invite } | { ok:
     return { ok: false, reason: `"${room}" is not a valid room code` };
   }
 
-  return { ok: true, invite: { relayUrl: relay, room, token: token || undefined } };
+  return { ok: true, invite: { relayUrl: checkedRelay.url, room, token: token || undefined } };
 }
 
 /**

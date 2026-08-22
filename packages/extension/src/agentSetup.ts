@@ -66,6 +66,31 @@ export function agentIdFromTreeNode(node: unknown, ownerHandle?: string): string
   return id || undefined;
 }
 
+/**
+ * The room CTA calls Attach Agent without a target. On a true first run that
+ * should enter normal Add Agent setup; an explicit but stale tree target must
+ * remain a no-op instead of unexpectedly creating another agent.
+ */
+export function shouldStartAddAgentForAttach(
+  configuredAgentCount: number,
+  requestedAgentId?: string
+): boolean {
+  return configuredAgentCount === 0 && requestedAgentId === undefined;
+}
+
+/** A local agent gives room participants influence over this machine. */
+export function needsSharedRoomAgentConsent(
+  workspaceCapable: boolean,
+  relayUrl: string | undefined,
+  soloRelayUrl: string | undefined,
+  room: string | undefined,
+  alreadyConsented: boolean
+): boolean {
+  return Boolean(
+    workspaceCapable && relayUrl && room && relayUrl !== soloRelayUrl && !alreadyConsented
+  );
+}
+
 export interface CodexModelChoice {
   slug: string;
   label: string;
