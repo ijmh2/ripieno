@@ -1,6 +1,10 @@
 # Third-party notices
 
-The Ripieno VSIX contains bundled portions of the following packages:
+The Ripieno VSIX contains bundled portions of the following packages. These
+components keep their own licences, which are unaffected by Ripieno's own terms
+in LICENSE. Their copyright notices are reproduced below because those licences
+require it — this file must ship with the extension.
+
 
 | Package | Version | License |
 |---|---:|---|

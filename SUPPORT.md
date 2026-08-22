@@ -1,6 +1,7 @@
 # Support
 
-Ripieno is a free, open-source Preview. Support is best-effort through
+Ripieno is a Preview, free for personal and internal use. Support is
+best-effort through
 [GitHub Issues](https://github.com/ijmh2/ripieno/issues).
 
 Before filing an issue:

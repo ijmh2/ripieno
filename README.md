@@ -367,7 +367,9 @@ CLI provider had been quietly running Claude Code instead.
 
 ---
 
-Built by **Ivan Hart** ([@ijmh2](https://github.com/ijmh2)). MIT licensed.
+Built by **Ivan Hart** ([@ijmh2](https://github.com/ijmh2)).
+Source-available under the [alpha terms](LICENSE) — free for personal and
+internal use, not open source.
 
 Before using a shared room, read the [security model](SECURITY.md) and
 [privacy and data-flow disclosure](PRIVACY.md). Help and issue-reporting guidance

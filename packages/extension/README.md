@@ -4,8 +4,8 @@ Ripieno adds a shared room to VS Code and compatible forks. Several people can
 bring their own local or API-backed agents into one attributed conversation and
 route workspace work through explicit host-side boundaries.
 
-This is a **free, open-source 0.0.x Preview**. It runs locally or against a relay
-you operate; the project does not provide a hosted relay.
+This is a **0.0.x Preview**, free for personal and internal use. It runs locally
+or against a relay you operate; the project does not provide a hosted relay.
 
 ## Quick start
 
@@ -93,5 +93,7 @@ For help, see [SUPPORT.md](https://github.com/ijmh2/ripieno/blob/main/SUPPORT.md
 Follow the security policy for private reporting when available; never include
 sensitive details in a public issue.
 
-MIT licensed. Bundled dependency notices are in
+Source-available under the [alpha terms](https://github.com/ijmh2/ripieno/blob/main/packages/extension/LICENSE)
+— free for personal and internal use, not open source. Bundled dependency
+notices are in
 [THIRD_PARTY_NOTICES.md](https://github.com/ijmh2/ripieno/blob/main/packages/extension/THIRD_PARTY_NOTICES.md).

@@ -2,8 +2,9 @@
  * A room for one, with nothing to set up.
  *
  * The first thing a stranger hit was infrastructure: deploy a relay, mint a
- * token, put it in settings, then find a second person. For an open-source
- * project that is the whole audience gone before the interesting part. So when
+ * token, put it in settings, then find a second person. For a project a
+ * stranger can only try by self-serving, that is the whole audience gone before
+ * the interesting part. So when
  * no relay is configured, the extension runs one itself, on the loopback
  * interface, for as long as the window is open.
  *
