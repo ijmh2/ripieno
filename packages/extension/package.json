@@ -84,6 +84,11 @@
         "icon": "$(settings-gear)"
       },
       {
+        "command": "ripieno.removeAgent",
+        "title": "Ripieno: Delete Agent…",
+        "icon": "$(trash)"
+      },
+      {
         "command": "ripieno.hostWorkspace",
         "title": "Ripieno: Host / Release the Shared Workspace",
         "icon": "$(root-folder)"
@@ -173,6 +178,21 @@
           "command": "ripieno.detachAgent",
           "when": "view == ripieno.rooms && viewItem == ripienoAgentAttached",
           "group": "inline@2"
+        },
+        {
+          "command": "ripieno.removeAgent",
+          "when": "view == ripieno.rooms && viewItem == ripienoAgentDetached",
+          "group": "2_manage@9"
+        },
+        {
+          "command": "ripieno.removeAgent",
+          "when": "view == ripieno.rooms && viewItem == ripienoAgentError",
+          "group": "2_manage@9"
+        },
+        {
+          "command": "ripieno.removeAgent",
+          "when": "view == ripieno.rooms && viewItem == ripienoAgentAttached",
+          "group": "2_manage@9"
         },
         {
           "command": "ripieno.setRole",

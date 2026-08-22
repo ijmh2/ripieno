@@ -147,6 +147,23 @@ describe("every menu clause names something that exists", () => {
       assert.ok(item.group?.startsWith("inline"), `Customize Agent is hidden for ${context}`);
     }
   });
+
+  test("every owned agent row can be deleted without crowding the inline controls", () => {
+    for (const context of [
+      "ripienoAgentDetached",
+      "ripienoAgentAttached",
+      "ripienoAgentError",
+    ]) {
+      const item = menus.find(
+        (menu) =>
+          menu.command === "ripieno.removeAgent" &&
+          menu.where === "view/item/context" &&
+          menu.when?.includes(`viewItem == ${context}`)
+      );
+      assert.ok(item, `no Delete Agent action for ${context}`);
+      assert.ok(!item.group?.startsWith("inline"), `Delete Agent crowds inline controls for ${context}`);
+    }
+  });
 });
 
 describe("the extension activates when it needs to", () => {

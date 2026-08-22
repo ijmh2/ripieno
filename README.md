@@ -69,7 +69,7 @@ Honest, because an unknown repository has no other way to earn it.
 | **Built and tested, never deployed** | The shared-workspace container (`packages/workspace-host`) — 43 tests including real git integration, and it has never run anywhere but a test |
 | **Not shipped** | Hosted mode. Built against the same driver interface, compiles, unit tests pass — and it has never run against a live Managed Agents session, so it is not shipped and not described here as a feature |
 
-There are 397 tests (`npm test`) across the five packages that have them
+There are 400 tests (`npm test`) across the five packages that have them
 (`relay-client` and `mcp` do not), and six exploitable defects found by an
 adversarial audit have been fixed, each with a regression test written from the
 exploit.
@@ -125,7 +125,8 @@ workspace, the provider's default model and no special brief.
 
 Use the **gear beside any agent** to change its name, add or remove a brief,
 point it at another folder, choose a model where the provider supports it, or
-change permissions. Codex agents offer **Read only**, **Workspace only** (the
+change permissions. The same menu deletes an agent after confirmation and
+forgets its saved session and credentials. Codex agents offer **Read only**, **Workspace only** (the
 default), and a separately confirmed **Full computer access**. Claude agents
 default to approval cards before side effects. Conversation-only API agents
 cannot touch local files through Ripieno. The Codex boundaries follow

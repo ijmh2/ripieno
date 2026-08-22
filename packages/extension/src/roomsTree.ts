@@ -332,11 +332,26 @@ function detailSuffix(agent: MyAgent): string {
   // chat-only agent to fix a file and gets a confident answer and no change.
   const role = agent.primary ? undefined : "only when named";
   const reach = agent.capability === "conversation" ? "no file access" : undefined;
-  const provider = agent.provider && agent.provider !== "claude-code" ? agent.provider : undefined;
+  const provider = describeProvider(agent.provider);
   return [provider, agent.model, agent.folder, reach, agent.permissions, role]
     .filter(Boolean)
     .map((bit) => ` · ${bit}`)
     .join("");
+}
+
+function describeProvider(provider: string | undefined): string | undefined {
+  switch (provider) {
+    case "claude-code":
+      return "Claude Code";
+    case "codex":
+      return "Codex";
+    case "gemini":
+      return "Gemini";
+    case undefined:
+      return undefined;
+    default:
+      return provider.charAt(0).toLocaleUpperCase() + provider.slice(1);
+  }
 }
 
 function describeAgent(state: AgentState): string {

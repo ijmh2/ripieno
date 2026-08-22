@@ -26,6 +26,7 @@ import { WorkspaceFileSystem, WORKSPACE_SCHEME, uriFor } from "./workspaceFs";
 import { WorkspaceTreeProvider, isHostDocument } from "./workspaceTree";
 import {
   CODEX_SETUP_URL,
+  agentIdFromTreeNode,
   isCodexLoginReady,
   isUnusedLegacyBootstrapAgent,
   nextAgentLabel,
@@ -197,6 +198,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("ripieno.customizeAgent", (node?: unknown) =>
       void customizeAgent(idFromNode(node))
     ),
+    vscode.commands.registerCommand("ripieno.removeAgent", (node?: unknown) =>
+      void removeAgent(idFromNode(node))
+    ),
     vscode.commands.registerCommand("ripieno.hostWorkspace", () => toggleWorkspaceHost()),
     vscode.commands.registerCommand("ripieno.mountWorkspace", () => mountSharedWorkspace()),
     vscode.commands.registerCommand("ripieno.proposeChange", () => proposeChange()),
@@ -212,14 +216,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   /** Tree item ids are prefixed so attached and detached rows stay distinct. */
   function idFromNode(node?: unknown): string | undefined {
-    if (!node || typeof node !== "object") return undefined;
-    const candidate = node as { id?: unknown; agent?: { id?: unknown } };
-    const value = candidate.agent?.id ?? candidate.id;
-    if (typeof value !== "string") return undefined;
-    let raw = value.replace(/^(attached|detached):/, "");
-    const ownerPrefix = me ? `${me.handle}::` : undefined;
-    if (ownerPrefix && raw.startsWith(ownerPrefix)) raw = raw.slice(ownerPrefix.length);
-    return raw;
+    return agentIdFromTreeNode(node, me?.handle);
   }
 
   function myAgentsForTree(): MyAgent[] {
@@ -370,7 +367,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (choice === "Customize Agent…") await customizeAgent(id);
   }
 
-  type AgentSetting = "name" | "brief" | "permissions" | "folder" | "model";
+  type AgentSetting = "name" | "brief" | "permissions" | "folder" | "model" | "delete";
 
   function describePermissions(spec: AgentSpecRecord): string {
     const kind = providerById(spec.providerId)?.kind;
@@ -447,12 +444,18 @@ export function activate(context: vscode.ExtensionContext): void {
     ];
     if (provider?.kind === "claude-code") {
       settings.push({
-        label: "$(symbol-method) Model",
+        label: "$(symbol-method) Claude model",
         description: spec.model ?? "Provider default",
         detail: "Choose Opus, Sonnet, Haiku or your configured default",
         setting: "model",
       });
     }
+    settings.push({
+      label: "$(trash) Delete agent…",
+      description: "Remove it from Ripieno",
+      detail: "Detaches the agent and forgets its saved session and credentials",
+      setting: "delete",
+    });
 
     const picked = await vscode.window.showQuickPick(settings, {
       title: `Customize ${labelFor(spec.label)}`,
@@ -460,6 +463,11 @@ export function activate(context: vscode.ExtensionContext): void {
       ignoreFocusOut: true,
     });
     if (!picked) return;
+
+    if (picked.setting === "delete") {
+      await removeAgent(spec.id);
+      return;
+    }
 
     if (picked.setting === "name") {
       const value = await vscode.window.showInputBox({
@@ -535,6 +543,37 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     spec.permissions = permission;
     await persistAgentChange(spec, false);
+  }
+
+  async function removeAgent(id?: string): Promise<void> {
+    const spec = await agentToCustomize(id);
+    if (!spec) return;
+    const confirmed = await vscode.window.showWarningMessage(
+      `Delete ${labelFor(spec.label)}?`,
+      {
+        modal: true,
+        detail:
+          "This detaches the agent and permanently forgets its Ripieno brief, settings, saved session and stored API key. It does not delete project files.",
+      },
+      "Delete Agent"
+    );
+    if (confirmed !== "Delete Agent") return;
+
+    const wasPrimary = [...specs.keys()][0] === spec.id;
+    const restart = wasPrimary
+      ? [...agents.keys()].filter((agentId) => agentId !== spec.id)
+      : [];
+    detachAgent(spec.id);
+    for (const agentId of restart) detachAgent(agentId);
+    specs.delete(spec.id);
+
+    const sessions = { ...loadState().sessions };
+    delete sessions[spec.id];
+    await context.secrets.delete(secretKeyFor(spec.id));
+    saveState({ sessions });
+    roomsTree.setMyAgents(myAgentsForTree());
+    for (const agentId of restart) await attachAgent(agentId);
+    void vscode.window.showInformationMessage(`${labelFor(spec.label)} deleted.`);
   }
 
   async function pickAgentPermissions(
@@ -931,7 +970,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   async function pickModel(name: string): Promise<{ model?: string } | undefined> {
     const choice = await vscode.window.showQuickPick(MODELS, {
-      title: `Which model should "${name}" run on?`,
+      title: `Claude model for "${name}"`,
       ignoreFocusOut: true,
     });
     return choice ? { model: choice.value || undefined } : undefined;

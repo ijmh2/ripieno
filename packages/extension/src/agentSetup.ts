@@ -51,6 +51,21 @@ export function nextAgentLabel(existing: readonly string[]): string {
   }
 }
 
+/**
+ * VS Code may hand a tree command either the provider's node or its rendered
+ * TreeItem. Accept both, while stripping only our own room namespace.
+ */
+export function agentIdFromTreeNode(node: unknown, ownerHandle?: string): string | undefined {
+  if (!node || typeof node !== "object") return undefined;
+  const candidate = node as { id?: unknown; agent?: { id?: unknown } };
+  const value = candidate.agent?.id ?? candidate.id;
+  if (typeof value !== "string") return undefined;
+  let id = value.replace(/^(?:attached|detached):/, "");
+  const ownerPrefix = ownerHandle ? `${ownerHandle}::` : undefined;
+  if (ownerPrefix && id.startsWith(ownerPrefix)) id = id.slice(ownerPrefix.length);
+  return id || undefined;
+}
+
 /** `codex login status` is the authority; the text protects against false-zero wrappers. */
 export function isCodexLoginReady(exitCode: number | null, output: string): boolean {
   return exitCode === 0 && /(?:^|\n)\s*logged in\b/i.test(output);

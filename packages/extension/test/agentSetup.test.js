@@ -5,6 +5,7 @@ const {
   isCodexLoginReady,
   isUnusedLegacyBootstrapAgent,
   nextAgentLabel,
+  agentIdFromTreeNode,
 } = require("../dist/agentSetup.js");
 
 describe("first-run agent migration", () => {
@@ -26,6 +27,26 @@ describe("first-run agent migration", () => {
     assert.equal(
       isUnusedLegacyBootstrapAgent([bootstrap], { "local:default": "session-1" }),
       false
+    );
+  });
+});
+
+describe("agent tree command targeting", () => {
+  test("accepts both provider nodes and rendered item ids", () => {
+    assert.equal(agentIdFromTreeNode({ agent: { id: "local:test:1" } }, "ivan"), "local:test:1");
+    assert.equal(agentIdFromTreeNode({ id: "detached:local:test:1" }, "ivan"), "local:test:1");
+    assert.equal(
+      agentIdFromTreeNode({ id: "attached:ivan::local:test:1" }, "ivan"),
+      "local:test:1"
+    );
+  });
+
+  test("rejects malformed nodes and never strips another owner's namespace", () => {
+    assert.equal(agentIdFromTreeNode(undefined, "ivan"), undefined);
+    assert.equal(agentIdFromTreeNode({ id: 123 }, "ivan"), undefined);
+    assert.equal(
+      agentIdFromTreeNode({ id: "attached:mira::local:test:1" }, "ivan"),
+      "mira::local:test:1"
     );
   });
 });
