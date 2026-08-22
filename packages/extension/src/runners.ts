@@ -398,8 +398,14 @@ export class CliRunner implements ModelRunner {
         clearTimeout(timer);
         this.child = undefined;
         const text = out.trim();
-        if (code !== 0 && !text) {
-          reject(new Error(`${this.opts.command} exited ${code}: ${err.trim().slice(0, 300)}`));
+        if (code !== 0) {
+          // CLIs commonly print billing/authentication errors to stdout. Treating
+          // any stdout as a successful answer put messages such as "Credit
+          // balance is too low" into the room under the agent's name.
+          const detail = (text || err.trim() || "no diagnostic output")
+            .replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, "")
+            .slice(0, 500);
+          reject(new Error(`${this.opts.command} exited ${code}: ${detail}`));
           return;
         }
         resolve(text);
@@ -413,6 +419,9 @@ export class CliRunner implements ModelRunner {
 /* ------------------------------------------------------------------ */
 
 export type ProviderKind = "claude-code" | "cli" | "openai-compatible";
+
+/** The trust boundary chosen for one local agent. */
+export type AgentPermission = "readOnly" | "workspace" | "full";
 
 export interface ProviderPreset {
   id: string;
@@ -429,23 +438,81 @@ export interface ProviderPreset {
 }
 
 /**
+ * Apply Ripieno's per-agent trust boundary to Codex without trusting flags
+ * saved by an older build. Other CLIs keep their own arguments because their
+ * permission models are provider-specific and guessing would be unsafe.
+ *
+ * Codex's non-interactive runner cannot surface its terminal approval picker
+ * in the editor, so the bounded modes use `approval_policy="never"`: actions
+ * inside the selected sandbox work, while attempts to cross it are denied
+ * instead of hanging on an invisible prompt.
+ */
+export function argsForAgentPermission(
+  providerId: string,
+  args: readonly string[],
+  permission?: AgentPermission
+): string[] {
+  if (providerId !== "codex" || !permission) return [...args];
+
+  const cleaned: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (
+      arg === "--dangerously-bypass-approvals-and-sandbox" ||
+      arg === "--approve-for-me"
+    ) {
+      continue;
+    }
+    if (arg === "--sandbox" || arg === "-s" || arg === "--ask-for-approval" || arg === "-a") {
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("--sandbox=") || arg.startsWith("--ask-for-approval=")) continue;
+    if (arg === "--config" || arg === "-c") {
+      const value = args[i + 1];
+      if (/^(?:approval_policy|approvals_reviewer)=/.test(value ?? "")) {
+        i += 1;
+        continue;
+      }
+    }
+    if (/^--config=(?:approval_policy|approvals_reviewer)=/.test(arg)) continue;
+    cleaned.push(arg);
+  }
+
+  const flags =
+    permission === "full"
+      ? ["--dangerously-bypass-approvals-and-sandbox"]
+      : [
+          "--sandbox",
+          permission === "readOnly" ? "read-only" : "workspace-write",
+          "--config",
+          'approval_policy="never"',
+        ];
+  const promptAt = cleaned.findIndex((arg) => arg === "-" || arg.includes("{prompt}"));
+  cleaned.splice(promptAt < 0 ? cleaned.length : promptAt, 0, ...flags);
+  return cleaned;
+}
+
+/**
  * Presets, not a closed list — "Custom" takes any OpenAI-compatible endpoint,
  * which is also how a local Ollama joins.
  */
 export const PROVIDERS: ProviderPreset[] = [
   {
+    id: "codex",
+    label: "ChatGPT / Codex (local)",
+    kind: "cli",
+    command: "codex",
+    // Stdin keeps room text out of the process list and avoids command-line
+    // length limits. `exec` is Codex's non-interactive path.
+    args: ["exec", "--color", "never", "--skip-git-repo-check", "-"],
+    hint: "Recommended — your ChatGPT account through Codex CLI, with workspace access.",
+  },
+  {
     id: "claude-code",
     label: "Claude Code (local)",
     kind: "claude-code",
     hint: "Your Claude subscription. File and shell access, approvals routed to you.",
-  },
-  {
-    id: "codex",
-    label: "Codex CLI (local)",
-    kind: "cli",
-    command: "codex",
-    args: ["exec", "{prompt}"],
-    hint: "Your ChatGPT plan, via the codex CLI. File access. Check the flags suit your version.",
   },
   {
     id: "gemini",

@@ -20,12 +20,15 @@
 
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const manifest = require("../package.json");
 
 const views = Object.values(manifest.contributes.views)
   .flat()
   .map((v) => v.id);
-const commands = manifest.contributes.commands.map((c) => c.command);
+const commandDefinitions = manifest.contributes.commands;
+const commands = commandDefinitions.map((c) => c.command);
 const menus = Object.entries(manifest.contributes.menus).flatMap(([where, items]) =>
   items.map((item) => ({ ...item, where }))
 );
@@ -67,6 +70,81 @@ describe("every menu clause names something that exists", () => {
         inAMenu || command.category || command.title.includes(":"),
         `"${command.command}" is in no menu and has no palette category, so nothing can invoke it`
       );
+    }
+  });
+
+  test("navigation commands have codicon icons", () => {
+    for (const item of menus.filter((menu) => menu.group?.startsWith("navigation"))) {
+      const command = commandDefinitions.find((entry) => entry.command === item.command);
+      assert.match(
+        command?.icon ?? "",
+        /^\$\([\w-]+\)$/,
+        `${item.where} → ${item.command} is a navigation action without a codicon`
+      );
+    }
+  });
+
+  test("the Room title exposes the right action for each membership state", () => {
+    const roomTitle = menus.filter(
+      (item) => item.where === "view/title" && (item.when ?? "").includes("view == ripieno.room")
+    );
+    const byCommand = new Map(roomTitle.map((item) => [item.command, item]));
+
+    assert.equal(
+      byCommand.get("ripieno.joinRoom")?.when,
+      "view == ripieno.room && !ripieno.inRoom"
+    );
+    assert.equal(byCommand.get("ripieno.joinRoom")?.group, "navigation");
+    assert.equal(
+      byCommand.get("ripieno.copyInvite")?.when,
+      "view == ripieno.room && ripieno.inRoom"
+    );
+    assert.equal(byCommand.get("ripieno.copyInvite")?.group, "navigation");
+    assert.equal(
+      byCommand.get("ripieno.leaveRoom")?.when,
+      "view == ripieno.room && ripieno.inRoom"
+    );
+    assert.notEqual(
+      byCommand.get("ripieno.leaveRoom")?.group,
+      "navigation",
+      "Leave Room belongs in the overflow, not the primary title bar"
+    );
+  });
+
+  test("every custom context key used by a menu is set by the extension", () => {
+    const extensionSource = fs.readFileSync(path.join(__dirname, "../src/extension.ts"), "utf8");
+    const setContexts = new Set(
+      [...extensionSource.matchAll(/executeCommand\(\s*["']setContext["']\s*,\s*["']([^"']+)["']/g)]
+        .map((match) => match[1])
+    );
+    const usedContexts = new Set(
+      menus.flatMap((item) => {
+        // View ids and TreeItem.contextValue strings are provided by contributed
+        // views/items, not `setContext`; remove those equality clauses first.
+        const when = (item.when ?? "").replace(/\b(?:view|viewItem)\s*==\s*[\w.-]+/g, "");
+        return [...when.matchAll(/\b(ripieno\.[\w.]+)\b/g)].map((match) => match[1]);
+      })
+    );
+
+    for (const key of usedContexts) {
+      assert.ok(setContexts.has(key), `menu when-clause uses context "${key}", but the extension never sets it`);
+    }
+  });
+
+  test("every owned agent row exposes customization beside its run control", () => {
+    for (const context of [
+      "ripienoAgentDetached",
+      "ripienoAgentAttached",
+      "ripienoAgentError",
+    ]) {
+      const item = menus.find(
+        (menu) =>
+          menu.command === "ripieno.customizeAgent" &&
+          menu.where === "view/item/context" &&
+          menu.when?.includes(`viewItem == ${context}`)
+      );
+      assert.ok(item, `no Customize Agent action for ${context}`);
+      assert.ok(item.group?.startsWith("inline"), `Customize Agent is hidden for ${context}`);
     }
   });
 });

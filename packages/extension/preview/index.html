@@ -20,6 +20,7 @@
   iframe { height: 700px; border: 1px solid #2b2f36; border-radius: 8px; }
   iframe.narrow { width: 300px; }
   iframe.comfortable { width: 360px; }
+  iframe.onboarding { width: 240px; height: 360px; }
 </style>
 </head>
 <body>
@@ -38,6 +39,18 @@
   <div class="pane">
     <div class="label">360px sidebar · Light+</div>
     <iframe class="comfortable" src="room.html?theme=light&amp;work=1" title="Room preview, 360 pixel light theme"></iframe>
+  </div>
+</div>
+<h1 style="margin-top: 24px;">Contextual onboarding</h1>
+<p class="note">The only in-panel action appears when the transcript is empty and the current state makes it useful.</p>
+<div class="panes">
+  <div class="pane">
+    <div class="label">240px · No room</div>
+    <iframe class="onboarding" src="room.html?theme=dark&amp;onboarding=join" title="Join-room empty state at 240 pixels"></iframe>
+  </div>
+  <div class="pane">
+    <div class="label">240px · Joined without my agent</div>
+    <iframe class="onboarding" src="room.html?theme=light&amp;onboarding=attach" title="Attach-agent empty state at 240 pixels"></iframe>
   </div>
 </div>
 </body>

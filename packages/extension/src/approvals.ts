@@ -10,6 +10,11 @@ import * as vscode from "vscode";
 import { randomBytes } from "crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import { approvalInputHash } from "./approvalScope";
+import {
+  canStoreStandingApproval,
+  summariseApprovalInput,
+  type ApprovalSummary,
+} from "./approvalSummary";
 
 interface Request {
   id: string;
@@ -35,6 +40,7 @@ export type ApprovalPrompt = (request: {
   agentLabel: string;
   toolName: string;
   summary: string;
+  rememberable: boolean;
 }) => Promise<ApprovalChoice | undefined>;
 
 export class ApprovalBridge implements vscode.Disposable {
@@ -106,14 +112,17 @@ export class ApprovalBridge implements vscode.Disposable {
       return { allow: true };
     }
 
-    const summary = summarise(request.input);
+    const summary = summariseApprovalInput(request.input);
     const choice = await this.ask(request, summary);
 
-    if (choice === "always") {
+    if (canStoreStandingApproval(choice ?? "", summary.rememberable)) {
       this.standing.add(key);
       return { allow: true };
     }
-    if (choice === "once") {
+    // A forged or stale UI may still return "always" for an input whose full
+    // value was not shown. Treat that as permission for this run only; never let
+    // presentation state widen into a standing host grant.
+    if (choice === "once" || choice === "always") {
       return { allow: true };
     }
     return {
@@ -130,13 +139,14 @@ export class ApprovalBridge implements vscode.Disposable {
    */
   private async ask(
     request: Request,
-    summary: string
+    summary: ApprovalSummary
   ): Promise<ApprovalChoice | undefined> {
     if (this.prompt) {
       const inline = await this.prompt({
         agentLabel: request.agentLabel,
         toolName: request.toolName,
-        summary,
+        summary: summary.text,
+        rememberable: summary.rememberable,
       });
       if (inline) return inline;
     }
@@ -144,19 +154,28 @@ export class ApprovalBridge implements vscode.Disposable {
     const detail = [
       `Tool: ${request.toolName}`,
       "",
-      summary,
+      summary.text,
       "",
-      "This was requested by an agent in a shared room — other members' messages influence what it asks for.",
+      summary.rememberable
+        ? "This was requested by an agent in a shared room — other members' messages influence what it asks for. A remembered approval applies only to this exact request from this agent, for this editor session."
+        : "This was requested by an agent in a shared room — other members' messages influence what it asks for. This summary does not show the full exact input, so approval can apply to this run only.",
     ].join("\n");
 
-    const answer = await vscode.window.showWarningMessage(
-      `${request.agentLabel} wants permission`,
-      { modal: true, detail },
-      "Allow once",
-      "Always allow this",
-      "Deny"
-    );
-    if (answer === "Always allow this") return "always";
+    const answer = summary.rememberable
+      ? await vscode.window.showWarningMessage(
+          `${request.agentLabel} wants permission`,
+          { modal: true, detail },
+          "Allow once",
+          "Always allow exact request",
+          "Deny"
+        )
+      : await vscode.window.showWarningMessage(
+          `${request.agentLabel} wants permission`,
+          { modal: true, detail },
+          "Allow once",
+          "Deny"
+        );
+    if (answer === "Always allow exact request") return "always";
     if (answer === "Allow once") return "once";
     return "deny";
   }
@@ -166,25 +185,4 @@ export class ApprovalBridge implements vscode.Disposable {
     this.wss = undefined;
     this.ready = undefined;
   }
-}
-
-/** Keep the modal readable: a command is worth showing in full, a file body is not. */
-function summarise(input: unknown): string {
-  if (input === null || input === undefined) return "(no input)";
-  if (typeof input === "string") return truncate(input, 600);
-  if (typeof input !== "object") return String(input);
-
-  const record = input as Record<string, unknown>;
-  for (const key of ["command", "path", "file_path", "url"]) {
-    if (typeof record[key] === "string") {
-      const rest = Object.keys(record).filter((k) => k !== key);
-      const extra = rest.length > 0 ? `\n(plus ${rest.join(", ")})` : "";
-      return `${key}: ${truncate(record[key] as string, 600)}${extra}`;
-    }
-  }
-  return truncate(JSON.stringify(record, null, 2), 600);
-}
-
-function truncate(value: string, max: number): string {
-  return value.length <= max ? value : `${value.slice(0, max)}…`;
 }

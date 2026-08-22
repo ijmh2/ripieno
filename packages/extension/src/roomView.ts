@@ -9,6 +9,7 @@ import * as vscode from "vscode";
 import type { ActionEntry, RoomMode, RoomStatus, RosterEntry, TranscriptEntry } from "@ripieno/protocol";
 import type { ConnectionState } from "@ripieno/relay-client";
 import type { ApprovalChoice } from "./approvals";
+import { onboardingCommandFor, parseRoomViewMessage } from "./roomViewMessages";
 
 interface RoomState {
   room?: string;
@@ -31,6 +32,7 @@ interface PendingApproval {
   agentLabel: string;
   toolName: string;
   summary: string;
+  rememberable: boolean;
 }
 
 function emptyState(connection: ConnectionState): RoomState {
@@ -67,13 +69,8 @@ type ToWebview =
       agentLabel: string;
       toolName: string;
       summary: string;
+      rememberable: boolean;
     };
-
-/** Messages the webview's composer sends back to the extension host. */
-type FromWebview =
-  | { type: "ready" }
-  | { type: "send"; text: string }
-  | { type: "approvalVerdict"; id: string; choice: ApprovalChoice };
 
 export class RoomViewProvider implements vscode.WebviewViewProvider {
   static readonly viewId = "ripieno.room";
@@ -100,14 +97,22 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     };
     webviewView.webview.html = this.renderHtml(webviewView.webview);
 
-    webviewView.webview.onDidReceiveMessage((msg: FromWebview) => {
+    webviewView.webview.onDidReceiveMessage((raw: unknown) => {
+      const msg = parseRoomViewMessage(raw);
+      if (!msg) return;
+
       if (msg.type === "ready") {
         this.postSnapshot();
       } else if (msg.type === "send") {
         this.onComposerSend(msg.text);
       } else if (msg.type === "approvalVerdict") {
-        this.pendingApprovals.get(msg.id)?.resolve(msg.choice);
+        const pending = this.pendingApprovals.get(msg.id);
+        if (!pending) return;
+        pending.resolve(msg.choice);
         this.pendingApprovals.delete(msg.id);
+      } else if (msg.type === "onboardingAction") {
+        const command = onboardingCommandFor(msg.action, this.state);
+        if (command) void vscode.commands.executeCommand(command);
       }
     });
 
@@ -120,8 +125,8 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     webviewView.onDidDispose(() => {
       if (this.view === webviewView) {
         this.view = undefined;
+        this.resolvePendingApprovals();
       }
-      this.resolvePendingApprovals();
     });
   }
 
@@ -208,6 +213,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     agentLabel: string;
     toolName: string;
     summary: string;
+    rememberable: boolean;
   }): Promise<ApprovalChoice | undefined> {
     const view = this.view;
     if (!view?.visible) {
@@ -319,9 +325,10 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   <div id="actionsList" class="actions-list"></div>
 </details>
 <div id="approvalStack" class="approval-stack" aria-live="assertive"></div>
+<div id="composerValidation" class="composer-validation" role="alert" hidden></div>
 <div id="composerBar" class="composer-bar">
   <div id="mentions" class="mentions" role="listbox" aria-label="Message suggestions" hidden></div>
-  <textarea id="composer" class="composer" rows="1" aria-label="Message the room" aria-controls="mentions" aria-expanded="false" aria-autocomplete="list" placeholder="Message the room…"></textarea>
+  <textarea id="composer" class="composer" rows="1" aria-label="Message the room" aria-controls="mentions" aria-describedby="composerValidation" aria-expanded="false" aria-autocomplete="list" placeholder="Message the room…"></textarea>
   <button id="sendButton" class="send-button" type="button">Send</button>
 </div>
 <script nonce="${csp}" src="${scriptUri}"></script>

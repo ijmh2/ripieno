@@ -54,7 +54,7 @@
     --vscode-inputValidation-warningForeground: #7a6a00;
   }
 </style>
-<link rel="stylesheet" href="../media/main.css?v=4" />
+<link rel="stylesheet" href="../media/main.css?v=6" />
 </head>
 <body>
 <!-- Markup below mirrors roomView.ts so this exercises the shipped webview. -->
@@ -75,9 +75,10 @@
   <div id="actionsList" class="actions-list"></div>
 </details>
 <div id="approvalStack" class="approval-stack" aria-live="assertive"></div>
+<div id="composerValidation" class="composer-validation" role="alert" hidden></div>
 <div id="composerBar" class="composer-bar">
   <div id="mentions" class="mentions" role="listbox" aria-label="Message suggestions" hidden></div>
-  <textarea id="composer" class="composer" rows="1" aria-label="Message the room" aria-controls="mentions" aria-expanded="false" aria-autocomplete="list" placeholder="Message the room…"></textarea>
+  <textarea id="composer" class="composer" rows="1" aria-label="Message the room" aria-controls="mentions" aria-describedby="composerValidation" aria-expanded="false" aria-autocomplete="list" placeholder="Message the room…"></textarea>
   <button id="sendButton" class="send-button" type="button">Send</button>
 </div>
 
@@ -92,7 +93,7 @@
     setState: () => undefined,
   });
 </script>
-<script src="../media/main.js?v=4"></script>
+<script src="../media/main.js?v=6"></script>
 <script>
   const t = (n) => Date.now() - n * 60000;
 
@@ -132,6 +133,8 @@
         text: "Kate Nakamura's agent joined the room.", ts: t(5) },
       { id: "h4", kind: "human", authorHandle: "kate", authorName: "Kate Nakamura",
         text: "careful — the 18th had a half-day, the resample will silently drop it", ts: t(4) },
+      { id: "h5", kind: "human", authorHandle: "mellery", authorName: "Mira",
+        text: "good catch — I'll update the mask", ts: t(3.5) },
       { id: "a2", kind: "agent", authorHandle: "kate", authorName: "Kate Nakamura's agent",
         text: "Confirmed from Kate's calendar file: 2026-07-18 is flagged `early_close`.", ts: t(3) },
     ],
@@ -148,6 +151,7 @@
       agentLabel: "Mira Ellery's agent",
       toolName: "Bash",
       summary: 'command: npm test -- --runInBand\n(plus description)',
+      rememberable: false,
     }],
     liveDeltas: [["a3", "Good catch, Kate. Re-running Sam's with Mira's resampling and an explicit half-day mask"]],
   };
@@ -155,6 +159,27 @@
   if (params.get("viewer") === "1") {
     snapshot.you.role = "viewer";
     snapshot.roster[0].role = "viewer";
+  }
+
+  if (params.get("onboarding") === "join") {
+    snapshot.connection = "offline";
+    snapshot.status = "idle";
+    snapshot.room = undefined;
+    snapshot.mode = undefined;
+    snapshot.you = undefined;
+    snapshot.roster = [];
+    snapshot.transcript = [];
+    snapshot.actions = [];
+    snapshot.approvals = [];
+    snapshot.liveDeltas = [];
+  } else if (params.get("onboarding") === "attach") {
+    snapshot.status = "idle";
+    snapshot.you.agents = [];
+    snapshot.roster[0].agents = [];
+    snapshot.transcript = [];
+    snapshot.actions = [];
+    snapshot.approvals = [];
+    snapshot.liveDeltas = [];
   }
 
   document.getElementById("actions").open = params.get("work") === "1";

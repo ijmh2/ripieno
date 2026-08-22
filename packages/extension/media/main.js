@@ -13,12 +13,16 @@
   const modeBadgeEl = document.getElementById("modeBadge");
   const statusPillEl = document.getElementById("statusPill");
   const composerEl = document.getElementById("composer");
+  const composerValidationEl = document.getElementById("composerValidation");
   const sendButtonEl = document.getElementById("sendButton");
   const actionsEl = document.getElementById("actions");
   const actionsSummaryEl = document.getElementById("actionsSummary");
   const actionsListEl = document.getElementById("actionsList");
   const approvalStackEl = document.getElementById("approvalStack");
   const jumpLatestEl = document.getElementById("jumpLatest");
+  // Mirrors MAX_COMPOSER_CHARS in roomViewMessages.ts. The host remains the
+  // authority; this copy prevents a legitimate draft being cleared on rejection.
+  const MAX_COMPOSER_CHARS = 32_000;
 
   /** @type {"connecting"|"online"|"offline"} */
   let connection = "offline";
@@ -103,6 +107,27 @@
       ? "Start the conversation, or type @ to choose a person or agent."
       : "Use Ripieno: Join Room to open a shared conversation.";
     empty.append(title, detail);
+
+    let onboarding;
+    if (!currentRoom) {
+      onboarding = { action: "joinRoom", label: "Join room" };
+    } else if (
+      currentUser &&
+      currentUser.role !== "viewer" &&
+      (currentUser.agents || []).length === 0
+    ) {
+      onboarding = { action: "attachAgent", label: "Add or attach an agent" };
+    }
+    if (onboarding) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "empty-action";
+      button.textContent = onboarding.label;
+      button.addEventListener("click", () => {
+        vscode.postMessage({ type: "onboardingAction", action: onboarding.action });
+      });
+      empty.appendChild(button);
+    }
     transcriptEl.appendChild(empty);
   }
 
@@ -114,6 +139,14 @@
   function buildRow(kind, authorHandle, authorName, text, ts) {
     const container = document.createElement("div");
     container.className = `row ${kind}`;
+
+    // Identity comes from the relay snapshot, not the display name. Two people
+    // may share a name; only the authenticated handle decides which human
+    // messages are ours and therefore belong on the outgoing/right side.
+    const isMine = kind === "human" && currentUser?.handle === authorHandle;
+    if (isMine) {
+      container.classList.add("mine");
+    }
 
     if (kind === "system") {
       const t = document.createElement("div");
@@ -144,7 +177,8 @@
     const author = document.createElement("span");
     author.className = "author";
     // Trust the server's label — "Agent" when hosted, "Sam's agent" in BYO.
-    author.textContent = authorName;
+    author.textContent = isMine ? "You" : authorName;
+    if (isMine) author.title = authorName;
     authorLine.appendChild(author);
 
     const time = formatTime(ts);
@@ -307,8 +341,11 @@
     const offline = connection !== "online";
     const notJoined = !currentRoom;
     const readOnly = currentUser?.role === "viewer";
+    const messageLength = composerEl.value.trim().length;
+    const tooLong = messageLength > MAX_COMPOSER_CHARS;
+    renderComposerValidation(messageLength);
     composerEl.disabled = offline || notJoined || readOnly;
-    sendButtonEl.disabled = composerEl.disabled || composerEl.value.trim().length === 0;
+    sendButtonEl.disabled = composerEl.disabled || messageLength === 0 || tooLong;
     composerEl.placeholder =
       connection === "connecting"
         ? "Connecting…"
@@ -319,6 +356,22 @@
             : readOnly
               ? "Read-only — viewers cannot post"
               : "Message…  @ people · / commands";
+  }
+
+  function renderComposerValidation(messageLength) {
+    if (messageLength <= MAX_COMPOSER_CHARS) {
+      composerValidationEl.hidden = true;
+      composerValidationEl.textContent = "";
+      composerEl.removeAttribute("aria-invalid");
+      return;
+    }
+    if (composerValidationEl.hidden) {
+      composerValidationEl.textContent =
+        `Message exceeds the ${MAX_COMPOSER_CHARS.toLocaleString()}-character limit. ` +
+        "Shorten it before sending.";
+    }
+    composerValidationEl.hidden = false;
+    composerEl.setAttribute("aria-invalid", "true");
   }
 
   /* ---------------------------------------------------------------- */
@@ -423,6 +476,11 @@
     roster = newRoster;
     currentUser = you;
     renderRoster();
+    const empty = transcriptEl.querySelector(".empty-state");
+    if (empty) {
+      empty.remove();
+      showEmptyState();
+    }
     updateComposerState();
   }
 
@@ -584,8 +642,9 @@
     const note = document.createElement("div");
     note.className = "approval-note";
     note.id = `${msg.id}_note`;
-    note.textContent =
-      "Other members can influence this request. A remembered approval applies only to this exact request from this agent, for this editor session.";
+    note.textContent = msg.rememberable
+      ? "Other members can influence this request. A remembered approval applies only to this exact request from this agent, for this editor session."
+      : "Other members can influence this request. This summary does not show the full exact input, so approval can apply to this run only.";
     card.setAttribute("aria-describedby", note.id);
 
     const actions = document.createElement("div");
@@ -595,11 +654,14 @@
       card.remove();
       updateComposerState();
     };
-    for (const [label, choice, primary] of [
+    const choices = [
       ["Allow once", "once", true],
       ["Deny", "deny", false],
-      ["Allow exact request", "always", false],
-    ]) {
+    ];
+    if (msg.rememberable) {
+      choices.push(["Allow exact request", "always", false]);
+    }
+    for (const [label, choice, primary] of choices) {
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = label;
@@ -631,6 +693,11 @@
 
   function trySend() {
     const text = composerEl.value.trim();
+    if (text.length > MAX_COMPOSER_CHARS) {
+      renderComposerValidation(text.length);
+      sendButtonEl.disabled = true;
+      return;
+    }
     if (!text || composerEl.disabled) {
       return;
     }

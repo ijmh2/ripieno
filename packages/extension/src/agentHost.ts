@@ -30,6 +30,8 @@ import {
   OpenAiCompatRunner,
   providerById,
   isWorkspaceProvider,
+  argsForAgentPermission,
+  type AgentPermission,
   type ModelRunner,
   type RunnerCapability,
 } from "./runners";
@@ -47,7 +49,7 @@ const HISTORY = 25;
  * Without a state for that the agent sat on "attaching" forever, which reads as
  * slow rather than as refused, and the person had nothing to act on.
  */
-export type AgentState = "detached" | "attaching" | "refused" | "idle" | "thinking";
+export type AgentState = "detached" | "attaching" | "refused" | "error" | "idle" | "thinking";
 
 export interface AgentSpec {
   /** Unique within the room; several agents may share an owner. */
@@ -86,6 +88,8 @@ export interface AgentSpec {
   /** cli providers: the executable and its arguments. */
   command?: string;
   args?: string[];
+  /** Per-agent trust boundary. Missing means the legacy provider/global default. */
+  permissions?: AgentPermission;
 }
 
 export interface AgentHostOptions extends AgentSpec {
@@ -180,6 +184,8 @@ export class AgentHost implements vscode.Disposable {
   private lastRelayError: string | undefined;
   /** Why this agent will never attach, once the relay has said so. */
   private refusalReason: string | undefined;
+  /** Last local provider failure. Kept out of the shared transcript. */
+  private failureReason: string | undefined;
 
   constructor(private readonly opts: AgentHostOptions) {
     this.output = vscode.window.createOutputChannel(`Ripieno — ${opts.label}`);
@@ -202,6 +208,11 @@ export class AgentHost implements vscode.Disposable {
     return this.refusalReason;
   }
 
+  /** Set while `currentState` is "error"; the owner sees it in their tree. */
+  get failure(): string | undefined {
+    return this.failureReason;
+  }
+
   attach(): void {
     if (this.relay) return;
     this.setState("attaching");
@@ -209,6 +220,7 @@ export class AgentHost implements vscode.Disposable {
     this.fed = 0;
     this.lastRelayError = undefined;
     this.refusalReason = undefined;
+    this.failureReason = undefined;
     // A fresh attach is a fresh conversation: drop the runner so its session
     // (or message history) starts clean rather than carrying over a chat about
     // a room this agent is no longer in.
@@ -385,6 +397,10 @@ export class AgentHost implements vscode.Disposable {
    * counts the chain from the transcript rather than believing a client.
    */
   private consider(entry: TranscriptEntry): void {
+    // A provider that needs attention stays paused until its owner explicitly
+    // retries. Otherwise every new room message repeats the same failed/billed
+    // turn and the rest of the room sees an agent that never recovers.
+    if (this.state === "error") return;
     if (!this.answers(entry)) return;
     this.clearPending();
     this.pending = setTimeout(() => void this.respond(), DEBOUNCE_MS);
@@ -483,12 +499,30 @@ export class AgentHost implements vscode.Disposable {
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       this.log(`turn failed: ${detail}`);
-      // Say so in the room rather than going quiet: a silent agent looks like a
-      // thinking one, and nobody can tell a broken key from a slow model.
-      this.relay?.send({ t: "say", text: `(could not answer — ${detail})` });
+      // Provider failures are local account/configuration facts, not the
+      // agent's answer. Keep them out of the shared transcript and give the
+      // owner an actionable, retryable state instead.
+      this.failureReason = detail;
+      this.setState("error");
+      void vscode.window
+        .showErrorMessage(
+          `Ripieno: ${this.opts.label} needs attention — ${detail}`,
+          "Retry",
+          "Open agent log",
+          "Add another agent"
+        )
+        .then((choice) => {
+          if (choice === "Retry") {
+            void vscode.commands.executeCommand("ripieno.attachAgent", { id: this.opts.id });
+          } else if (choice === "Open agent log") {
+            this.output.show(true);
+          } else if (choice === "Add another agent") {
+            void vscode.commands.executeCommand("ripieno.addAgent");
+          }
+        });
     } finally {
       this.busy = false;
-      this.setState("idle");
+      if (this.state !== "error") this.setState("idle");
       // Anything said while we were thinking still needs an answer.
       //
       // Re-arming on the *last* entry silently dropped it: it looked only at
@@ -502,7 +536,7 @@ export class AgentHost implements vscode.Disposable {
         this.siblings(),
         this.roomAgentId
       );
-      if (waiting) this.consider(waiting);
+      if (waiting && this.state !== "error") this.consider(waiting);
     }
   }
 
@@ -529,7 +563,11 @@ export class AgentHost implements vscode.Disposable {
       }
       this.runner = new CliRunner({
         command: this.opts.command,
-        args: this.opts.args ?? ["{prompt}"],
+        args: argsForAgentPermission(
+          providerId,
+          this.opts.args ?? ["{prompt}"],
+          this.opts.permissions
+        ),
         label: this.opts.label,
         timeoutMs: 300_000,
       });
@@ -573,7 +611,7 @@ export class AgentHost implements vscode.Disposable {
       });
       this.runner = new ClaudeCodeRunner({
         model: this.opts.model,
-        permissionMode: permissionMode(),
+        permissionMode: permissionMode(this.opts.permissions),
         mcpConfig,
         permissionPromptTool: "mcp__approvals__approve",
         resumeSessionId: this.opts.resumeSessionId,
@@ -662,8 +700,10 @@ export class AgentHost implements vscode.Disposable {
     this.opts.onStateChange(this.opts.id, state);
     // Tell the room too, but only what the room can act on: "attaching" and
     // "detached" are already answered by whether we are in the roster at all.
-    if (state === "thinking" || state === "idle") {
-      this.relay?.send({ t: "agentState", state });
+    if (state === "thinking" || state === "idle" || state === "error") {
+      // The shared protocol has no local-provider-error state. Stop leaving the
+      // room on "thinking" forever, while keeping account details private.
+      this.relay?.send({ t: "agentState", state: state === "error" ? "idle" : state });
     }
   }
 
@@ -688,7 +728,13 @@ export class AgentHost implements vscode.Disposable {
  * true. In a room where anybody can steer your agent, a write to your disk is
  * the thing most worth being asked about.
  */
-export function permissionMode(): string {
+export function permissionMode(configured?: AgentPermission): string {
+  if (configured === "full") return "bypassPermissions";
+  if (configured === "readOnly" || configured === "workspace") return "default";
+  // Persisted extension state is runtime data, despite the TypeScript type. An
+  // unknown per-agent value must fail closed instead of falling through to a
+  // legacy global bypass setting.
+  if (configured !== undefined) return "default";
   const mode = vscode.workspace
     .getConfiguration("ripieno")
     .get<string>("agentPermissions", "ask");

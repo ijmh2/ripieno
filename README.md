@@ -69,7 +69,7 @@ Honest, because an unknown repository has no other way to earn it.
 | **Built and tested, never deployed** | The shared-workspace container (`packages/workspace-host`) — 43 tests including real git integration, and it has never run anywhere but a test |
 | **Not shipped** | Hosted mode. Built against the same driver interface, compiles, unit tests pass — and it has never run against a live Managed Agents session, so it is not shipped and not described here as a feature |
 
-There are 368 tests (`npm test`) across the five packages that have them
+There are 397 tests (`npm test`) across the five packages that have them
 (`relay-client` and `mcp` do not), and six exploitable defects found by an
 adversarial audit have been fixed, each with a regression test written from the
 exploit.
@@ -111,7 +111,31 @@ same rooms, same attributed transcript, same tool routing, same action log, and
 history that survives a reload. Solo is where people form their opinion of the
 product, and a cut-down version would teach them the wrong thing about it.
 
-Attach an agent from the **Rooms & Agents** tree and talk to it.
+Choose **Add agent…** in the **Rooms & Agents** tree. Ripieno asks which account
+should power it before asking you to configure anything else.
+
+### Use your ChatGPT account
+
+Choose **ChatGPT / Codex** — the recommended option. Ripieno checks that Codex
+CLI is installed and signed in; if it is not, it opens Codex's own trusted
+sign-in flow in a terminal and continues after the login succeeds. Ripieno never
+sees or stores your ChatGPT credentials. Once the account is ready, the agent
+joins immediately with a normal name (`agent`, then `agent 2`), the current
+workspace, the provider's default model and no special brief.
+
+Use the **gear beside any agent** to change its name, add or remove a brief,
+point it at another folder, choose a model where the provider supports it, or
+change permissions. Codex agents offer **Read only**, **Workspace only** (the
+default), and a separately confirmed **Full computer access**. Claude agents
+default to approval cards before side effects. Conversation-only API agents
+cannot touch local files through Ripieno. The Codex boundaries follow
+[OpenAI's sandbox model](https://learn.chatgpt.com/docs/sandboxing): workspace
+write is the normal local boundary, while full access removes it.
+
+This creates a new coding agent backed by your ChatGPT account. It does not
+import an existing ChatGPT conversation or a custom GPT. Codex installation and
+ChatGPT sign-in are documented in
+[OpenAI's Codex CLI guide](https://learn.chatgpt.com/docs/codex/cli).
 
 ## Adding people
 
@@ -233,6 +257,8 @@ interface, which is the evidence the seam is real rather than hypothetical.
   another.
 - **Writes and commands are approved by the member whose machine runs them**, and
   the approval names the agent that asked and whose workspace it will touch.
+  Local-agent permissions are stored per agent and can be changed from its gear;
+  full access requires an explicit warning confirmation.
 - **Roles are enforced in the relay**, not the UI. Hiding a button is
   presentation; anyone can send the message the button would have sent. They only
   *mean* something with `RIPIENO_REQUIRE_GITHUB`, because a handle is otherwise

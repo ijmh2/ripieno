@@ -51,11 +51,13 @@
     "commands": [
       {
         "command": "ripieno.joinRoom",
-        "title": "Ripieno: Join Room"
+        "title": "Ripieno: Join Room",
+        "icon": "$(sign-in)"
       },
       {
         "command": "ripieno.leaveRoom",
-        "title": "Ripieno: Leave Room"
+        "title": "Ripieno: Leave Room",
+        "icon": "$(sign-out)"
       },
       {
         "command": "ripieno.signIn",
@@ -73,8 +75,13 @@
       },
       {
         "command": "ripieno.addAgent",
-        "title": "Ripieno: Add Another Agent",
+        "title": "Ripieno: Add Agent",
         "icon": "$(add)"
+      },
+      {
+        "command": "ripieno.customizeAgent",
+        "title": "Ripieno: Customize Agent…",
+        "icon": "$(settings-gear)"
       },
       {
         "command": "ripieno.hostWorkspace",
@@ -94,7 +101,8 @@
       {
         "command": "ripieno.copyInvite",
         "title": "Copy Invite Link",
-        "category": "Ripieno"
+        "category": "Ripieno",
+        "icon": "$(link)"
       },
       {
         "command": "ripieno.setRole",
@@ -118,18 +126,53 @@
           "command": "ripieno.mountWorkspace",
           "when": "view == ripieno.workspace",
           "group": "navigation"
+        },
+        {
+          "command": "ripieno.joinRoom",
+          "when": "view == ripieno.room && !ripieno.inRoom",
+          "group": "navigation"
+        },
+        {
+          "command": "ripieno.copyInvite",
+          "when": "view == ripieno.room && ripieno.inRoom",
+          "group": "navigation"
+        },
+        {
+          "command": "ripieno.leaveRoom",
+          "when": "view == ripieno.room && ripieno.inRoom",
+          "group": "1_room@1"
         }
       ],
       "view/item/context": [
         {
+          "command": "ripieno.customizeAgent",
+          "when": "view == ripieno.rooms && viewItem == ripienoAgentDetached",
+          "group": "inline@1"
+        },
+        {
           "command": "ripieno.attachAgent",
           "when": "view == ripieno.rooms && viewItem == ripienoAgentDetached",
-          "group": "inline"
+          "group": "inline@2"
+        },
+        {
+          "command": "ripieno.customizeAgent",
+          "when": "view == ripieno.rooms && viewItem == ripienoAgentError",
+          "group": "inline@1"
+        },
+        {
+          "command": "ripieno.attachAgent",
+          "when": "view == ripieno.rooms && viewItem == ripienoAgentError",
+          "group": "inline@2"
+        },
+        {
+          "command": "ripieno.customizeAgent",
+          "when": "view == ripieno.rooms && viewItem == ripienoAgentAttached",
+          "group": "inline@1"
         },
         {
           "command": "ripieno.detachAgent",
           "when": "view == ripieno.rooms && viewItem == ripienoAgentAttached",
-          "group": "inline"
+          "group": "inline@2"
         },
         {
           "command": "ripieno.setRole",
@@ -192,7 +235,7 @@
             "Your agent runs everything without asking, like an ordinary Claude Code session. Remember the room steers it: anyone in the room can talk your agent into running things on your machine."
           ],
           "default": "ask",
-          "markdownDescription": "What your own agents may do in a room. `ask` routes approvals to you in the editor and is the sane default; `bypassPermissions` is faster and only appropriate in a room you trust."
+          "markdownDescription": "Fallback for older Claude agents without a per-agent permission choice. New agents are adjusted from the gear beside their row in Rooms & Agents. `ask` routes approvals to you; `bypassPermissions` is only appropriate in a room you trust."
         },
         "ripieno.devIdentityOverride": {
           "type": "string",

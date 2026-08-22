@@ -259,6 +259,22 @@ body {
   max-width: 92%;
 }
 
+/* The signed-in member's messages are outgoing: direction carries that fact
+   even when every participant colour becomes similar in high-contrast themes. */
+.row.human.mine {
+  align-items: flex-end;
+}
+
+.row.human.mine .bubble {
+  align-self: flex-end;
+  border-left: 0;
+  border-right: 3px solid hsl(var(--ripieno-hue) 70% 50%);
+}
+
+.row.human.mine .author-line {
+  justify-content: flex-end;
+}
+
 .row.agent .bubble {
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
   border: 1px solid var(--vscode-panel-border);
@@ -424,10 +440,12 @@ body {
   cursor: not-allowed;
 }
 
-.offline-banner {
+.composer-validation {
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  padding: 0 8px 6px;
+  color: var(--vscode-inputValidation-errorForeground, #f48771);
+  background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+  padding: 4px 8px;
+  flex-shrink: 0;
 }
 
 .empty-state {
@@ -445,6 +463,28 @@ body {
 .empty-state strong {
   color: var(--vscode-foreground);
   font-size: 13px;
+}
+
+.empty-action {
+  align-self: center;
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: var(--ripieno-radius);
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.empty-action:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.empty-action:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 
 /* -------------------------------------------------------------- */

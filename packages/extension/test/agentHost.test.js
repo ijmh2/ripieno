@@ -32,6 +32,7 @@ const { AgentHost } = require("../dist/agentHost.js");
 const { SoloRelay } = require("../dist/soloRelay.js");
 
 const FAKE_CLI = path.join(__dirname, "rosterReachesAgent.js");
+const FAILING_CLI = path.join(__dirname, "failingAgent.js");
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const cleanup = [];
 
@@ -172,6 +173,47 @@ describe("the agent is told who is in the room", () => {
   });
 });
 
+describe("provider failures stay with the owner", () => {
+  test("a billing or login error is not posted as the agent's chat reply", async () => {
+    const r = await room("provider-failure");
+    const states = [];
+    const host = new AgentHost({
+      id: "ivan:agent",
+      label: "Ivan's agent",
+      url: r.url,
+      room: r.code,
+      member: { handle: "ivan", displayName: "Ivan" },
+      providerId: "cli-custom",
+      command: process.execPath,
+      args: [FAILING_CLI, "{prompt}"],
+      approvals: { start: async () => ({ url: "", token: "" }) },
+      permissionServerPath: "unused",
+      workspaceServerPath: "unused",
+      onStateChange: (_id, state) => states.push(state),
+    });
+    host.attach();
+    cleanup.push(() => host.dispose());
+
+    const ivan = await member(r, "ivan", "Ivan");
+    const entries = [];
+    ivan.ws.on("message", (raw) => {
+      const msg = JSON.parse(String(raw));
+      if (msg.t === "entry") entries.push(msg.entry);
+    });
+    await wait(300);
+    ivan.say("hello");
+    await wait(3_000);
+
+    assert.equal(host.currentState, "error");
+    assert.ok(states.includes("error"));
+    assert.equal(
+      entries.some((entry) => entry.kind === "agent"),
+      false,
+      "local provider/account details must not be broadcast as conversation"
+    );
+  });
+});
+
 describe("an agent does not answer a message that names nobody", () => {
   test("another agent's ordinary reply does not start a conversation", async () => {
     // Two agents, one question. Exactly one turn each: the question. Neither
@@ -282,6 +324,12 @@ describe("what an agent may do without being asked", () => {
 
   test("bypass is the only way to switch prompting off", () => {
     assert.equal(withSetting("bypassPermissions", permissionMode), "bypassPermissions");
+    assert.equal(withSetting("ask", () => permissionMode("full")), "bypassPermissions");
+  });
+
+  test("a per-agent safe boundary overrides a legacy global bypass", () => {
+    assert.equal(withSetting("bypassPermissions", () => permissionMode("workspace")), "default");
+    assert.equal(withSetting("bypassPermissions", () => permissionMode("readOnly")), "default");
   });
 
   test("an unrecognised value asks rather than assuming permission", () => {
@@ -289,6 +337,7 @@ describe("what an agent may do without being asked", () => {
     // fail towards being asked.
     assert.equal(withSetting("acceptEdits", permissionMode), "default");
     assert.equal(withSetting("", permissionMode), "default");
+    assert.equal(withSetting("bypassPermissions", () => permissionMode("unexpected")), "default");
   });
 });
 

@@ -33,8 +33,12 @@ export interface MyAgent {
   capability?: "workspace" | "conversation";
   /** Which provider runs it — claude-code, grok, kimi, ollama… */
   provider?: string;
+  /** Short, already-honest description of this agent's local trust boundary. */
+  permissions?: string;
   /** Why the relay refused it, when `state` is "refused". */
   refusal?: string;
+  /** Why its local provider failed, when `state` is "error". */
+  failure?: string;
 }
 
 type Node =
@@ -152,7 +156,7 @@ export class RoomsTreeProvider
       )) {
         roots.push({ kind: "myAgent", agent });
       }
-      roots.push({ kind: "hint", text: "Add another agent…", command: "ripieno.addAgent" });
+      roots.push({ kind: "hint", text: "Add agent…", command: "ripieno.addAgent" });
       return roots;
     }
 
@@ -239,8 +243,15 @@ export class RoomsTreeProvider
         )}`;
         item.iconPath = new vscode.ThemeIcon(thinking ? "loading~spin" : "robot");
         // Only your own agents are yours to stop.
-        item.contextValue = mine ? "ripienoAgentAttached" : "ripienoForeignAgent";
+        item.contextValue = mine
+          ? mine.state === "error"
+            ? "ripienoAgentError"
+            : "ripienoAgentAttached"
+          : "ripienoForeignAgent";
         item.id = `attached:${node.agent.id}`;
+        if (mine?.state === "error") {
+          item.tooltip = `${mine.failure ?? "The provider failed."}\n\nUse Retry after fixing the account or provider.`;
+        }
         return item;
       }
 
@@ -322,7 +333,7 @@ function detailSuffix(agent: MyAgent): string {
   const role = agent.primary ? undefined : "only when named";
   const reach = agent.capability === "conversation" ? "no file access" : undefined;
   const provider = agent.provider && agent.provider !== "claude-code" ? agent.provider : undefined;
-  return [provider, agent.model, agent.folder, reach, role]
+  return [provider, agent.model, agent.folder, reach, agent.permissions, role]
     .filter(Boolean)
     .map((bit) => ` · ${bit}`)
     .join("");
@@ -337,6 +348,8 @@ function describeAgent(state: AgentState): string {
     case "refused":
       // The caller that can show the reason overrides this; this is the floor.
       return "refused";
+    case "error":
+      return "needs attention";
     case "thinking":
       return "thinking…";
     default:

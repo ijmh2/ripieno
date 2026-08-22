@@ -13,10 +13,23 @@ import { ToolExecutor, registerProposedDocuments } from "./toolExecutor";
 import { RoomViewProvider } from "./roomView";
 import { AgentHost, type AgentState } from "./agentHost";
 import { RoomsTreeProvider, type MyAgent } from "./roomsTree";
-import { PROVIDERS, isWorkspaceProvider, providerById, secretKeyFor, type ProviderPreset } from "./runners";
+import {
+  PROVIDERS,
+  isWorkspaceProvider,
+  providerById,
+  secretKeyFor,
+  type AgentPermission,
+  type ProviderPreset,
+} from "./runners";
 import { ApprovalBridge } from "./approvals";
 import { WorkspaceFileSystem, WORKSPACE_SCHEME, uriFor } from "./workspaceFs";
 import { WorkspaceTreeProvider, isHostDocument } from "./workspaceTree";
+import {
+  CODEX_SETUP_URL,
+  isCodexLoginReady,
+  isUnusedLegacyBootstrapAgent,
+  nextAgentLabel,
+} from "./agentSetup";
 
 export function activate(context: vscode.ExtensionContext): void {
   const toolExecutor = new ToolExecutor();
@@ -49,6 +62,17 @@ export function activate(context: vscode.ExtensionContext): void {
   let activeRelayUrl: string | undefined;
   let cachedRoomToken: string | undefined;
   const solo = new SoloRelay();
+  let inRoomContext: boolean | undefined;
+
+  /** Keep native Room-title actions aligned with actual relay membership. */
+  function setInRoomContext(inRoom: boolean): void {
+    if (inRoomContext === inRoom) return;
+    inRoomContext = inRoom;
+    void vscode.commands.executeCommand("setContext", "ripieno.inRoom", inRoom);
+  }
+
+  // A saved room is only an invitation to rejoin; activation starts disconnected.
+  setInRoomContext(false);
 
   // A member may run several agents at once — a coder and a reviewer, say —
   // each with its own process, session and label in the transcript.
@@ -64,6 +88,8 @@ export function activate(context: vscode.ExtensionContext): void {
     /** cli providers: the executable and its arguments. */
     command?: string;
     args?: string[];
+    /** The editable trust boundary for this one agent. */
+    permissions?: AgentPermission;
   }
   const specs = new Map<string, AgentSpecRecord>();
 
@@ -137,20 +163,17 @@ export function activate(context: vscode.ExtensionContext): void {
   // never shown nowhere.
   approvals.setPrompt((request) => roomView.requestApproval(request));
 
-  // Restore the agents this member configured, before anything concludes there
-  // are none.
-  //
-  // This used to happen in restoreSession(), at the very end of activate().
-  // ensureSpec ran first, found an empty map, inserted the bootstrap agent and
-  // called saveState — which writes `agents: [...specs.values()]`, so it wrote
-  // its single agent over the saved list. The restore then read back what it
-  // had just destroyed. Every reload silently reset every member to one default
-  // agent: models, briefs, folders and providers all gone, and the persistence
-  // code was correct the whole time.
-  for (const spec of loadState().agents) specs.set(spec.id, spec);
-
-  // Everyone starts with one agent; more can be added.
-  ensureSpec("default", "agent");
+  // Restore configured agents before anything concludes there are none. Older
+  // versions silently inserted one untouched Claude agent. Removing only that
+  // exact, never-used bootstrap record gives the choice back to the user while
+  // preserving every configured or successfully-used agent.
+  const restored = loadState();
+  const discardLegacyBootstrap = isUnusedLegacyBootstrapAgent(
+    restored.agents,
+    restored.sessions
+  );
+  for (const spec of discardLegacyBootstrap ? [] : restored.agents) specs.set(spec.id, spec);
+  if (discardLegacyBootstrap) saveState({ sessions: restored.sessions });
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(RoomViewProvider.viewId, roomView),
@@ -171,6 +194,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("ripieno.leaveRoom", () => leaveRoom()),
     vscode.commands.registerCommand("ripieno.signIn", () => signIn()),
     vscode.commands.registerCommand("ripieno.addAgent", () => addAgent()),
+    vscode.commands.registerCommand("ripieno.customizeAgent", (node?: unknown) =>
+      void customizeAgent(idFromNode(node))
+    ),
     vscode.commands.registerCommand("ripieno.hostWorkspace", () => toggleWorkspaceHost()),
     vscode.commands.registerCommand("ripieno.mountWorkspace", () => mountSharedWorkspace()),
     vscode.commands.registerCommand("ripieno.proposeChange", () => proposeChange()),
@@ -185,18 +211,15 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   /** Tree item ids are prefixed so attached and detached rows stay distinct. */
-  function idFromNode(node?: { id?: string }): string | undefined {
-    const raw = node?.id;
-    return typeof raw === "string" ? raw.replace(/^(attached|detached):/, "") : undefined;
-  }
-
-  function ensureSpec(suffix: string, label: string): string {
-    const id = `local:${suffix}`;
-    if (!specs.has(id)) {
-      specs.set(id, { id, label, providerId: "claude-code" });
-      saveState({});
-    }
-    return id;
+  function idFromNode(node?: unknown): string | undefined {
+    if (!node || typeof node !== "object") return undefined;
+    const candidate = node as { id?: unknown; agent?: { id?: unknown } };
+    const value = candidate.agent?.id ?? candidate.id;
+    if (typeof value !== "string") return undefined;
+    let raw = value.replace(/^(attached|detached):/, "");
+    const ownerPrefix = me ? `${me.handle}::` : undefined;
+    if (ownerPrefix && raw.startsWith(ownerPrefix)) raw = raw.slice(ownerPrefix.length);
+    return raw;
   }
 
   function myAgentsForTree(): MyAgent[] {
@@ -205,12 +228,14 @@ export function activate(context: vscode.ExtensionContext): void {
       label: labelFor(spec.label),
       state: agents.get(spec.id)?.currentState ?? "detached",
       refusal: agents.get(spec.id)?.refusal,
+      failure: agents.get(spec.id)?.failure,
       folder: spec.cwd ? spec.cwd.split("/").pop() : undefined,
       model: spec.model,
       // The first agent answers anything not addressed to someone specific.
       primary: [...specs.keys()][0] === spec.id,
       capability: isWorkspaceProvider(spec.providerId) ? "workspace" : "conversation",
       provider: spec.providerId,
+      permissions: describePermissions(spec),
     }));
   }
 
@@ -219,68 +244,79 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   async function addAgent(): Promise<void> {
-    const name = await vscode.window.showInputBox({
-      title: "Add another agent",
-      prompt: "What is this agent for? Used as its name in the room.",
-      placeHolder: "e.g. reviewer",
-      ignoreFocusOut: true,
-    });
-    if (!name) return;
-
-    const brief = await vscode.window.showInputBox({
-      title: `Brief for "${name}"`,
-      prompt: "Optional standing instruction that makes this agent behave differently from your others.",
-      placeHolder: "e.g. review other people's changes critically; do not write code",
-      ignoreFocusOut: true,
-    });
-
-    const provider = await pickProvider(name);
+    const provider = await pickProvider();
     if (!provider) return;
 
-    const id = `local:${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}:${specs.size}`;
-    let cwd: string | undefined;
-    let model: string | undefined;
-    let baseUrl: string | undefined;
+    // Setup asks only for what the provider strictly needs. A general-purpose
+    // agent gets a useful name, the open workspace and a safe trust boundary;
+    // name, brief, folder, model and permissions all live behind its gear.
+    const name = nextAgentLabel([...specs.values()].map((spec) => spec.label));
+    let id = `local:agent:${Date.now().toString(36)}:${specs.size}`;
+    while (specs.has(id)) id += ":next";
 
     let command: string | undefined;
     let args: string[] | undefined;
 
     if (provider.kind === "claude-code") {
-      cwd = await pickWorkingFolder(name);
-      model = await pickModel(name);
+      if (!(await commandExists("claude"))) {
+        void vscode.window.showWarningMessage(
+          "Claude Code is not available on this editor's PATH. Install and sign in to it, then add the agent again."
+        );
+        return;
+      }
     } else if (provider.kind === "cli") {
-      cwd = await pickWorkingFolder(name);
       command = provider.command;
       if (!command) {
         command = await vscode.window.showInputBox({
-          title: `Command for "${name}"`,
-          prompt: "Executable to run. It must be on your PATH.",
-          placeHolder: "e.g. codex",
+          title: "Add Agent · Local command",
+          prompt: "Executable to run. It must be on this editor's PATH.",
+          placeHolder: "e.g. my-agent-cli",
           ignoreFocusOut: true,
         });
         if (!command) return;
       }
-      // Editable even for presets: these CLIs change their flags, and a wrong
-      // one wedges the agent on a prompt nobody can answer.
-      const rawArgs = await vscode.window.showInputBox({
-        title: `Arguments for "${name}"`,
-        prompt:
-          "Space-separated. {prompt} is replaced with the conversation; omit it to send the prompt on stdin.",
-        value: (provider.args ?? ["{prompt}"]).join(" "),
-        ignoreFocusOut: true,
-      });
-      if (rawArgs === undefined) return;
-      args = rawArgs.split(/\s+/).filter(Boolean);
 
-      if (!(await commandExists(command))) {
-        const go = await vscode.window.showWarningMessage(
-          `"${command}" is not on your PATH. The agent will fail to start until it is installed and signed in.`,
-          "Add anyway",
-          "Cancel"
+      if (provider.id === "codex") {
+        // ChatGPT for macOS bundles Codex even when no `codex` alias reached
+        // VS Code's PATH (GUI-launched editors often inherit a smaller PATH).
+        // Store the working absolute executable so later turns behave exactly
+        // like the readiness check did.
+        command =
+          (await firstAvailableCommand([
+            command,
+            ...(process.platform === "darwin"
+              ? ["/Applications/ChatGPT.app/Contents/Resources/codex"]
+              : []),
+          ])) ?? command;
+        if (!(await ensureCodexReady(command))) return;
+      } else if (!(await commandExists(command))) {
+        void vscode.window.showWarningMessage(
+          `"${command}" is not available on this editor's PATH. Install and sign in to it, then add the agent again.`
         );
-        if (go !== "Add anyway") return;
+        return;
       }
-    } else {
+
+      if (provider.id === "cli-custom") {
+        const rawArgs = await vscode.window.showInputBox({
+          title: "Add Agent · Command arguments",
+          prompt:
+            "Space-separated. {prompt} is replaced with the conversation; omit it to send the prompt on stdin.",
+          value: "{prompt}",
+          ignoreFocusOut: true,
+        });
+        if (rawArgs === undefined) return;
+        args = rawArgs.split(/\s+/).filter(Boolean);
+      } else {
+        // Recommended presets are ready-to-run. Raw flags belong in the custom
+        // path, not in every new user's onboarding.
+        args = provider.args ?? ["{prompt}"];
+      }
+    }
+
+    let model: string | undefined;
+    let baseUrl: string | undefined;
+
+    if (provider.kind === "openai-compatible") {
       baseUrl = provider.baseUrl;
       if (!baseUrl) {
         baseUrl = await vscode.window.showInputBox({
@@ -314,18 +350,264 @@ export function activate(context: vscode.ExtensionContext): void {
     specs.set(id, {
       id,
       label: name,
-      brief: brief || undefined,
-      cwd,
       model,
       providerId: provider.id,
       baseUrl,
       command,
       args,
+      permissions: provider.kind === "openai-compatible" ? undefined : "workspace",
     });
     saveState({});
     roomsTree.setMyAgents(myAgentsForTree());
-    // Attaching straight away is almost always what was meant.
-    if (currentRoom) void attachAgent(id);
+
+    if (currentRoom) {
+      await attachAgent(id);
+    }
+    const status = currentRoom
+      ? `${labelFor(name)} joined as a general-purpose agent.`
+      : `${name} is ready and will attach when you join a room.`;
+    const choice = await vscode.window.showInformationMessage(status, "Customize Agent…");
+    if (choice === "Customize Agent…") await customizeAgent(id);
+  }
+
+  type AgentSetting = "name" | "brief" | "permissions" | "folder" | "model";
+
+  function describePermissions(spec: AgentSpecRecord): string {
+    const kind = providerById(spec.providerId)?.kind;
+    if (kind === "openai-compatible") return "conversation only";
+    if (spec.providerId !== "codex" && kind === "cli") return "managed by CLI";
+
+    const configured = spec.permissions;
+    if (!configured) {
+      if (kind === "claude-code") {
+        const legacy = vscode.workspace
+          .getConfiguration("ripieno")
+          .get<string>("agentPermissions", "ask");
+        return legacy === "bypassPermissions" ? "full access" : "asks for permission";
+      }
+      return "provider default";
+    }
+    if (configured === "full") return "full computer access";
+    if (configured === "readOnly") return "read only";
+    return spec.providerId === "codex" ? "workspace only" : "asks for permission";
+  }
+
+  async function agentToCustomize(id?: string): Promise<AgentSpecRecord | undefined> {
+    if (id) return specs.get(id);
+    if (specs.size === 0) {
+      void vscode.window.showInformationMessage("Ripieno: add an agent first.");
+      return undefined;
+    }
+    if (specs.size === 1) return [...specs.values()][0];
+
+    type AgentItem = vscode.QuickPickItem & { spec: AgentSpecRecord };
+    const picked = await vscode.window.showQuickPick<AgentItem>(
+      [...specs.values()].map((spec) => ({
+        label: labelFor(spec.label),
+        description: providerById(spec.providerId)?.label ?? spec.providerId,
+        detail: `${spec.brief ?? "General-purpose"} · ${describePermissions(spec)}`,
+        spec,
+      })),
+      { title: "Customize Agent", placeHolder: "Choose one of your agents", ignoreFocusOut: true }
+    );
+    return picked?.spec;
+  }
+
+  async function customizeAgent(id?: string): Promise<void> {
+    const spec = await agentToCustomize(id);
+    if (!spec) return;
+
+    type SettingItem = vscode.QuickPickItem & { setting: AgentSetting };
+    const provider = providerById(spec.providerId);
+    const settings: SettingItem[] = [
+      {
+        label: "$(edit) Name",
+        description: spec.label,
+        detail: "How people address this agent in the room",
+        setting: "name",
+      },
+      {
+        label: "$(note) Brief",
+        description: spec.brief || "None — general-purpose",
+        detail: "Optional standing instructions; you can add or remove them any time",
+        setting: "brief",
+      },
+      {
+        label: "$(shield) Permissions",
+        description: describePermissions(spec),
+        detail: "Change what this agent may do on your machine",
+        setting: "permissions",
+      },
+      {
+        label: "$(folder) Working folder",
+        description: spec.cwd ?? "Current workspace",
+        detail: "Choose which project this agent works in",
+        setting: "folder",
+      },
+    ];
+    if (provider?.kind === "claude-code") {
+      settings.push({
+        label: "$(symbol-method) Model",
+        description: spec.model ?? "Provider default",
+        detail: "Choose Opus, Sonnet, Haiku or your configured default",
+        setting: "model",
+      });
+    }
+
+    const picked = await vscode.window.showQuickPick(settings, {
+      title: `Customize ${labelFor(spec.label)}`,
+      placeHolder: "Choose what to adjust",
+      ignoreFocusOut: true,
+    });
+    if (!picked) return;
+
+    if (picked.setting === "name") {
+      const value = await vscode.window.showInputBox({
+        title: `Rename ${labelFor(spec.label)}`,
+        prompt: "This is how people and agents will address it in the room.",
+        value: spec.label,
+        ignoreFocusOut: true,
+        validateInput: (raw) => {
+          const name = raw.trim();
+          if (!name) return "Enter a name for the agent.";
+          if (name.length > 80) return "Keep the name to 80 characters or fewer.";
+          if (
+            [...specs.values()].some(
+              (other) => other.id !== spec.id && other.label.toLocaleLowerCase() === name.toLocaleLowerCase()
+            )
+          ) {
+            return "Each of your agents needs a distinct name.";
+          }
+          return undefined;
+        },
+      });
+      if (value === undefined || value.trim() === spec.label) return;
+      spec.label = value.trim();
+      await persistAgentChange(spec, true);
+      return;
+    }
+
+    if (picked.setting === "brief") {
+      const value = await vscode.window.showInputBox({
+        title: `Brief ${labelFor(spec.label)}`,
+        prompt: "Leave empty for a normal, general-purpose agent.",
+        placeHolder: "e.g. Review changes critically; do not write code",
+        value: spec.brief ?? "",
+        ignoreFocusOut: true,
+        validateInput: (raw) =>
+          raw.length > 2_000 ? "Keep the brief to 2,000 characters or fewer." : undefined,
+      });
+      if (value === undefined || value.trim() === (spec.brief ?? "")) return;
+      spec.brief = value.trim() || undefined;
+      await persistAgentChange(spec, true);
+      return;
+    }
+
+    if (picked.setting === "folder") {
+      const folder = await pickWorkingFolder(spec.label);
+      if (!folder || folder.cwd === spec.cwd) return;
+      spec.cwd = folder.cwd;
+      await persistAgentChange(spec, true);
+      return;
+    }
+
+    if (picked.setting === "model") {
+      const model = await pickModel(spec.label);
+      if (!model || model.model === spec.model) return;
+      spec.model = model.model;
+      await persistAgentChange(spec, true);
+      return;
+    }
+
+    const permission = await pickAgentPermissions(spec);
+    if (!permission || permission === spec.permissions) return;
+    if (permission === "full" && spec.permissions !== "full") {
+      const confirmed = await vscode.window.showWarningMessage(
+        `Give ${labelFor(spec.label)} full computer access?`,
+        {
+          modal: true,
+          detail:
+            "This removes the sandbox or approval checks. Anyone who can speak in the room can steer this agent, so only enable it in a room and workspace you fully trust.",
+        },
+        "Enable Full Access"
+      );
+      if (confirmed !== "Enable Full Access") return;
+    }
+    spec.permissions = permission;
+    await persistAgentChange(spec, false);
+  }
+
+  async function pickAgentPermissions(
+    spec: AgentSpecRecord
+  ): Promise<AgentPermission | undefined> {
+    type PermissionItem = vscode.QuickPickItem & { value: AgentPermission };
+    let choices: PermissionItem[];
+    if (spec.providerId === "codex") {
+      choices = [
+        {
+          label: "$(shield) Workspace only",
+          description: "Recommended",
+          detail: "Can inspect and edit this project; access outside it is denied",
+          value: "workspace",
+        },
+        {
+          label: "$(lock) Read only",
+          detail: "Can inspect the project and reply, but cannot edit files or run commands",
+          value: "readOnly",
+        },
+        {
+          label: "$(warning) Full computer access",
+          detail: "No sandbox and no approval prompts — use only in a room you fully trust",
+          value: "full",
+        },
+      ];
+    } else if (providerById(spec.providerId)?.kind === "claude-code") {
+      choices = [
+        {
+          label: "$(shield) Ask before side effects",
+          description: "Recommended",
+          detail: "File writes and commands are sent to you as approval cards",
+          value: "workspace",
+        },
+        {
+          label: "$(warning) Full computer access",
+          detail: "Runs without asking — use only in a room you fully trust",
+          value: "full",
+        },
+      ];
+    } else {
+      const message =
+        providerById(spec.providerId)?.kind === "openai-compatible"
+          ? `${labelFor(spec.label)} is conversation-only and cannot access local files through Ripieno.`
+          : `${labelFor(spec.label)} uses a CLI whose permissions are controlled by that CLI's own configuration.`;
+      void vscode.window.showInformationMessage(message);
+      return undefined;
+    }
+    return (
+      await vscode.window.showQuickPick(choices, {
+        title: `Permissions for ${labelFor(spec.label)}`,
+        placeHolder: `Current: ${describePermissions(spec)}`,
+        ignoreFocusOut: true,
+      })
+    )?.value;
+  }
+
+  async function persistAgentChange(spec: AgentSpecRecord, freshSession: boolean): Promise<void> {
+    const wasAttached = agents.has(spec.id);
+    if (wasAttached) detachAgent(spec.id);
+
+    if (freshSession) {
+      const sessions = { ...loadState().sessions };
+      delete sessions[spec.id];
+      saveState({ sessions });
+    } else {
+      saveState({});
+    }
+    roomsTree.setMyAgents(myAgentsForTree());
+    if (wasAttached) await attachAgent(spec.id);
+    void vscode.window.showInformationMessage(
+      `${labelFor(spec.label)} updated${wasAttached ? " and restarted" : ""}.`
+    );
   }
 
   /**
@@ -481,13 +763,124 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   }
 
-  /** Is this executable actually available? A missing CLI fails silently otherwise. */
-  async function commandExists(command: string): Promise<boolean> {
+  interface CommandProbe {
+    found: boolean;
+    code: number | null;
+    output: string;
+  }
+
+  /** Run a bounded, non-interactive readiness check without invoking a shell. */
+  function probeCommand(command: string, args: string[], timeoutMs = 8_000): Promise<CommandProbe> {
     return new Promise((resolve) => {
-      const probe = spawn("which", [command], { stdio: "ignore" });
-      probe.on("close", (code) => resolve(code === 0));
-      probe.on("error", () => resolve(false));
+      let output = "";
+      let settled = false;
+      const child = spawn(command, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      const finish = (result: CommandProbe) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        child.kill();
+        finish({ found: true, code: null, output });
+      }, timeoutMs);
+      child.stdout?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+      child.stderr?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+      child.on("error", () => finish({ found: false, code: null, output }));
+      child.on("close", (code) => finish({ found: true, code, output }));
     });
+  }
+
+  /** Is this executable available to the extension host on every desktop OS? */
+  async function commandExists(command: string): Promise<boolean> {
+    return (await probeCommand(command, ["--version"])).found;
+  }
+
+  async function firstAvailableCommand(candidates: readonly string[]): Promise<string | undefined> {
+    for (const candidate of candidates) {
+      if (await commandExists(candidate)) return candidate;
+    }
+    return undefined;
+  }
+
+  async function codexIsReady(command: string): Promise<boolean> {
+    const status = await probeCommand(command, ["login", "status"]);
+    return status.found && isCodexLoginReady(status.code, status.output);
+  }
+
+  async function waitForCodexLogin(
+    command: string,
+    token: vscode.CancellationToken
+  ): Promise<boolean> {
+    const deadline = Date.now() + 5 * 60_000;
+    while (!token.isCancellationRequested && Date.now() < deadline) {
+      if (await codexIsReady(command)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+    }
+    return false;
+  }
+
+  /**
+   * ChatGPT is used through Codex CLI. Installation and login happen in the
+   * provider's own trusted flow; Ripieno checks the result before saving an
+   * agent, so an unconfigured account never enters the room as a broken bot.
+   */
+  async function ensureCodexReady(command: string): Promise<boolean> {
+    if (!(await commandExists(command))) {
+      const choice = await vscode.window.showWarningMessage(
+        "Codex CLI is needed to use your ChatGPT account in Ripieno.",
+        { modal: true, detail: "Install Codex from OpenAI's guide, then choose Add Agent again." },
+        "Open setup guide"
+      );
+      if (choice === "Open setup guide") {
+        await vscode.env.openExternal(vscode.Uri.parse(CODEX_SETUP_URL));
+      }
+      return false;
+    }
+
+    if (await codexIsReady(command)) return true;
+
+    const choice = await vscode.window.showInformationMessage(
+      "Codex is installed, but it is not signed in.",
+      {
+        modal: true,
+        detail:
+          "Sign in with ChatGPT in a terminal. Ripieno will verify the login and continue automatically.",
+      },
+      "Sign in with ChatGPT",
+      "Open setup guide"
+    );
+    if (choice === "Open setup guide") {
+      await vscode.env.openExternal(vscode.Uri.parse(CODEX_SETUP_URL));
+      return false;
+    }
+    if (choice !== "Sign in with ChatGPT") return false;
+
+    const terminal = vscode.window.createTerminal({ name: "Ripieno · ChatGPT sign in" });
+    terminal.show();
+    // Both values come from the fixed Codex preset/known app path, never from a
+    // webview message. Quote the app path in case a future installation path
+    // contains spaces.
+    const loginCommand = command === "codex" ? "codex login" : `"${command}" login`;
+    terminal.sendText(loginCommand, true);
+    const ready = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Ripieno: waiting for ChatGPT sign-in…",
+        cancellable: true,
+      },
+      (_progress, token) => waitForCodexLogin(command, token)
+    );
+    if (!ready) {
+      void vscode.window.showWarningMessage(
+        "ChatGPT sign-in was not detected. Finish signing in, then choose Add Agent again."
+      );
+    }
+    return ready;
   }
 
   /**
@@ -497,17 +890,34 @@ export function activate(context: vscode.ExtensionContext): void {
    * same terms as a Claude one — except for file access, which only a local
    * Claude Code agent has. The picker says so rather than leaving it implied.
    */
-  async function pickProvider(name: string): Promise<ProviderPreset | undefined> {
-    // Wrapped rather than spread: a preset's `kind` would collide with
-    // QuickPickItem.kind and turn every entry into a separator.
-    const picked = await vscode.window.showQuickPick(
-      PROVIDERS.map((preset) => ({
-        label: preset.label,
-        description: preset.hint,
-        preset,
-      })),
-      { title: `What should run "${name}"?`, ignoreFocusOut: true }
+  async function pickProvider(): Promise<ProviderPreset | undefined> {
+    type ProviderItem = vscode.QuickPickItem & { preset?: ProviderPreset };
+    const item = (preset: ProviderPreset): ProviderItem => ({
+      label: preset.id === "codex" ? `$(sparkle) ${preset.label}` : preset.label,
+      description: preset.id === "codex" ? "Recommended" : undefined,
+      detail: preset.hint,
+      preset,
+    });
+    const byId = (id: string) => PROVIDERS.find((provider) => provider.id === id);
+    const codex = byId("codex");
+    const local = [byId("claude-code"), byId("gemini"), byId("cli-custom")].filter(
+      (provider): provider is ProviderPreset => Boolean(provider)
     );
+    const api = PROVIDERS.filter(
+      (provider) => provider.kind === "openai-compatible"
+    );
+    const items: ProviderItem[] = [
+      { label: "Uses an account you already have", kind: vscode.QuickPickItemKind.Separator },
+      ...(codex ? [item(codex)] : []),
+      ...local.map(item),
+      { label: "API or local endpoint", kind: vscode.QuickPickItemKind.Separator },
+      ...api.map(item),
+    ];
+    const picked = await vscode.window.showQuickPick(items, {
+      title: "Add Agent · Choose what powers it",
+      placeHolder: "ChatGPT / Codex is the easiest way to start",
+      ignoreFocusOut: true,
+    });
     return picked?.preset;
   }
 
@@ -519,12 +929,12 @@ export function activate(context: vscode.ExtensionContext): void {
     { label: "$(gear) Default", description: "whatever your Claude Code is configured to use", value: "" },
   ];
 
-  async function pickModel(name: string): Promise<string | undefined> {
+  async function pickModel(name: string): Promise<{ model?: string } | undefined> {
     const choice = await vscode.window.showQuickPick(MODELS, {
       title: `Which model should "${name}" run on?`,
       ignoreFocusOut: true,
     });
-    return choice?.value || undefined;
+    return choice ? { model: choice.value || undefined } : undefined;
   }
 
   /**
@@ -625,7 +1035,9 @@ export function activate(context: vscode.ExtensionContext): void {
    * right most of the time, but an agent can be pointed at a different — or
    * brand-new — directory, so one room can span several projects.
    */
-  async function pickWorkingFolder(name: string): Promise<string | undefined> {
+  async function pickWorkingFolder(
+    name: string
+  ): Promise<{ cwd?: string } | undefined> {
     const here = vscode.workspace.workspaceFolders?.[0];
     const choice = await vscode.window.showQuickPick(
       [
@@ -641,7 +1053,8 @@ export function activate(context: vscode.ExtensionContext): void {
       ],
       { title: `Where should "${name}" work?`, ignoreFocusOut: true }
     );
-    if (!choice || choice.label.startsWith("$(folder) ")) return undefined;
+    if (!choice) return undefined;
+    if (choice.label.startsWith("$(folder) ")) return {};
 
     const picked = await vscode.window.showOpenDialog({
       canSelectFolders: true,
@@ -650,7 +1063,7 @@ export function activate(context: vscode.ExtensionContext): void {
       openLabel: `Use as ${name}'s project`,
       title: `Working folder for "${name}"`,
     });
-    return picked?.[0]?.fsPath;
+    return picked?.[0] ? { cwd: picked[0].fsPath } : undefined;
   }
 
   /**
@@ -659,7 +1072,13 @@ export function activate(context: vscode.ExtensionContext): void {
    */
   async function attachAgent(id?: string): Promise<void> {
     const spec = id ? specs.get(id) : [...specs.values()][0];
-    if (!spec) return;
+    // The room's empty-state button means "get me an agent", whether one has
+    // already been configured or not. Falling through to setup removes the
+    // old no-op that made a first-time user's most obvious button do nothing.
+    if (!spec) {
+      await addAgent();
+      return;
+    }
     if (!currentRoom || !me) {
       vscode.window.showInformationMessage("Ripieno: join a room first.");
       return;
@@ -671,7 +1090,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // RelayClient does not retry a 4003. Attaching again therefore has to
       // build a new one; returning here would make the tree offer an action
       // that silently does nothing.
-      if (existing.currentState !== "refused") return;
+      if (existing.currentState !== "refused" && existing.currentState !== "error") return;
       existing.dispose();
       agents.delete(spec.id);
     }
@@ -700,6 +1119,7 @@ export function activate(context: vscode.ExtensionContext): void {
       baseUrl: spec.baseUrl,
       command: spec.command,
       args: spec.args,
+      permissions: spec.permissions,
       apiKey,
       resumeSessionId: loadState().sessions[spec.id],
       onSession: (agentId, sessionId) =>
@@ -947,11 +1367,15 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.env.uriScheme
     );
     await vscode.env.clipboard.writeText(link);
-    void vscode.window.showInformationMessage(
-      roomToken()
-        ? "Invite link copied — it contains this room's token, so share it like a password."
-        : "Invite link copied."
-    );
+    const message = roomToken()
+      ? "Invite link copied — it contains this room's token, so share it like a password."
+      : "Invite link copied.";
+    if (specs.size === 0) {
+      const next = await vscode.window.showInformationMessage(message, "Add an agent");
+      if (next === "Add an agent") await addAgent();
+    } else {
+      void vscode.window.showInformationMessage(message);
+    }
   }
 
   /**
@@ -1042,6 +1466,7 @@ export function activate(context: vscode.ExtensionContext): void {
     githubToken = identity.githubToken;
 
     relay?.dispose();
+    setInRoomContext(false);
 
     // A new room means the old agents are watching the wrong conversation.
     detachAll();
@@ -1057,6 +1482,7 @@ export function activate(context: vscode.ExtensionContext): void {
       token: roomToken(),
       githubToken,
       onEvicted: (reason) => {
+        setInRoomContext(false);
         // Two machines resolving to one handle is the usual cause, and it is
         // invisible otherwise — the room just churns.
         // The reason comes first: it is the only part that varies, and anything
@@ -1087,6 +1513,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   function leaveRoom(): void {
     if (!relay) {
+      setInRoomContext(false);
       vscode.window.showInformationMessage("Ripieno: not connected to a room.");
       return;
     }
@@ -1094,6 +1521,7 @@ export function activate(context: vscode.ExtensionContext): void {
     relay.dispose();
     relay = undefined;
     currentRoom = undefined;
+    setInRoomContext(false);
     roomView.reset();
     roomsTree.setRoom(undefined, "byo");
     roomsTree.setConnected(false);
@@ -1115,6 +1543,7 @@ export function activate(context: vscode.ExtensionContext): void {
   function handleServerMsg(msg: ServerMsg): void {
     switch (msg.t) {
       case "joined":
+        setInRoomContext(true);
         roomView.setJoined(msg.room, msg.you, msg.roster, msg.transcript, msg.mode, msg.actions ?? []);
         roomsTree.setRoom(msg.room, msg.mode, msg.you.handle);
         roomsTree.setRoster(msg.roster, msg.workspaceHost);
