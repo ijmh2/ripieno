@@ -32,20 +32,20 @@
   <section class="hero">
     <div class="hero-copy">
       <p class="kicker">VS&nbsp;Code · Cursor · Windsurf · VSCodium</p>
-      <h1>Several people.<br>Several AI agents.<br>One codebase.</h1>
+      <h1>AI coding agents<br>are single-player.<br>This makes them<br>multiplayer.</h1>
       <p class="lede">
-        A shared room inside your editor. Everyone brings their own coding agent, and every
-        message, file write and command carries the name of whoever's agent did it — on
-        whichever machine it ran.
+        A shared room in your editor where your whole team works with their own agents on one
+        project. Everyone brings their own Claude Code, Codex or Gemini — you all see the same
+        conversation, steer each other's agents, and hand work between them.
       </p>
       <div class="cta">
         <a class="btn primary" href="#install">Install the Preview</a>
         <a class="btn secondary" href="https://github.com/ijmh2/ripieno">Read the source</a>
       </div>
       <ul class="cta-facts">
+        <li>Bring your own agent — nothing shared, nothing resold</li>
+        <li>Several people and several agents in one room</li>
         <li>Self-hosted, or no host at all</li>
-        <li>Bring your own agent — no key resold</li>
-        <li>Free for personal and internal use</li>
       </ul>
     </div>
     <div class="hero-shot">
@@ -57,30 +57,19 @@
     </div>
   </section>
 
-  <!-- ================= PROOF BAND ================= -->
+  <!-- ================= THE PROBLEM ================= -->
   <section class="band">
     <div class="band-inner">
-      <h2>That column normally holds one name</h2>
+      <h2>Every agent you run is alone in a room</h2>
       <p class="band-lede">
-        Whoever's laptop ran the commit. Here, three agents belonging to three different
-        people write to one repository at the same time.
+        Your agent has your terminal, your files and your context. Your colleague's has theirs.
+        Neither can see the other, nobody can watch what either is doing, and there is no way to
+        hand a job from one to the other. Every coding agent shipped so far is single-player.
       </p>
-      <div class="term" role="img" aria-label="git log output listing five commits whose author column holds three different agent names: Alex's agent, Sam's reviewer and Mira's coder.">
-        <div class="term-bar"><span></span><span></span><span></span></div>
-        <pre><code><span class="p">$</span> npm run demo:provenance
-
-<span class="p">$</span> git log --pretty=<span class="s">'%&lt;(16)%an  %s'</span> -5
-
-  <span class="who">Alex's agent</span>      Mention the limits in the README
-  <span class="who">Sam's reviewer</span>    Write down both limits
-  <span class="who">Mira's coder</span>      Bound the transcript
-  <span class="who">Sam's reviewer</span>    Cover the rate limit
-  <span class="who">Mira's coder</span>      Add rate limit to relay</code></pre>
-      </div>
       <p class="band-note">
-        Real output — a script in the repository, running the actual code against a real
-        repository, writing concurrently rather than in turn. Git serialises on
-        <code>.git/index.lock</code>, and losing that race is how five writes in six once vanished.
+        The naive fix is a shared login, which is worse: one anonymous view of a team, unable to
+        tell agreement from disagreement, whose preferences to honour, or whose filesystem the
+        next write lands on.
       </p>
     </div>
   </section>
@@ -88,16 +77,16 @@
   <!-- ================= HOW IT WORKS ================= -->
   <section class="how">
     <div class="section-head">
-      <h2>Nothing runs in the middle</h2>
+      <h2>One room. Everyone's own agent.</h2>
       <p>
-        Each person's agent runs on their own machine, under their own permissions, on their
-        own subscription. The relay routes messages and keeps track of who said what. It holds
-        no code and executes nothing.
+        Each person runs their own agent, on their own machine, on their own subscription. The
+        room is the shared part — one conversation everyone and every agent is in. The relay
+        routes it and executes nothing.
       </p>
     </div>
 
     <svg class="diagram" viewBox="0 0 760 340" role="img"
-         aria-label="Three machines, each running an editor and that person's own agent, all connected to one relay you operate. Agents and files stay on the machines; the relay only routes messages and maintains authorship.">
+         aria-label="Three machines, each running an editor and that person's own agent, all connected to one relay you operate. Agents and files stay on the machines; the relay only routes the shared conversation.">
       <g class="dg-node">
         <rect x="8"   y="16" width="216" height="96" rx="9"/>
         <rect x="272" y="16" width="216" height="96" rx="9"/>
@@ -109,9 +98,9 @@
         <text x="556" y="45">@mellery</text>
       </g>
       <g class="dg-sub">
-        <text x="28"  y="68">editor + their agent</text>
-        <text x="292" y="68">editor + their agent</text>
-        <text x="556" y="68">editor + their agent</text>
+        <text x="28"  y="68">their agent, their plan</text>
+        <text x="292" y="68">their agent, their plan</text>
+        <text x="556" y="68">their agent, their plan</text>
         <text x="28"  y="90">their files, their keys</text>
         <text x="292" y="90">their files, their keys</text>
         <text x="556" y="90">their files, their keys</text>
@@ -123,86 +112,30 @@
         <path d="M644 112 L644 168 Q644 180 632 180 L392 180"/>
         <path d="M380 180 L380 226"/>
       </g>
-      <g class="dg-dot">
-        <circle cx="380" cy="180" r="3.5"/>
-      </g>
+      <g class="dg-dot"><circle cx="380" cy="180" r="3.5"/></g>
 
       <g class="dg-relay">
         <rect x="230" y="226" width="300" height="86" rx="9"/>
-        <text class="dg-relay-t" x="256" y="256">your relay</text>
-        <text class="dg-sub" x="256" y="278">routes messages · maintains authorship</text>
+        <text class="dg-relay-t" x="256" y="256">the room</text>
+        <text class="dg-sub" x="256" y="278">one shared conversation</text>
         <text class="dg-sub" x="256" y="298">holds no code · runs nothing</text>
       </g>
 
       <g class="dg-note">
-        <text x="8"   y="140">agents execute here</text>
+        <text x="8"   y="140">agents run here</text>
         <text x="556" y="140">and only here</text>
       </g>
     </svg>
   </section>
 
-  <!-- ================= FEATURES ================= -->
-  <section class="feature">
-    <div class="feature-copy">
-      <p class="eyebrow">Attribution</p>
-      <h2>Every action names its author and its machine</h2>
-      <p>
-        That second column does not normally exist. It is the difference between knowing an
-        agent changed a file and knowing <em>whose</em> agent changed it, <em>where</em>.
-      </p>
-      <p class="muted">
-        Roles are enforced in the relay, not by hiding buttons — anyone can send the message a
-        hidden button would have sent.
-      </p>
-    </div>
-    <div class="feature-visual">
-      <div class="ui-card">
-        <div class="ui-head">Work · 3 · 1 failed</div>
-        <ul class="log">
-          <li><span class="ok">✓</span><span><b>Mira's coder</b> wrote <code>room.ts</code> <span class="on">on @mellery</span></span></li>
-          <li><span class="ok">✓</span><span><b>Kate's agent</b> read <code>latest.json</code> <span class="on">on @swhitfield</span></span></li>
-          <li><span class="bad">✕</span><span><b>Sam's reviewer</b> ran <code>npm test</code> <span class="on">on @swhitfield</span> — exit 1</span></li>
-        </ul>
-      </div>
-    </div>
-  </section>
-
-  <section class="feature reverse">
-    <div class="feature-copy">
-      <p class="eyebrow">Consent</p>
-      <h2>Nothing reaches your disk unasked</h2>
-      <p>
-        When somebody else's agent wants to write a file or run a command on your machine, it
-        stops and asks — naming the agent, its owner, and the command.
-      </p>
-      <p class="muted">
-        A refusal is attributed too. A specific person declined a specific action, and the room
-        says so out loud rather than the agent failing into silence.
-      </p>
-    </div>
-    <div class="feature-visual">
-      <div class="ui-card approval">
-        <div class="ui-title">Mira Ellery's agent wants to run Bash</div>
-        <code class="cmd">npm test -- --runInBand</code>
-        <div class="ui-btns">
-          <span class="ui-btn pri">Allow once</span>
-          <span class="ui-btn sec">Deny</span>
-        </div>
-        <p class="ui-note">
-          Other members can influence this request. This summary does not show the full exact
-          input, so approval can apply to this run only.
-        </p>
-      </div>
-    </div>
-  </section>
-
+  <!-- ================= BYO ================= -->
   <section class="feature">
     <div class="feature-copy">
       <p class="eyebrow">Bring your own</p>
-      <h2>The room resells nobody's inference</h2>
+      <h2>Everyone uses the agent they already pay for</h2>
       <p>
-        Everyone attaches an agent they already pay for. Nobody shares a login, which is what
-        makes attribution mean anything in the first place.
+        No shared login, no pooled key, no seat you buy from me. You attach Claude Code on your
+        plan, your colleague attaches Codex on theirs, and both are in the same room.
       </p>
       <p class="muted">
         Run several at once — a coder and a reviewer — each with its own name, brief, model and
@@ -220,13 +153,74 @@
     </div>
   </section>
 
+  <!-- ================= WATCH & REDIRECT ================= -->
+  <section class="feature reverse">
+    <div class="feature-copy">
+      <p class="eyebrow">Together</p>
+      <h2>Watch someone else's agent work, and steer it</h2>
+      <p>
+        Everyone sees the same conversation. When Sam's agent starts down the wrong path, Kate
+        can say so — in the room, mid-task — and it acts on the correction because it knows Kate
+        is not Sam.
+      </p>
+      <p class="muted">
+        Address a specific person's agent with <code>@</code>, or ask the room. Several agents can
+        answer one question without answering as one voice.
+      </p>
+    </div>
+    <div class="feature-visual">
+      <div class="ui-card">
+        <div class="roster">
+          <span class="pres you">● You</span>
+          <span class="pres sam">● Sam</span>
+          <span class="pres busy">◐ Sam's coder</span>
+          <span class="pres idle">○ your reviewer</span>
+        </div>
+        <div class="chat">
+          <div class="cm sam"><b>Sam</b>use close-to-close returns</div>
+          <div class="cm kate"><b>Kate</b>careful — the 18th had a half-day</div>
+          <div class="cm bot"><b>Sam's coder</b>Good catch, Kate. Re-running with an explicit half-day mask.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= HANDOFF ================= -->
+  <section class="feature">
+    <div class="feature-copy">
+      <p class="eyebrow">Handoff</p>
+      <h2>Give the job to somebody else's agent</h2>
+      <p>
+        Finish for the day and pass the work on. The task, the context and the history go with
+        it, and the person receiving it accepts with their own agent rather than inheriting
+        yours.
+      </p>
+      <p class="muted">
+        Offer, accept, decline, cancel or retry — the room keeps the state, so a closed laptop
+        does not lose the thread.
+      </p>
+    </div>
+    <div class="feature-visual">
+      <div class="ui-card handoff">
+        <div class="ui-head">Handoff offered</div>
+        <p class="ho-task">“Finish the half-day mask and get the suite green”</p>
+        <p class="ho-meta"><b>Sam's coder</b> → <b>@mellery</b></p>
+        <div class="ui-btns">
+          <span class="ui-btn pri">Accept with my coder</span>
+          <span class="ui-btn sec">Decline</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= SELF-HOSTED ================= -->
   <section class="feature reverse">
     <div class="feature-copy">
       <p class="eyebrow">Self-hosted</p>
       <h2>There is no service in the middle</h2>
       <p>
-        Solo mode runs the relay inside your editor — nothing deployed, no account, no token.
-        A shared room runs on a relay you operate, and it tells you everything you need on boot.
+        Solo mode runs the room inside your editor — nothing deployed, no account, no token. A
+        shared room runs on a relay you operate, and it tells you everything you need on boot.
       </p>
       <p class="muted">
         There is no hosted option because a relay sees every message and routes every tool call.
@@ -242,9 +236,35 @@
 
     URL     <span class="s">wss://relay.example.com</span>
     Token   <span class="who">dd0bce7f…50fe0f1</span>  (generated, saved)
-    Room    general
-    Members verified against GitHub</code></pre>
+    Room    general</code></pre>
       </div>
+    </div>
+  </section>
+
+  <!-- ================= PROOF ================= -->
+  <section class="band">
+    <div class="band-inner">
+      <h2>And it really is several agents</h2>
+      <p class="band-lede">
+        Not one agent with several people talking to it. Three agents belonging to three
+        different people, writing to one repository at the same time.
+      </p>
+      <div class="term" role="img" aria-label="git log output listing five commits whose author column holds three different agent names: Alex's agent, Sam's reviewer and Mira's coder.">
+        <div class="term-bar"><span></span><span></span><span></span></div>
+        <pre><code><span class="p">$</span> git log --pretty=<span class="s">'%&lt;(16)%an  %s'</span> -5
+
+  <span class="who">Alex's agent</span>      Mention the limits in the README
+  <span class="who">Sam's reviewer</span>    Write down both limits
+  <span class="who">Mira's coder</span>      Bound the transcript
+  <span class="who">Sam's reviewer</span>    Cover the rate limit
+  <span class="who">Mira's coder</span>      Add rate limit to relay</code></pre>
+      </div>
+      <p class="band-note">
+        Real output from <code>npm run demo:provenance</code>, writing concurrently rather than in
+        turn — git serialises on <code>.git/index.lock</code>, and losing that race is how five
+        writes in six once vanished. Every action in the room is recorded the same way, naming
+        the agent and the machine it ran on.
+      </p>
     </div>
   </section>
 

@@ -329,3 +329,39 @@ ol.steps pre { margin: 0 0 10px; font-size: 12.5px; }
   .band { padding-block: 56px; }
   .foot-cols { grid-template-columns: 1fr; gap: 28px; }
 }
+
+/* ---------------- roster + chat ---------------- */
+
+.roster { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.pres {
+  font-size: 11px; font-weight: 600;
+  padding: 3px 9px; border-radius: 11px;
+  background: var(--surface-2); color: var(--ink-muted);
+}
+.pres.you  { background: #e3f4f2; color: #0d7f74; }
+.pres.sam  { background: #e8f6ed; color: #2c8a54; }
+.pres.busy { background: var(--surface-2); color: var(--ink-muted); }
+.pres.idle { background: var(--surface-2); color: var(--ink-faint); }
+
+.chat { display: grid; gap: 9px; }
+.cm {
+  border-left: 3px solid var(--rule-strong);
+  padding: 7px 0 7px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.cm b { display: block; font-size: 11px; font-weight: 700; margin-bottom: 2px; }
+.cm.sam  { border-left-color: #2c8a54; } .cm.sam b  { color: #2c8a54; }
+.cm.kate { border-left-color: #c53b91; } .cm.kate b { color: #c53b91; }
+.cm.bot  { border-left-color: var(--rule-strong); background: var(--surface-2); border-radius: 0 4px 4px 0; }
+.cm.bot b { color: var(--ink-faint); }
+
+/* ---------------- handoff ---------------- */
+
+.ui-card.handoff { border-left: 3px solid var(--brass); }
+.ho-task {
+  font-size: 15px; font-weight: 600; margin: 0 0 8px;
+  line-height: 1.4; max-width: none;
+}
+.ho-meta { font-size: 12.5px; color: var(--ink-muted); margin: 0 0 14px; max-width: none; }
+.ho-meta b { color: var(--ink); font-weight: 650; }
