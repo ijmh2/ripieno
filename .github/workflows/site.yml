@@ -1,0 +1,49 @@
+# Publish the documentation site.
+#
+# Deliberately manual. Nothing here fires on a push until somebody decides this
+# is how the site is hosted — and on GitHub's free plan, Pages requires a public
+# repository, so a private repo needs Cloudflare Pages or Netlify instead. Both
+# take the same `site/dist` directory; only this file is host-specific.
+#
+# Set the RIPIENO_SITE_DOMAIN variable to have the build write a CNAME.
+name: Site
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run site
+        env:
+          RIPIENO_SITE_DOMAIN: ${{ vars.RIPIENO_SITE_DOMAIN }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -13,3 +13,6 @@ out/
 .mcp.json
 # Per-machine Claude Code overrides. Never shared; often holds local paths.
 .claude/settings.local.json
+
+# Generated documentation site.
+site/dist/

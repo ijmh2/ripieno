@@ -1,0 +1,247 @@
+/*
+ * Documentation styling. No webfonts and no external requests: the pages are
+ * about running a relay you control, and loading a stranger's font to say so
+ * would be a small hypocrisy.
+ */
+
+:root {
+  --ground: #f6f6f4;
+  --surface: #ffffff;
+  --surface-2: #ecedea;
+  --ink: #17191a;
+  --ink-muted: #565c59;
+  --ink-faint: #828884;
+  --rule: #dedfdb;
+  --rule-strong: #c6c8c3;
+  --brass: #8a5e24;
+  --brass-soft: #f1e7d7;
+
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #131513;
+    --surface: #1a1d1b;
+    --surface-2: #212523;
+    --ink: #e7e9e5;
+    --ink-muted: #9ba09c;
+    --ink-faint: #6f7572;
+    --rule: #2a2e2b;
+    --rule-strong: #3c413d;
+    --brass: #cc9a4f;
+    --brass-soft: #2a2318;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+}
+.skip:focus {
+  left: 12px;
+  top: 12px;
+  z-index: 10;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 10px 16px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+}
+
+/* ---------- chrome ---------- */
+
+.top {
+  display: flex;
+  align-items: baseline;
+  gap: 28px;
+  flex-wrap: wrap;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 28px 24px 20px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.wordmark {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.top nav {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 14px;
+}
+.top nav a {
+  color: var(--ink-muted);
+  text-decoration: none;
+  padding-bottom: 2px;
+  border-bottom: 1.5px solid transparent;
+}
+.top nav a:hover { color: var(--ink); }
+.top nav a[aria-current="page"] {
+  color: var(--ink);
+  border-bottom-color: var(--brass);
+}
+
+main {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+}
+
+.foot {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 26px 24px 60px;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-faint);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+.foot p { margin: 0 0 6px; }
+
+/* ---------- prose ---------- */
+
+main h1 {
+  font-size: clamp(32px, 5.5vw, 44px);
+  font-weight: 700;
+  letter-spacing: -0.028em;
+  line-height: 1.1;
+  margin: 0 0 20px;
+  text-wrap: balance;
+}
+main h2 {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 52px 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+  text-wrap: balance;
+}
+main h3 {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.012em;
+  margin: 34px 0 10px;
+}
+main h4 {
+  font-size: 16px;
+  font-weight: 650;
+  margin: 26px 0 8px;
+}
+
+main p, main li { max-width: 72ch; }
+main p { margin: 0 0 16px; }
+
+main ul, main ol { margin: 0 0 18px; padding-left: 24px; }
+main li { margin-bottom: 8px; }
+
+main a { color: var(--brass); text-underline-offset: 2px; }
+main a:hover { text-decoration-thickness: 2px; }
+
+main hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 44px 0;
+}
+
+blockquote {
+  margin: 0 0 20px;
+  padding: 2px 0 2px 20px;
+  border-left: 3px solid var(--brass);
+  color: var(--ink-muted);
+  font-style: italic;
+}
+blockquote p:last-child { margin-bottom: 0; }
+
+/* ---------- code ---------- */
+
+code {
+  font-family: var(--mono);
+  font-size: 0.875em;
+  background: var(--surface-2);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+pre {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  margin: 0 0 20px;
+  line-height: 1.55;
+}
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 13.5px;
+}
+
+/* ---------- tables ---------- */
+
+main table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 22px;
+  font-size: 15px;
+  display: block;
+  overflow-x: auto;
+}
+main th {
+  text-align: left;
+  font-weight: 650;
+  font-size: 12px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 0 16px 8px 0;
+  border-bottom: 1px solid var(--rule-strong);
+  white-space: nowrap;
+}
+main td {
+  padding: 12px 16px 12px 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+/* ---------- media ---------- */
+
+main img, main picture, main video {
+  max-width: 100%;
+  height: auto;
+  border-radius: 5px;
+}
+main p[align="center"] { text-align: center; }
+
+:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (max-width: 620px) {
+  body { font-size: 16px; }
+  .top { gap: 14px; padding-top: 20px; }
+  main { padding-top: 28px; }
+}
