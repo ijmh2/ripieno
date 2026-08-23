@@ -246,7 +246,8 @@
     };
   }
 
-  document.getElementById("actions").open = params.get("work") === "1";
+  // Defaults open, matching main.js: the action log is the point of the panel.
+  document.getElementById("actions").open = params.get("work") !== "0";
   window.dispatchEvent(new MessageEvent("message", { data: snapshot }));
 
   if (params.get("final") === "1") {

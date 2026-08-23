@@ -67,6 +67,11 @@
     },
     "commands": [
       {
+        "command": "ripieno.startSolo",
+        "title": "Ripieno: Start a Room for Yourself",
+        "icon": "$(play)"
+      },
+      {
         "command": "ripieno.joinRoom",
         "title": "Ripieno: Join Room",
         "icon": "$(sign-in)"
@@ -132,6 +137,53 @@
         "category": "Ripieno"
       }
     ],
+    "walkthroughs": [
+      {
+        "id": "ripieno.getStarted",
+        "title": "Get started with Ripieno",
+        "description": "A shared room for people and their AI agents, where everything has an author.",
+        "steps": [
+          {
+            "id": "addAgent",
+            "title": "Bring your own agent",
+            "description": "Attach an agent you already pay for \u2014 Claude Code, Codex, Gemini, or a local model.\n[Add an agent](command:ripieno.addAgent)",
+            "media": { "markdown": "media/walkthrough/agent.md", "altText": "Choosing an agent provider" },
+            "completionEvents": ["onCommand:ripieno.addAgent"]
+          },
+          {
+            "id": "startRoom",
+            "title": "Start a room for yourself",
+            "description": "No relay, no token, no account \u2014 the extension runs one in this window.\n[Start a room](command:ripieno.startSolo)",
+            "media": { "markdown": "media/walkthrough/room.md", "altText": "A solo room running on loopback" },
+            "completionEvents": ["onCommand:ripieno.startSolo"]
+          },
+          {
+            "id": "attribution",
+            "title": "See who did what",
+            "description": "Ask your agent something, then open Work under the conversation. Every action names the agent and the machine it ran on.",
+            "media": { "markdown": "media/walkthrough/attribution.md", "altText": "The action log naming agents and machines" },
+            "completionEvents": ["onContext:ripieno.inRoom"]
+          },
+          {
+            "id": "invite",
+            "title": "Add a second person",
+            "description": "One link. They bring their own agent, and their agent runs on their machine under their permissions.\n[Copy an invite link](command:ripieno.copyInvite)",
+            "media": { "markdown": "media/walkthrough/approval.md", "altText": "An approval card asking permission to run a command" },
+            "completionEvents": ["onCommand:ripieno.copyInvite"]
+          }
+        ]
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "ripieno.rooms",
+        "contents": "Bring an agent into this workspace \u2014 Claude Code, Codex, Gemini, or any OpenAI-compatible model.\n\nEach person runs their own, on their own subscription. Nothing is shared and there is no account.\n\n[Add an agent](command:ripieno.addAgent)\n\nThen start a room for yourself \u2014 nothing to deploy.\n\n[Start a room](command:ripieno.startSolo)"
+      },
+      {
+        "view": "ripieno.workspace",
+        "contents": "Nobody is hosting a shared workspace.\n\nThe host's folder is the one other members' agents can read, write and run commands in \u2014 always behind an approval on the host's own machine.\n\n[Host this workspace](command:ripieno.hostWorkspace)"
+      }
+    ],
     "menus": {
       "view/title": [
         {
@@ -148,6 +200,11 @@
           "command": "ripieno.mountWorkspace",
           "when": "view == ripieno.workspace",
           "group": "navigation"
+        },
+        {
+          "command": "ripieno.startSolo",
+          "when": "view == ripieno.room && !ripieno.inRoom",
+          "group": "navigation@1"
         },
         {
           "command": "ripieno.joinRoom",

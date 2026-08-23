@@ -119,15 +119,38 @@
     const empty = document.createElement("div");
     empty.className = "empty-state";
     const title = document.createElement("strong");
-    title.textContent = currentRoom ? "The room is ready" : "No room joined";
+    title.textContent = currentRoom ? "The room is ready" : "No room yet";
     const detail = document.createElement("span");
     detail.textContent = currentRoom
       ? currentUser?.role === "viewer"
         ? "You can follow this room, but viewers cannot post or attach agents."
         : "Start the conversation, or type @ to choose a person or agent."
-      : "Use Ripieno: Join Room to open a shared conversation.";
+      : "Work with your own agents on this codebase \u2014 nothing to deploy, and no account.";
     empty.append(title, detail);
+
+    // Out of a room, the two ways in are buttons rather than the names of
+    // commands. This panel used to say "Use Ripieno: Join Room", which asks
+    // somebody to open the palette and type an exact string before anything
+    // has happened — the friction the empty state exists to remove.
+    if (!currentRoom) {
+      empty.append(
+        emptyAction("Start a room for yourself", "startSolo"),
+        emptyAction("Join a room by code", "joinRoom")
+      );
+    }
     transcriptEl.appendChild(empty);
+  }
+
+  /** A button in the empty state, routed through the same allowlist as onboarding. */
+  function emptyAction(label, action) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "empty-action";
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      vscode.postMessage({ type: "onboardingAction", action });
+    });
+    return button;
   }
 
   function renderOnboarding(next) {
@@ -164,7 +187,13 @@
 
   onboardingActionEl.addEventListener("click", () => {
     const action = onboarding?.action?.kind;
-    if (action !== "joinRoom" && action !== "addAgent" && action !== "attachAgent") return;
+    if (
+      action !== "startSolo" &&
+      action !== "joinRoom" &&
+      action !== "addAgent" &&
+      action !== "attachAgent"
+    )
+      return;
     vscode.postMessage({ type: "onboardingAction", action });
   });
 
@@ -862,12 +891,30 @@
     renderActions();
   }
 
+  /**
+   * Opened once, the first time there is anything to show.
+   *
+   * The action log is the part of this panel that is not a chat client — it is
+   * where "Mira's coder wrote room.ts *on @mellery*" is recorded, which is the
+   * whole claim the product makes. Collapsed by default, a new member had to
+   * find a disclosure triangle before seeing the one thing worth seeing.
+   *
+   * Once only: after the first open it is the member's to collapse, and a panel
+   * that re-opens a section you just closed is worse than one that never opened
+   * it.
+   */
+  let actionsAutoOpened = false;
+
   function renderActions() {
     if (actions.length === 0) {
       actionsEl.hidden = true;
       return;
     }
     actionsEl.hidden = false;
+    if (!actionsAutoOpened) {
+      actionsAutoOpened = true;
+      actionsEl.open = true;
+    }
     const failed = actions.filter((entry) => !entry.ok).length;
     const shown = Math.min(actions.length, 50);
     actionsSummaryEl.textContent = `Work · ${actions.length}${failed ? ` · ${failed} failed` : ""}`;

@@ -25,10 +25,11 @@ export type RoomViewMessage =
       expectedVersion: number;
       targetAgentId?: string;
     }
-  | { type: "onboardingAction"; action: "joinRoom" | "addAgent" | "attachAgent" };
+  | { type: "onboardingAction"; action: "startSolo" | "joinRoom" | "addAgent" | "attachAgent" };
 
 export type OnboardingAction = Extract<RoomViewMessage, { type: "onboardingAction" }>["action"];
 export type OnboardingCommand =
+  | "ripieno.startSolo"
   | "ripieno.joinRoom"
   | "ripieno.addAgent"
   | "ripieno.attachAgent";
@@ -115,7 +116,8 @@ export function parseRoomViewMessage(value: unknown): RoomViewMessage | undefine
     case "onboardingAction":
       if (
         !hasExactKeys(value, ["type", "action"]) ||
-        (value.action !== "joinRoom" &&
+        (value.action !== "startSolo" &&
+          value.action !== "joinRoom" &&
           value.action !== "addAgent" &&
           value.action !== "attachAgent")
       ) {
@@ -136,6 +138,12 @@ export function onboardingCommandFor(
   action: OnboardingAction,
   state: OnboardingState
 ): OnboardingCommand | undefined {
+  // Both out-of-room entry points. Refused once in a room for the same reason
+  // the others are: the button that produced this message is no longer on screen,
+  // so the request is stale rather than legitimate.
+  if (action === "startSolo") {
+    return state.room ? undefined : "ripieno.startSolo";
+  }
   if (action === "joinRoom") {
     return state.room ? undefined : "ripieno.joinRoom";
   }

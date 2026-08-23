@@ -31,7 +31,10 @@ test("invite onboarding is a compact accessible fixed three-step flow", () => {
   assert.match(roomViewHost, /id="onboardingSteps"[^>]*aria-label="Getting started progress"/);
   assert.match(script, /next\.steps\.length !== 3/);
   assert.match(script, /item\.setAttribute\("aria-current", "step"\)/);
-  assert.match(script, /action !== "joinRoom" && action !== "addAgent" && action !== "attachAgent"/);
+  assert.match(
+    script,
+    /action !== "startSolo" &&\s*action !== "joinRoom" &&\s*action !== "addAgent" &&\s*action !== "attachAgent"/
+  );
   assert.match(script, /type: "onboardingAction", action/);
   assert.match(styles, /\.onboarding-steps\s*\{[^}]*grid-template-columns:\s*repeat\(3,/s);
   assert.match(styles, /@media \(max-width: 260px\)/);

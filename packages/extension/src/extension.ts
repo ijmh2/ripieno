@@ -126,9 +126,42 @@ export function activate(context: vscode.ExtensionContext): void {
     void vscode.commands.executeCommand("setContext", "ripieno.canAttachAgents", canAttach);
   }
 
+  /**
+   * A permanently visible answer to "am I in a room, and who else is here?".
+   *
+   * The panel answers both, but only while it is the visible view — and the
+   * whole point of a shared room is that it matters when you are looking at
+   * something else. This is also the one Ripieno surface that costs no screen
+   * space and needs no discovery: it is simply always there.
+   */
+  const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  statusItem.command = "ripieno.room.focus";
+  context.subscriptions.push(statusItem);
+
+  function refreshStatusBar(): void {
+    if (!currentRoom) {
+      statusItem.text = "$(comment-discussion) Ripieno";
+      statusItem.tooltip = "Not in a room. Click to open Ripieno.";
+      statusItem.show();
+      return;
+    }
+    // Solo runs on loopback, so a member count would always read "1" and mean
+    // nothing. Naming the mode is the more useful thing to say.
+    const isSolo = activeRelayUrl === solo.address;
+    const others = latestRoster.filter((entry) => entry.handle !== me?.handle).length;
+    statusItem.text = isSolo
+      ? "$(comment-discussion) Ripieno: solo"
+      : `$(comment-discussion) ${currentRoom}${others > 0 ? ` \u00b7 ${others + 1}` : ""}`;
+    statusItem.tooltip = isSolo
+      ? `Solo room "${currentRoom}" \u2014 running in this window, nothing deployed.`
+      : `Ripieno room "${currentRoom}" \u2014 ${others + 1} present. Click to open.`;
+    statusItem.show();
+  }
+
   // A saved room is only an invitation to rejoin; activation starts disconnected.
   setInRoomContext(false);
   setCanAttachAgentsContext(true);
+  refreshStatusBar();
 
   // A member may run several agents at once — a coder and a reviewer, say —
   // each with its own process, session and label in the transcript.
@@ -272,6 +305,7 @@ export function activate(context: vscode.ExtensionContext): void {
       treeDataProvider: roomsTree,
       dragAndDropController: roomsTree,
     }),
+    vscode.commands.registerCommand("ripieno.startSolo", () => startSolo()),
     vscode.commands.registerCommand("ripieno.joinRoom", () => joinRoom()),
     vscode.commands.registerCommand("ripieno.copyInvite", () => copyInvite()),
     vscode.commands.registerCommand("ripieno.setRole", (node?: unknown) => setRole(node)),
@@ -2117,6 +2151,35 @@ export function activate(context: vscode.ExtensionContext): void {
     return activeRelayUrl ?? "ws://127.0.0.1:8787";
   }
 
+  /**
+   * A room for one, in one press.
+   *
+   * Solo is the fastest thing this extension does — no relay, no token, no
+   * account — and it was reachable only by running Join Room and inventing a
+   * code, which is a strange way to present the path most people should take
+   * first. The code is derived from the workspace folder so each project keeps
+   * its own history, rather than every window on the machine landing in one
+   * shared room and reading each other's transcripts.
+   */
+  async function startSolo(): Promise<void> {
+    if (currentRoom) {
+      void vscode.window.showInformationMessage(`Ripieno: already in ${currentRoom}.`);
+      return;
+    }
+    await connect(soloRoomCode());
+  }
+
+  /** Workspace-derived and stable, within the room code charset the relay accepts. */
+  function soloRoomCode(): string {
+    const folder = vscode.workspace.workspaceFolders?.[0]?.name ?? "";
+    const slug = folder
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40);
+    return slug ? `solo-${slug}` : "solo";
+  }
+
   async function joinRoom(): Promise<void> {
     const room = await vscode.window.showInputBox({
       title: "Join Ripieno Room",
@@ -2270,6 +2333,7 @@ export function activate(context: vscode.ExtensionContext): void {
     latestRoster = [];
     currentRoom = room;
     me = member;
+    refreshStatusBar();
     saveState({ room, relayUrl: activeRelayUrl });
     refreshAgentViews();
 
@@ -2319,6 +2383,7 @@ export function activate(context: vscode.ExtensionContext): void {
     relay.dispose();
     relay = undefined;
     currentRoom = undefined;
+    refreshStatusBar();
     goals = [];
     goalAudit = [];
     goalsRevision = 0;
@@ -2352,6 +2417,7 @@ export function activate(context: vscode.ExtensionContext): void {
       case "joined":
         setInRoomContext(true);
         latestRoster = msg.roster;
+        refreshStatusBar();
         setCanAttachAgentsContext(msg.you.role === "owner" || msg.you.role === "member");
         goals = msg.goals ?? [];
         goalAudit = msg.goalAudit ?? [];
