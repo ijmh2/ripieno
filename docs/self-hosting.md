@@ -27,8 +27,32 @@ Anywhere Node 20+ runs:
 ```bash
 git clone <this repo> && cd <this repo>
 npm ci
-RIPIENO_HOST=0.0.0.0 RIPIENO_TOKEN=$(openssl rand -hex 24) RIPIENO_DATA_DIR=./data npm start
+RIPIENO_HOST=0.0.0.0 RIPIENO_DATA_DIR=./data npm start
 ```
+
+Or without a toolchain at all, which is the shorter path on any machine that
+runs containers:
+
+```bash
+docker build -t ripieno-relay .
+docker run -p 8787:8787 -v ripieno-data:/data ripieno-relay
+```
+
+Either way it prints what you need on startup and there is no token to mint:
+
+```
+  Ripieno relay ready
+
+    URL     wss://relay.example.com
+    Token   dd0bce7fc9992ca0a7b2ce0b6ac9dc068b83b7d1150fe0f1  (generated, saved)
+    Room    general
+    Members verified against GitHub
+```
+
+A token is generated on first boot and written to `RIPIENO_DATA_DIR/relay-token`
+so it survives restarts — without a data directory it is regenerated each time,
+which silently invalidates every invite link already sent. Set `RIPIENO_TOKEN`
+yourself and nothing is generated or written.
 
 It listens on `8787` by default. For other people to reach it they need a route
 to that port. Ripieno clients require encrypted `wss://` transport away from
@@ -36,9 +60,23 @@ loopback, so terminate TLS in front of the relay or use an SSH tunnel that maps
 the remote port to loopback. A private Tailscale/WireGuard network still needs
 TLS unless each member uses a loopback tunnel.
 
-Print the token once and give it to the people joining, alongside the URL. Or
-use **Copy Invite Link** in the extension, which packages the URL, the room and
-the token into a single link.
+Give the URL and token to the people joining, or — easier — join the room
+yourself and use **Copy Invite Link** in the extension, which packages the URL,
+the room and the token into a single link. The relay deliberately does not print
+that link itself: its URI scheme belongs to the editor, and Cursor, Antigravity
+and VS Code each register their own.
+
+### How it knows its own address
+
+A relay behind a proxy cannot see the name it is reached by, so it reads the one
+the proxy sends — `X-Forwarded-Host` and `X-Forwarded-Proto` on the first request
+that arrives. That works identically behind Railway, Fly, Render, nginx, Caddy or
+a `cloudflared`/`ngrok` tunnel, with nothing to configure.
+
+`RAILWAY_PUBLIC_DOMAIN`, `RENDER_EXTERNAL_URL`, `KOYEB_PUBLIC_DOMAIN` and
+`FLY_APP_NAME` are read too, only as a shortcut that saves waiting for the first
+request. Set `RIPIENO_PUBLIC_URL` to override everything. If the printed address
+says `(guessed)`, nothing had told it yet.
 
 ## 3. Deployed, so the room outlives your laptop
 
@@ -50,7 +88,7 @@ work the same way.
 # Railway, from a clone of this repo
 railway init
 railway volume add --mount-path /data
-railway variables --set "RIPIENO_TOKEN=$(openssl rand -hex 24)" --set "RIPIENO_DATA_DIR=/data"
+railway variables --set "RIPIENO_DATA_DIR=/data"
 railway up
 ```
 
@@ -66,7 +104,8 @@ message, per room).
 
 | Variable | Default | What it does |
 |---|---|---|
-| `RIPIENO_TOKEN` | none | Shared secret required to join. **Mandatory for the standalone relay**, including a loopback bind behind a proxy or tunnel. Embedded solo mode is exempt. |
+| `RIPIENO_TOKEN` | generated | Shared secret required to join. Generated on first boot and saved to the data directory if you do not set one; embedded solo mode needs none. |
+| `RIPIENO_PUBLIC_URL` | learned from the proxy | The address to hand out. Only needed when the printed one is wrong. |
 | `RIPIENO_DATA_DIR` | none | Where room history is written. Without it, a restart empties every room. Point it at a mounted volume. |
 | `RIPIENO_REQUIRE_GITHUB` | on for the standalone relay | Verify members against GitHub rather than believing the handle they send. Set `0` to turn it off — see below. |
 | `RIPIENO_WORKSPACE_TOKEN` | none | Separate secret for the shared-workspace container. Without it the workspace role is refused entirely. |

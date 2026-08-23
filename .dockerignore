@@ -1,0 +1,19 @@
+# The build stage copies what it needs explicitly; everything else only slows
+# the context upload and risks baking in local state.
+node_modules
+**/node_modules
+**/dist
+**/out
+dist
+.git
+.github
+.vscode
+.claude
+docs
+scripts
+*.vsix
+*.log
+.env
+.env.*
+.mcp.json
+.DS_Store

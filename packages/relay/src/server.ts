@@ -14,6 +14,7 @@ import { ByoDriver } from "./byoDriver.js";
 import { Room } from "./room.js";
 import { createRoomStore } from "./roomStore.js";
 import { GithubVerifier } from "./identity.js";
+import { publicUrlFromHeaders } from "./bootstrap.js";
 
 /**
  * How often to ping clients, and therefore how long a vanished member can look
@@ -61,6 +62,14 @@ export interface ServerConfig {
   /** Required in hosted mode only; BYO needs no Anthropic resources at all. */
   agentId?: string;
   environmentId?: string;
+  /**
+   * Called once, with the address this relay turned out to be reachable on.
+   *
+   * A relay behind a proxy cannot see its own public name, but every request
+   * carries it. Reporting rather than returning it because the answer does not
+   * exist yet when the server starts — it arrives with the first caller.
+   */
+  onPublicUrl?: (url: string) => void;
 }
 
 /**
@@ -191,7 +200,18 @@ export function startServer(config: ServerConfig): Relay {
   // without opening a WebSocket client. It deliberately reveals nothing about
   // rooms or members — an unauthenticated caller learns only that this is a
   // relay and whether it wants a token.
+  /** Fired once. A later request cannot teach us anything the first did not. */
+  let publicUrlReported = false;
+  function notePublicUrl(headers: Record<string, string | string[] | undefined>): void {
+    if (publicUrlReported || !config.onPublicUrl) return;
+    const url = publicUrlFromHeaders(headers);
+    if (!url) return;
+    publicUrlReported = true;
+    config.onPublicUrl(url);
+  }
+
   const http = createServer((req, res) => {
+    notePublicUrl(req.headers);
     if (req.method === "GET" && (req.url === "/health" || req.url === "/")) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
@@ -312,7 +332,10 @@ export function startServer(config: ServerConfig): Relay {
     void flushSaves();
   });
 
-  wss.on("connection", (socket: WebSocket) => {
+  wss.on("connection", (socket: WebSocket, request?: { headers?: Record<string, string | string[] | undefined> }) => {
+    // A real client upgrade is the most trustworthy sample of all: unlike a
+    // platform healthcheck, it arrived at the address somebody was actually given.
+    if (request?.headers) notePublicUrl(request.headers);
     alive.add(socket);
     socket.on("pong", () => alive.add(socket));
     let joined:
