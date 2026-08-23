@@ -1,0 +1,286 @@
+/*
+ * The front door only. Every other page is a rendered document and uses
+ * site.css alone; this file exists because a landing page has a different job
+ * from a README — three seconds to say what the thing is, and one obvious
+ * action — and rendering one as the other gives a wall of prose where a front
+ * door should be.
+ */
+
+.landing main {
+  max-width: 980px;
+  padding-top: 0;
+}
+
+.landing section {
+  padding: 64px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.landing section:last-of-type { border-bottom: 0; }
+
+/* ---------- hero ---------- */
+
+.hero {
+  padding-top: 76px;
+  text-align: center;
+  border-bottom: 0;
+}
+
+.kicker {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 22px;
+}
+
+.hero h1 {
+  font-size: clamp(36px, 6.2vw, 60px);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.04;
+  margin: 0 0 24px;
+  text-wrap: balance;
+}
+
+.hero .lede {
+  font-size: 19px;
+  line-height: 1.6;
+  color: var(--ink-muted);
+  max-width: 60ch;
+  margin: 0 auto 34px;
+}
+
+.cta {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.btn {
+  display: inline-block;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 12px 24px;
+  border-radius: 5px;
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: transform 0.08s ease;
+}
+.btn:active { transform: translateY(1px); }
+
+.btn.primary {
+  background: var(--ink);
+  color: var(--ground);
+}
+.btn.primary:hover { opacity: 0.88; }
+
+.btn.secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+.btn.secondary:hover { border-color: var(--ink-muted); }
+
+.cta-note {
+  font-size: 13.5px;
+  color: var(--ink-faint);
+  margin: 0;
+}
+
+/* ---------- proof ---------- */
+
+.proof { text-align: center; }
+.proof h2 {
+  border-bottom: 0;
+  margin: 0 0 12px;
+  padding: 0;
+  font-size: 28px;
+  letter-spacing: -0.022em;
+}
+.proof-lede {
+  color: var(--ink-muted);
+  max-width: 62ch;
+  margin: 0 auto 30px;
+}
+.proof figure { margin: 0; }
+.proof img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+.proof figcaption {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+  max-width: 64ch;
+  margin: 18px auto 0;
+  text-align: left;
+}
+
+/* ---------- problem ---------- */
+
+.problem { max-width: 68ch; }
+.problem h2 {
+  border-bottom: 0;
+  padding: 0;
+  margin: 0 0 16px;
+  font-size: 27px;
+  letter-spacing: -0.022em;
+}
+.problem p { margin: 0 0 16px; color: var(--ink-muted); }
+.problem p:first-of-type { color: var(--ink); }
+
+/* ---------- pillars ---------- */
+
+.pillars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 34px 44px;
+}
+.pillar h3 {
+  font-size: 17px;
+  font-weight: 650;
+  margin: 0 0 8px;
+  letter-spacing: -0.01em;
+}
+.pillar h3::before {
+  content: "";
+  display: block;
+  width: 26px;
+  height: 2px;
+  background: var(--brass);
+  margin-bottom: 12px;
+}
+.pillar p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 15.5px;
+  max-width: none;
+}
+
+/* ---------- getting started ---------- */
+
+.start h2,
+.honest h2 {
+  border-bottom: 0;
+  padding: 0;
+  margin: 0 0 28px;
+  font-size: 27px;
+  letter-spacing: -0.022em;
+}
+
+ol.steps {
+  list-style: none;
+  counter-reset: step;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 34px;
+}
+ol.steps > li {
+  counter-increment: step;
+  position: relative;
+  padding-left: 46px;
+  max-width: 70ch;
+}
+ol.steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px solid var(--rule-strong);
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 13px;
+  display: grid;
+  place-items: center;
+}
+ol.steps h3 {
+  font-size: 17px;
+  font-weight: 650;
+  margin: 0 0 8px;
+}
+ol.steps p { margin: 0 0 12px; color: var(--ink-muted); }
+ol.steps pre { margin: 0 0 10px; }
+.muted { font-size: 14px; color: var(--ink-faint); }
+
+/* ---------- honest ---------- */
+
+.honest { max-width: 68ch; }
+.honest p { color: var(--ink-muted); margin: 0 0 16px; }
+.honest .btn { margin-top: 8px; }
+
+@media (max-width: 620px) {
+  .landing section { padding: 44px 0; }
+  .hero { padding-top: 48px; }
+  .btn { width: 100%; text-align: center; }
+}
+
+/* ---------- the payoff, as text ---------- */
+
+/*
+ * Rendered rather than shown as the GIF's first frame, which is a nearly empty
+ * terminal — the recording types the command before it pays off, so the most
+ * important thing on the page would open as a black rectangle. This is crisp at
+ * any size, selectable, readable by a screen reader, and needs nothing to load.
+ * The recording still follows it, as evidence that it really runs.
+ */
+.term {
+  max-width: 620px;
+  margin: 0 auto 14px;
+  background: #14171a;
+  border: 1px solid var(--rule-strong);
+  border-radius: 7px;
+  overflow: hidden;
+  text-align: left;
+  box-shadow: 0 6px 26px rgb(0 0 0 / 0.14);
+}
+
+.term-bar {
+  display: flex;
+  gap: 7px;
+  padding: 11px 14px;
+  background: #1c2024;
+  border-bottom: 1px solid #262b30;
+}
+.term-bar span {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #3a4148;
+}
+
+.term pre {
+  margin: 0;
+  padding: 18px 20px 20px;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  overflow-x: auto;
+}
+.term code {
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.75;
+  color: #c8d0d6;
+}
+.term .p { color: #5f6b74; }
+.term .s { color: #8fae7a; }
+.term .who { color: #e0a955; font-weight: 600; }
+
+.term-note {
+  font-size: 14px;
+  color: var(--ink-faint);
+  margin: 0 0 34px;
+}
+
+.proof figure { margin: 0; opacity: 0.94; }
+.proof figure img { max-width: 520px; }

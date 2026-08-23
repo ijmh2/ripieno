@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 /**
- * The documentation site, generated from the documentation.
+ * The site: one hand-authored front page, and documents rendered from the
+ * documents.
  *
  * A website is a second place for setup instructions to live, and a second copy
  * of a command is how one of them ends up wrong — the same reasoning that keeps
- * the path checks in a single module. So nothing here is written twice: every
- * page is rendered from the markdown already in the repository, and the only
- * thing this script owns is the wrapper around it.
+ * the path checks in a single module. So no *instruction* is written twice:
+ * every documentation page is rendered from the markdown already in the
+ * repository, and this script owns only the wrapper around it.
+ *
+ * The front page is the exception, deliberately — see PAGES below. It holds no
+ * setup commands of its own, only links to the pages that own them, so the rule
+ * survives intact.
  *
  * Output is plain static files with no runtime and no external requests, so it
  * hosts anywhere: GitHub Pages, Cloudflare Pages, Netlify, or a bucket.
@@ -23,11 +28,19 @@ const ROOT = path.join(__dirname, "..");
 const OUT = path.join(ROOT, "site", "dist");
 
 /**
- * Every page, in nav order. `source` is the file that owns the words; nothing
- * in this list may restate them.
+ * Every *document* page, in nav order. `source` is the file that owns the words
+ * and nothing here may restate them.
+ *
+ * The landing page is deliberately not in this list. A README is written for
+ * somebody already at the repository deciding whether to use the thing; a front
+ * page is for somebody who arrived from a link with no context at all, and
+ * rendering the first as the second gives a wall of prose where a door should
+ * be. It is hand-authored in site/index.html, and it carries no setup commands
+ * — only links to the pages that own them — so there is still nothing that can
+ * drift.
  */
 const PAGES = [
-  { slug: "index", source: "README.md", nav: "Overview", title: "Ripieno" },
+  { slug: "overview", source: "README.md", nav: "Overview", title: "Overview" },
   {
     slug: "self-hosting",
     source: "docs/self-hosting.md",
@@ -58,7 +71,7 @@ function rewriteHref(href, repoUrl) {
   const [filePart, hash = ""] = href.split("#");
   const clean = filePart.replace(/^\.\//, "");
   const page = BY_SOURCE.get(clean);
-  if (page) return `${page.slug === "index" ? "." : `${page.slug}.html`}${hash ? `#${hash}` : ""}`;
+  if (page) return `${page.slug}.html${hash ? `#${hash}` : ""}`;
   if (/^docs\/images\//.test(clean)) return clean;
   if (clean === "") return hash ? `#${hash}` : "#";
   return `${repoUrl}/blob/main/${clean}${hash ? `#${hash}` : ""}`;
@@ -87,9 +100,8 @@ function render(source, repoUrl) {
 
 function layout({ title, body, slug, description }) {
   const nav = PAGES.map((page) => {
-    const href = page.slug === "index" ? "./" : `${page.slug}.html`;
     const current = page.slug === slug ? ' aria-current="page"' : "";
-    return `<a href="${href}"${current}>${page.nav}</a>`;
+    return `<a href="${page.slug}.html"${current}>${page.nav}</a>`;
   }).join("");
 
   return `<!doctype html>
@@ -157,7 +169,7 @@ function build() {
     }
     const body = render(page.source, repoUrl);
     const html = layout({
-      title: page.slug === "index" ? "Ripieno" : `${page.title} — Ripieno`,
+      title: `${page.title} — Ripieno`,
       description: firstParagraph(body) || pkg.description || "Ripieno",
       body,
       slug: page.slug,
@@ -166,7 +178,10 @@ function build() {
     console.log(`  ${page.source.padEnd(24)} -> ${page.slug}.html`);
   }
 
-  fs.copyFileSync(path.join(ROOT, "site", "site.css"), path.join(OUT, "site.css"));
+  for (const asset of ["site.css", "landing.css", "index.html"]) {
+    fs.copyFileSync(path.join(ROOT, "site", asset), path.join(OUT, asset));
+  }
+  console.log("  site/index.html".padEnd(26) + "-> index.html (hand-authored)");
   const images = copyImages();
   // Tells GitHub Pages not to run Jekyll, which would drop files beginning "_".
   fs.writeFileSync(path.join(OUT, ".nojekyll"), "");

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ripieno — a shared room for people and their AI agents</title>
+<meta name="description" content="A shared workspace in your editor where several people and several AI agents work on one codebase, and every message and action has a named author.">
+<meta property="og:title" content="Ripieno">
+<meta property="og:description" content="Several people, several AI agents, one codebase — and git log names each of them correctly.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="docs/images/room-light.png">
+<link rel="stylesheet" href="site.css">
+<link rel="stylesheet" href="landing.css">
+</head>
+<body class="landing">
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="top">
+  <a class="wordmark" href="./">Ripieno</a>
+  <nav aria-label="Documentation">
+    <a href="overview.html">Overview</a>
+    <a href="self-hosting.html">Run a relay</a>
+    <a href="provenance.html">Provenance</a>
+    <a href="mcp.html">MCP</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="security.html">Security</a>
+    <a href="support.html">Support</a>
+  </nav>
+</header>
+
+<main id="main">
+
+  <section class="hero">
+    <p class="kicker">VS Code · Cursor · Windsurf · VSCodium</p>
+    <h1>Several people. Several AI agents.<br>One codebase.</h1>
+    <p class="lede">
+      A shared room inside your editor where everyone brings their own coding agent —
+      and every message, file write and command carries the name of whoever's agent did it,
+      on whichever machine it ran.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="#install">Install the Preview</a>
+      <a class="btn secondary" href="https://github.com/ijmh2/ripieno">Read the source</a>
+    </div>
+    <p class="cta-note">
+      0.0.1 Preview · not on the Marketplace yet · free for personal and internal use
+    </p>
+  </section>
+
+  <section class="proof">
+    <h2>That column normally holds one name</h2>
+    <p class="proof-lede">
+      Whoever's laptop ran the commit. Here, three agents belonging to three different
+      people write to one repository at the same time — and <code>git log</code> names each of them.
+    </p>
+    <div class="term" role="img" aria-label="git log output listing five commits whose author column holds three different agent names: Alex's agent, Sam's reviewer and Mira's coder.">
+      <div class="term-bar"><span></span><span></span><span></span></div>
+      <pre><code><span class="p">$</span> npm run demo:provenance
+
+<span class="p">$</span> git log --pretty=<span class="s">'%&lt;(16)%an  %s'</span> -5
+
+  <span class="who">Alex's agent</span>      Mention the limits in the README
+  <span class="who">Sam's reviewer</span>    Write down both limits
+  <span class="who">Mira's coder</span>      Bound the transcript
+  <span class="who">Sam's reviewer</span>    Cover the rate limit
+  <span class="who">Mira's coder</span>      Add rate limit to relay</code></pre>
+    </div>
+    <p class="term-note">Three names, where every <code>git log</code> you have ever run had one.</p>
+
+    <figure>
+      <img src="docs/images/provenance.gif" width="620" loading="lazy"
+           alt="Running npm run demo:provenance: three agents write to one repository concurrently, and git log's author column holds three different names.">
+      <figcaption>
+        Real output. <code>npm run demo:provenance</code> runs the actual code against a real
+        repository, writing concurrently rather than in turn — because git serialises on
+        <code>.git/index.lock</code>, and losing that race is how five writes in six once vanished.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section class="problem">
+    <h2>A shared login makes an agent useless to a team</h2>
+    <p>
+      Put two people behind one session and the agent sees one user changing their mind.
+      It cannot tell agreement from disagreement, whose preferences to honour, or whose
+      filesystem the next write lands on.
+    </p>
+    <p>
+      Here every message the agent receives carries its author as structure the relay
+      maintains — not a prefix the model can ignore — and every workspace action runs on
+      the asking member's own machine, under their own permissions.
+    </p>
+  </section>
+
+  <section class="pillars">
+    <div class="pillar">
+      <h3>Everything has an author</h3>
+      <p>
+        The action log records that Mira's coder wrote <code>room.ts</code>
+        <em>on @mellery</em> while Kate's agent read a file <em>on @swhitfield</em>.
+        The machine is part of the record, not an assumption.
+      </p>
+    </div>
+    <div class="pillar">
+      <h3>Nothing reaches your disk unasked</h3>
+      <p>
+        When somebody else's agent wants to write a file or run a command on your machine,
+        it stops and asks — naming the agent, its owner and the command. Your refusal is
+        recorded under your name rather than failing silently.
+      </p>
+    </div>
+    <div class="pillar">
+      <h3>Bring your own agent</h3>
+      <p>
+        Claude Code, Codex on your ChatGPT plan, Gemini, any OpenAI-compatible endpoint,
+        or a local model through Ollama. Nobody shares a login, and the room resells
+        nobody's inference.
+      </p>
+    </div>
+    <div class="pillar">
+      <h3>Self-hosted, or no host at all</h3>
+      <p>
+        Solo mode runs the relay inside your editor — nothing deployed, no account, no
+        token. A shared room runs on a relay you operate. There is no service in the
+        middle, because a relay would see every message you send.
+      </p>
+    </div>
+  </section>
+
+  <section class="start" id="install">
+    <h2>Getting started</h2>
+    <ol class="steps">
+      <li>
+        <h3>Install it</h3>
+        <p>
+          Not on the Marketplace yet — this is a 0.0.1 Preview, and the honest version of
+          that sentence is that you install a <code>.vsix</code> by hand.
+        </p>
+        <pre><code>git clone https://github.com/ijmh2/ripieno
+cd ripieno &amp;&amp; npm run setup</code></pre>
+        <p class="muted">
+          Builds it, packages it, and installs it into whichever editor you have.
+        </p>
+      </li>
+      <li>
+        <h3>Start a room for yourself</h3>
+        <p>
+          Open the Ripieno panel and press <strong>Start a room</strong>. No relay, no
+          token, no account — the extension runs one inside the window. It is the same
+          relay a team shares, not a reduced imitation.
+        </p>
+      </li>
+      <li>
+        <h3>Add somebody else</h3>
+        <p>
+          That needs a relay both of you can reach, which takes one command and prints
+          everything you need to hand over.
+        </p>
+        <pre><code>docker run -p 8787:8787 -v ripieno-data:/data ripieno-relay</code></pre>
+        <p class="muted">
+          <a href="self-hosting.html">Running your own relay</a> covers the three ways to do it,
+          in increasing order of effort.
+        </p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="honest">
+    <h2>What's actually real</h2>
+    <p>
+      An unknown repository has no other way to earn anything, so the README carries a
+      table of what works, what has been built but never deployed, and what is not shipped
+      at all. Hosted mode is in the third column. The shared-workspace container is in the
+      second.
+    </p>
+    <p>
+      Several bugs were found only by two people using it, and several more by an outside
+      reading of the whole repository. Two people have ever used this. One of them wrote it.
+    </p>
+    <p>
+      <a class="btn secondary" href="overview.html">Read the honest version</a>
+    </p>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <p>Source-available, free for personal and internal use. Not open source.</p>
+  <p>
+    Built by Ivan Hart.
+    <a href="https://github.com/ijmh2/ripieno">Source</a> ·
+    <a href="security.html">Security</a> ·
+    <a href="privacy.html">Privacy</a> ·
+    <a href="support.html">Support</a>
+  </p>
+</footer>
+</body>
+</html>
