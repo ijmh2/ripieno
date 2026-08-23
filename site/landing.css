@@ -365,3 +365,16 @@ ol.steps pre { margin: 0 0 10px; font-size: 12.5px; }
 }
 .ho-meta { font-size: 12.5px; color: var(--ink-muted); margin: 0 0 14px; max-width: none; }
 .ho-meta b { color: var(--ink); font-weight: 650; }
+
+/* "You" in the diagram — the same teal the room panel gives your own messages. */
+.dg-you rect { fill: #e4f4f2; stroke: #0d7f74; stroke-width: 1.7; }
+.dg-handle-t { font-family: var(--mono); font-size: 14px; font-weight: 600; fill: #0d7f74; }
+.dg-you-tag {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em;
+  text-transform: uppercase; fill: #0d7f74; opacity: 0.75;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dg-you rect { fill: #102b28; stroke: #3fb3a4; }
+  .dg-handle-t, .dg-you-tag { fill: #3fb3a4; }
+}
