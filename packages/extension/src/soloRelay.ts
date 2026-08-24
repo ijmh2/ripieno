@@ -24,6 +24,11 @@ import { startServer, type Relay } from "@ripieno/relay";
  * from a person talking to their own editor would be ceremony rather than
  * security. The relay warns when it is open *and* externally reachable, which
  * this is not.
+ *
+ * Loopback is not a boundary against the browser, though — WebSockets are not
+ * subject to CORS, so any page you happen to be visiting can scan for this
+ * port and join an open room. Hence `denyBrowserOrigins`: nothing that belongs
+ * here sends an `Origin` header, and everything a browser opens does.
  */
 export class SoloRelay {
   private relay: Relay | undefined;
@@ -37,6 +42,9 @@ export class SoloRelay {
       port: 0,
       mode: "byo",
       host: "127.0.0.1",
+      // Loopback keeps other machines out; it does not keep a web page out.
+      // Nothing that legitimately reaches this relay is a browser.
+      denyBrowserOrigins: true,
       // History still persists, so a solo room survives a window reload. The
       // whole point is that it behaves like the real thing.
       dataDir,

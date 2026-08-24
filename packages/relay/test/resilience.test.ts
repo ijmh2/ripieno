@@ -129,3 +129,53 @@ describe("a stranger cannot take the relay down", () => {
     good.destroy();
   });
 });
+
+describe("a tokenless relay is not open to the browser", () => {
+  let solo: Relay;
+  let soloPort: number;
+
+  before(async () => {
+    // As the extension starts it for solo mode: loopback, no token.
+    solo = startServer({ port: 0, mode: "byo", host: "127.0.0.1", denyBrowserOrigins: true });
+    soloPort = await solo.whenListening();
+  });
+
+  after(async () => {
+    await new Promise<void>((resolve) => solo.close(() => resolve()));
+  });
+
+  /** Handshake with an explicit Origin, as every browser does. */
+  function handshake(origin?: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const socket = net.connect(soloPort, "127.0.0.1", () => {
+        socket.write(
+          "GET / HTTP/1.1\r\n" +
+            `Host: 127.0.0.1:${soloPort}\r\n` +
+            "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+            (origin ? `Origin: ${origin}\r\n` : "") +
+            `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString("base64")}\r\n` +
+            "Sec-WebSocket-Version: 13\r\n\r\n"
+        );
+      });
+      socket.once("error", reject);
+      socket.once("data", (chunk: Buffer) => {
+        socket.destroy();
+        resolve(chunk.toString().split("\r\n")[0] ?? "");
+      });
+    });
+  }
+
+  test("a web page you happen to be visiting is refused", async () => {
+    assert.match(await handshake("https://example.com"), /401|403/);
+  });
+
+  test("a page served from localhost is refused too", async () => {
+    // Nothing legitimate reaches a solo relay from a browser, including a dev
+    // server on the same machine.
+    assert.match(await handshake("http://localhost:3000"), /401|403/);
+  });
+
+  test("the editor, which sends no Origin, still connects", async () => {
+    assert.match(await handshake(undefined), /101/);
+  });
+});

@@ -55,6 +55,20 @@ export interface ServerConfig {
    * working; turning it on is what makes roles and attribution mean anything.
    */
   requireGithub?: boolean;
+  /**
+   * Refuse connections that carry an `Origin` header.
+   *
+   * Loopback is not a boundary against a web page. Browsers do not apply CORS
+   * to WebSockets, so any site can open a socket to 127.0.0.1 and walk the
+   * ephemeral port range until something answers — and a solo relay answers
+   * with no token, because demanding one from somebody talking to their own
+   * editor would be ceremony rather than security.
+   *
+   * A browser always sends `Origin`; the `ws` client the extension uses never
+   * does. That asymmetry is the whole check, and it is why this is safe to turn
+   * on for the tokenless case and wrong to turn on generally.
+   */
+  denyBrowserOrigins?: boolean;
   /** Injectable so tests can stand in for GitHub. Production builds its own. */
   verifier?: GithubVerifier;
   /** Where room history is kept. Undefined means rooms vanish on restart. */
@@ -240,7 +254,19 @@ export function startServer(config: ServerConfig): Relay {
    * into everyone's process. The persisted copy was carefully capped at 1MB;
    * the concern was handled on the disk path and missed on the wire.
    */
-  const wss = new WebSocketServer({ server: http, maxPayload: MAX_FRAME_BYTES });
+  const wss = new WebSocketServer({
+    server: http,
+    maxPayload: MAX_FRAME_BYTES,
+    ...(config.denyBrowserOrigins
+      ? {
+          verifyClient: ({ origin }: { origin?: string }) => {
+            if (origin === undefined) return true;
+            log(`refused a browser connection from ${origin}`);
+            return false;
+          },
+        }
+      : {}),
+  });
   // Garbage that never becomes a WebSocket at all — a malformed request line,
   // oversized headers, a connection cut mid-handshake. Node's default is to
   // destroy the socket, but only once something is listening; otherwise this
