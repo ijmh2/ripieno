@@ -241,6 +241,19 @@ export function startServer(config: ServerConfig): Relay {
    * the concern was handled on the disk path and missed on the wire.
    */
   const wss = new WebSocketServer({ server: http, maxPayload: MAX_FRAME_BYTES });
+  // Garbage that never becomes a WebSocket at all — a malformed request line,
+  // oversized headers, a connection cut mid-handshake. Node's default is to
+  // destroy the socket, but only once something is listening; otherwise this
+  // throws too.
+  http.on("clientError", (err: Error, socket: { destroy: () => void }) => {
+    log(`client error: ${err.message}`);
+    socket.destroy();
+  });
+  // A listen failure — port taken, address unavailable — should be a message,
+  // not a stack trace with the port buried in it.
+  http.on("error", (err: Error) => {
+    log(`listen error: ${err.message}`);
+  });
   http.listen(config.port, bindHost);
 
   function roomFor(code: string): Promise<Room> {
@@ -324,6 +337,12 @@ export function startServer(config: ServerConfig): Relay {
     }
   }, HEARTBEAT_MS);
   heartbeat.unref();
+  // Not covered by the per-socket handler above: a failed upgrade has no socket
+  // to attribute the error to, and unhandled here it is equally fatal.
+  wss.on("error", (err: Error) => {
+    log(`relay error: ${err.message}`);
+  });
+
   wss.on("close", () => {
     clearInterval(heartbeat);
     http.close();
@@ -337,6 +356,16 @@ export function startServer(config: ServerConfig): Relay {
     // platform healthcheck, it arrived at the address somebody was actually given.
     if (request?.headers) notePublicUrl(request.headers);
     alive.add(socket);
+    // Node rethrows an 'error' event that nobody is listening for, and `ws`
+    // emits one for any frame it cannot parse — a bad opcode, a reserved close
+    // code, a broken mask. That is a stranger's two bytes deciding whether this
+    // process lives, before a token is ever looked at, and it takes every other
+    // room down with it. One misbehaving peer is that peer's problem only.
+    socket.on("error", (err: Error) => {
+      log(`socket error: ${err.message}`);
+      alive.delete(socket);
+      socket.terminate();
+    });
     socket.on("pong", () => alive.add(socket));
     let joined:
       | { room: Room; handle: string; role: ConnectionRole; agentId?: string; label: string }
