@@ -1,0 +1,11 @@
+# Railway builds this service with Nixpacks, per the "builder" field in
+# railway.json — the path that has actually worked here since July.
+#
+# A Dockerfile at the repo root would otherwise take precedence and be used
+# instead. That Dockerfile exists for people self-hosting a relay and has never
+# been built by anything, so letting an unvalidated image become the deploy path
+# for the one live relay is the wrong order to find out. Keeping it out of the
+# upload leaves it available to `docker build .` while Railway carries on doing
+# what it was doing.
+Dockerfile
+.dockerignore
