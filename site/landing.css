@@ -519,26 +519,6 @@ ol.steps pre { margin: 0 0 12px; font-size: 0.82rem; max-width: 100%; }
 ol.steps pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .muted { font-size: 1rem; color: var(--ink-faint); }
 
-/* ---------------- status ---------------- */
-
-.status { display: grid; gap: 22px; }
-.st {
-  background: var(--card);
-  border: 2px solid var(--ink);
-  border-radius: var(--wobbly-md);
-  padding: 22px;
-  box-shadow: var(--shadow-sm);
-}
-.st.works { transform: rotate(-1deg); }
-.st.built { background: var(--postit); transform: rotate(0.8deg); }
-.st.not   { border-style: dashed; transform: rotate(-0.5deg); }
-.st-h { font-family: var(--marker-font); font-size: 1.08rem; font-weight: 700; margin: 0 0 12px; }
-.st.works .st-h { color: var(--green); }
-.st.built .st-h { color: var(--ochre); }
-.st.not   .st-h { color: var(--marker); }
-.st p { font-size: 1rem; color: var(--ink-soft); margin: 0; line-height: 1.55; max-width: none; }
-.honest-foot { margin: 30px 0 0; color: var(--ink-faint); font-size: 1.05rem; max-width: 64ch; }
-
 /* ---------------- footer ---------------- */
 
 .site-foot { max-width: 64rem; }
@@ -577,7 +557,6 @@ ol.steps pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
   .feature { grid-template-columns: 1fr 1fr; gap: 64px; }
   .feature.reverse .feature-copy { order: 2; }
   ol.steps { grid-template-columns: repeat(3, 1fr); }
-  .status { grid-template-columns: repeat(3, 1fr); }
   .foot-cols { grid-template-columns: 2fr 1fr 1fr; }
 }
 
