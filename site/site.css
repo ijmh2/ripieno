@@ -1,50 +1,159 @@
 /*
- * Documentation styling. No webfonts and no external requests: the pages are
- * about running a relay you control, and loading a stranger's font to say so
- * would be a small hypocrisy.
+ * Documentation styling — the sketchbook.
+ *
+ * Still no external requests: the pages are about running a relay you control,
+ * and loading a stranger's font to say so would be a small hypocrisy. The two
+ * handwritten faces this design needs are therefore served from site/fonts/
+ * rather than from a font CDN — see site/fonts/OFL.txt for the licence and the
+ * copyright holders. Nothing here reaches off the origin.
+ *
+ * One palette, light only. A sketchbook is paper; there is no dark paper, and a
+ * half-applied dark theme is worse than none.
  */
 
-:root {
-  --ground: #f6f6f4;
-  --surface: #ffffff;
-  --surface-2: #ecedea;
-  --ink: #17191a;
-  --ink-muted: #565c59;
-  --ink-faint: #828884;
-  --rule: #dedfdb;
-  --rule-strong: #c6c8c3;
-  --brass: #8a5e24;
-  --brass-soft: #f1e7d7;
+/* ---------- fonts ---------- */
 
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+@font-face {
+  font-family: "Kalam";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/kalam-400-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Kalam";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/kalam-400-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Kalam";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/kalam-700-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Kalam";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/kalam-700-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Patrick Hand";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/patrickhand-400-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Patrick Hand";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/patrickhand-400-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ground: #131513;
-    --surface: #1a1d1b;
-    --surface-2: #212523;
-    --ink: #e7e9e5;
-    --ink-muted: #9ba09c;
-    --ink-faint: #6f7572;
-    --rule: #2a2e2b;
-    --rule-strong: #3c413d;
-    --brass: #cc9a4f;
-    --brass-soft: #2a2318;
-  }
+/* ---------- tokens ---------- */
+
+:root {
+  /* paper */
+  --paper: #fdfbf7;
+  --paper-2: #f3efe6;
+  --card: #ffffff;
+  --muted: #e5e0d8;
+  --postit: #fff9c4;
+
+  /* pencil */
+  --ink: #2d2d2d;
+  --ink-soft: #57534a;   /* 7.4:1 on paper */
+  --ink-faint: #6b6459;  /* 5.7:1 on paper — still AA at any size */
+  --border: #2d2d2d;
+
+  /*
+   * Two reds, deliberately. #ff4d4d is the correction marker of the design
+   * system and only ever draws — strokes, rules, tacks, squiggles — because at
+   * 3.2:1 on paper it is not a colour text may sit in or on. --marker is the
+   * same pen pressed harder: 6.4:1 on paper, 6.7:1 under white, so every red
+   * word and every red fill with a label on it uses that one instead.
+   */
+  --accent: #ff4d4d;
+  --marker: #a8322a;
+  --pen: #2d5da1;        /* blue ballpoint — 6.4:1 */
+  --ochre: #7a5410;
+  --green: #1d6a4a;
+
+  /* wobble: never a uniform radius. Bigger boxes take gentler wobble, and
+     anything that scrolls its own content takes --wobbly-sm so the corners
+     cannot clip a long line of code. */
+  --wobbly-lg: 255px 15px 225px 15px / 15px 225px 15px 255px;
+  --wobbly: 30px 8px 26px 10px / 10px 26px 8px 30px;
+  --wobbly-md: 18px 42px 16px 38px / 38px 16px 42px 18px;
+  --wobbly-sm: 14px 5px 12px 7px / 7px 12px 5px 14px;
+  --wobbly-pill: 130px 18px 120px 20px / 20px 120px 18px 130px;
+
+  /* hard offset shadows only. No blur anywhere on this site. */
+  --shadow: 4px 4px 0 0 var(--ink);
+  --shadow-lg: 8px 8px 0 0 var(--ink);
+  --shadow-sm: 3px 3px 0 0 rgb(45 45 45 / 0.14);
+
+  --hand: "Patrick Hand", "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive, sans-serif;
+  --marker-font: "Kalam", "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* hand-drawn decorations, inline so nothing is fetched */
+  --wave-red: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 44 9'%3E%3Cpath d='M1 6C6 1.5 11 8 16 5.2S27 1 32 5.4 39 8 43 4' fill='none' stroke='%23ff4d4d' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E");
+  --wave-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 44 9'%3E%3Cpath d='M1 6C6 1.5 11 8 16 5.2S27 1 32 5.4 39 8 43 4' fill='none' stroke='%232d2d2d' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E");
+  --rule-hand: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 10' preserveAspectRatio='none'%3E%3Cpath d='M3 6C40 2.5 80 8 118 5S196 2 232 6.5 288 4 297 5' fill='none' stroke='%232d2d2d' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E");
+  --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='M2.5 9.5C4 11 5.4 12.6 6.8 14.8 9 10 12 5.8 16 2.4' fill='none' stroke='%232d5da1' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 * { box-sizing: border-box; }
 
+html { -webkit-text-size-adjust: 100%; }
+
 body {
   margin: 0;
-  background: var(--ground);
+  /* Explicit, so the page can never inherit a dark ground under dark ink. */
+  background-color: var(--paper);
+  background-image: radial-gradient(var(--muted) 1px, transparent 1px);
+  background-size: 24px 24px;
   color: var(--ink);
-  font-family: var(--sans);
-  font-size: 17px;
-  line-height: 1.65;
+  font-family: var(--hand);
+  font-size: 19px;
+  line-height: 1.62;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+::selection { background: var(--postit); color: var(--ink); }
+
+/* ---------- focus: a wobbly offset outline, drawn round the thing ---------- */
+
+:focus-visible {
+  outline: 3px dashed var(--pen);
+  outline-offset: 4px;
+  border-radius: var(--wobbly-sm);
 }
 
 .skip {
@@ -52,14 +161,18 @@ body {
   left: -9999px;
 }
 .skip:focus {
-  left: 12px;
-  top: 12px;
-  z-index: 10;
-  background: var(--surface);
+  left: 14px;
+  top: 14px;
+  z-index: 20;
+  background: var(--postit);
   color: var(--ink);
-  padding: 10px 16px;
-  border: 1px solid var(--rule-strong);
-  border-radius: 4px;
+  padding: 12px 22px;
+  border: 3px solid var(--ink);
+  border-radius: var(--wobbly-pill);
+  box-shadow: var(--shadow);
+  font-family: var(--marker-font);
+  font-weight: 700;
+  text-decoration: none;
 }
 
 /* ---------- chrome ---------- */
@@ -67,181 +180,294 @@ body {
 .top {
   display: flex;
   align-items: baseline;
-  gap: 28px;
+  gap: 12px 30px;
   flex-wrap: wrap;
-  max-width: 860px;
+  max-width: 64rem;
   margin: 0 auto;
-  padding: 28px 24px 20px;
-  border-bottom: 1px solid var(--rule);
+  padding: 26px 24px 20px;
+  border-bottom: 3px dashed var(--muted);
 }
 
 .wordmark {
-  font-size: 19px;
+  font-family: var(--marker-font);
+  font-size: 30px;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  line-height: 1;
   color: var(--ink);
   text-decoration: none;
+  transform: rotate(-1.5deg);
+  transition: transform 100ms ease;
 }
+.wordmark:hover { transform: rotate(1.5deg); }
 
 .top nav {
   display: flex;
-  gap: 18px;
+  gap: 8px 20px;
   flex-wrap: wrap;
-  font-size: 14px;
+  font-size: 18px;
 }
 .top nav a {
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   text-decoration: none;
-  padding-bottom: 2px;
-  border-bottom: 1.5px solid transparent;
+  padding: 6px 2px 10px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: 0 8px;
+  transition: background-size 140ms ease, color 140ms ease;
 }
-.top nav a:hover { color: var(--ink); }
+.top nav a:hover,
+.top nav a:focus-visible {
+  color: var(--ink);
+  background-image: var(--wave-ink);
+  background-repeat: repeat-x;
+  background-size: 22px 8px;
+}
 .top nav a[aria-current="page"] {
   color: var(--ink);
-  border-bottom-color: var(--brass);
+  background-image: var(--wave-red);
+  background-repeat: repeat-x;
+  background-size: 22px 8px;
 }
 
 main {
-  max-width: 860px;
+  max-width: 64rem;
   margin: 0 auto;
   padding: 40px 24px 80px;
 }
 
 .foot {
-  max-width: 860px;
+  max-width: 64rem;
   margin: 0 auto;
   padding: 26px 24px 60px;
-  border-top: 1px solid var(--rule);
+  border-top: 3px dashed var(--muted);
   color: var(--ink-faint);
-  font-size: 13.5px;
-  line-height: 1.6;
+  font-size: 17px;
+  line-height: 1.55;
 }
-.foot p { margin: 0 0 6px; }
+.foot p { margin: 0 0 8px; }
+.foot a { color: var(--ink-soft); }
 
 /* ---------- prose ---------- */
 
-main h1 {
-  font-size: clamp(32px, 5.5vw, 44px);
+main h1,
+main h2,
+main h3,
+main h4 {
+  font-family: var(--marker-font);
   font-weight: 700;
-  letter-spacing: -0.028em;
-  line-height: 1.1;
-  margin: 0 0 20px;
   text-wrap: balance;
+}
+
+main h1 {
+  font-size: clamp(2.25rem, 6vw, 3.25rem);
+  line-height: 1.08;
+  margin: 0 0 22px;
+  transform: rotate(-0.8deg);
+  transform-origin: left center;
 }
 main h2 {
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 52px 0 14px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--rule);
-  text-wrap: balance;
+  font-size: clamp(1.7rem, 4vw, 2.15rem);
+  line-height: 1.15;
+  margin: 54px 0 16px;
+  padding-bottom: 14px;
+  background-image: var(--rule-hand);
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: 100% 10px;
 }
 main h3 {
-  font-size: 20px;
-  font-weight: 650;
-  letter-spacing: -0.012em;
-  margin: 34px 0 10px;
+  font-size: 1.45rem;
+  line-height: 1.2;
+  margin: 36px 0 10px;
 }
 main h4 {
-  font-size: 16px;
-  font-weight: 650;
-  margin: 26px 0 8px;
+  font-size: 1.2rem;
+  margin: 28px 0 8px;
 }
 
-main p, main li { max-width: 72ch; }
+main p, main li { max-width: 68ch; }
 main p { margin: 0 0 16px; }
 
-main ul, main ol { margin: 0 0 18px; padding-left: 24px; }
+main ul, main ol { margin: 0 0 20px; padding-left: 26px; }
 main li { margin-bottom: 8px; }
+main ul { list-style: none; padding-left: 28px; }
+main ul > li { position: relative; }
+main ul > li::before {
+  content: "";
+  position: absolute;
+  left: -22px;
+  top: 0.62em;
+  width: 9px;
+  height: 9px;
+  background: var(--accent);
+  border-radius: 60% 40% 55% 45% / 45% 55% 40% 60%;
+}
+main ol { list-style: none; counter-reset: mdstep; padding-left: 30px; }
+main ol > li { counter-increment: mdstep; position: relative; }
+main ol > li::before {
+  content: counter(mdstep) ".";
+  position: absolute;
+  left: -28px;
+  top: 0;
+  font-family: var(--marker-font);
+  font-weight: 700;
+  color: var(--marker);
+}
 
-main a { color: var(--brass); text-underline-offset: 2px; }
-main a:hover { text-decoration-thickness: 2px; }
+main strong { font-family: var(--marker-font); font-weight: 700; }
+main em { font-style: italic; }
+
+main a {
+  color: var(--pen);
+  text-decoration: none;
+  background-image: var(--wave-ink);
+  background-repeat: repeat-x;
+  background-position: 0 100%;
+  background-size: 22px 8px;
+  padding-bottom: 6px;
+}
+main a:hover { background-image: var(--wave-red); color: var(--marker); }
 
 main hr {
   border: 0;
-  border-top: 1px solid var(--rule);
-  margin: 44px 0;
+  border-top: 3px dashed var(--muted);
+  margin: 46px 0;
 }
 
 blockquote {
-  margin: 0 0 20px;
-  padding: 2px 0 2px 20px;
-  border-left: 3px solid var(--brass);
-  color: var(--ink-muted);
-  font-style: italic;
+  position: relative;
+  margin: 0 0 24px;
+  padding: 18px 22px 4px;
+  background: var(--postit);
+  border: 2px solid var(--ink);
+  border-radius: var(--wobbly);
+  box-shadow: var(--shadow-sm);
+  transform: rotate(-0.7deg);
+  color: var(--ink);
 }
-blockquote p:last-child { margin-bottom: 0; }
+blockquote::before {
+  /* a strip of tape holding the note down */
+  content: "";
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  width: 88px;
+  height: 22px;
+  transform: translateX(-50%) rotate(-3deg);
+  background: rgb(45 45 45 / 0.09);
+  border-left: 1px dashed rgb(45 45 45 / 0.18);
+  border-right: 1px dashed rgb(45 45 45 / 0.18);
+}
+blockquote p:last-child { margin-bottom: 14px; }
 
 /* ---------- code ---------- */
 
 code {
   font-family: var(--mono);
-  font-size: 0.875em;
-  background: var(--surface-2);
-  padding: 2px 6px;
-  border-radius: 3px;
+  font-size: 0.82em;
+  background: var(--muted);
+  padding: 2px 7px;
+  border-radius: var(--wobbly-sm);
 }
 
+/*
+ * Doc code blocks are commands you are meant to copy, not machine output being
+ * quoted, so they stay on paper: an index card with the pencil border and the
+ * hard shadow. (The landing page keeps its two literal terminals dark — the
+ * reasoning is in landing.css.)
+ */
 pre {
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: 5px;
-  padding: 16px 18px;
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: var(--wobbly-sm);
+  padding: 16px 20px;
   overflow-x: auto;
-  margin: 0 0 20px;
-  line-height: 1.55;
+  margin: 0 0 24px;
+  line-height: 1.6;
+  box-shadow: var(--shadow);
 }
 pre code {
   background: none;
   padding: 0;
-  font-size: 13.5px;
+  font-size: 15px;
+  color: var(--ink);
 }
 
 /* ---------- tables ---------- */
 
+/* The table scrolls inside its own box; the page never moves sideways. */
+main .table-wrap,
 main table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 0 0 22px;
-  font-size: 15px;
   display: block;
+  width: 100%;
   overflow-x: auto;
+  margin: 0 0 26px;
+}
+main table {
+  border-collapse: collapse;
+  font-size: 17px;
+  border: 2px solid var(--ink);
+  border-radius: var(--wobbly-sm);
+  padding: 4px 10px;
+  background: var(--card);
+  box-shadow: var(--shadow);
 }
 main th {
   text-align: left;
-  font-weight: 650;
-  font-size: 12px;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  padding: 0 16px 8px 0;
-  border-bottom: 1px solid var(--rule-strong);
+  font-family: var(--marker-font);
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--marker);
+  padding: 10px 18px 8px 4px;
+  border-bottom: 2px dashed var(--ink);
   white-space: nowrap;
 }
 main td {
-  padding: 12px 16px 12px 0;
-  border-bottom: 1px solid var(--rule);
+  padding: 11px 18px 11px 4px;
+  border-bottom: 2px dashed var(--muted);
   vertical-align: top;
 }
+main tr:last-child td { border-bottom: 0; }
 
 /* ---------- media ---------- */
 
-main img, main picture, main video {
+main img, main video {
   max-width: 100%;
   height: auto;
-  border-radius: 5px;
+  border-radius: var(--wobbly-sm);
+}
+main p > img,
+main p > a > img {
+  border: 2px solid var(--ink);
+  box-shadow: var(--shadow);
+}
+/* Badges and shields keep their own shape. */
+main img[src*="badge"], main img[src*="shields.io"] {
+  border: 0;
+  box-shadow: none;
 }
 main p[align="center"] { text-align: center; }
 
-:focus-visible {
-  outline: 2px solid var(--brass);
-  outline-offset: 2px;
-  border-radius: 2px;
+@media (max-width: 620px) {
+  body { font-size: 18px; }
+  .top { gap: 10px 16px; padding-top: 18px; }
+  /* Take the whole row, so the links wrap instead of running off the edge —
+     body has overflow-x hidden, so an unwrapped nav loses its last link
+     silently rather than producing a scrollbar that would show the fault. */
+  .top nav { flex: 1 1 100%; }
+  .wordmark { font-size: 26px; }
+  main { padding: 26px 18px 64px; }
+  .foot { padding-inline: 18px; }
+  main h1 { transform: none; }
 }
 
-@media (max-width: 620px) {
-  body { font-size: 16px; }
-  .top { gap: 14px; padding-top: 20px; }
-  main { padding-top: 28px; }
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

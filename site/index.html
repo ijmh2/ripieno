@@ -49,8 +49,9 @@
       </ul>
     </div>
     <div class="hero-shot">
+      <!-- Light only, deliberately: a sketchbook is paper, and the dark panel on
+           a paper page was the half-applied theme this design set out to avoid. -->
       <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/images/room-dark.png">
         <img src="docs/images/room-light.png" width="320" height="820"
              alt="The Ripieno room panel: three people in different colours, an agent reply citing files from two members' workspaces, an action log naming which agent did what on whose machine, and an approval card asking permission to run a command.">
       </picture>
@@ -86,47 +87,51 @@
     </div>
 
     <svg class="diagram" viewBox="0 0 760 340" role="img"
-         aria-label="Three machines, each running an editor and that person's own agent, all connected to one relay you operate. Agents and files stay on the machines; the relay only routes the shared conversation.">
+         aria-label="Three machines, each running an editor and that person's own agent, all connected to one room. Agents and files stay on the machines; the room only carries the shared conversation.">
+      <!-- Boxes drawn as paths, not rects: a rect cannot be wobbly, and every
+           edge on this page is meant to look drawn rather than computed. -->
       <g class="dg-node">
-        <rect x="8"   y="16" width="216" height="96" rx="9"/>
-        <rect x="272" y="16" width="216" height="96" rx="9"/>
-      </g>
-      <g class="dg-you">
-        <rect x="536" y="16" width="216" height="96" rx="9"/>
-        <text class="dg-handle-t" x="556" y="45">@ijmh2</text>
-        <text class="dg-you-tag" x="700" y="45">you</text>
+        <path d="M11 21 C70 18 150 20 221 17 C224 45 222 78 220 108 C155 111 78 109 12 110 C9 79 10 50 11 21 Z"/>
+        <path d="M275 19 C340 17 410 21 486 18 C488 48 487 80 485 109 C420 112 340 110 276 111 C273 80 274 48 275 19 Z"/>
       </g>
       <g class="dg-handle">
-        <text x="28"  y="45">@ijmh0</text>
-        <text x="292" y="45">@ijmh1</text>
+        <text x="30"  y="48">@ijmh0</text>
+        <text x="294" y="48">@ijmh1</text>
       </g>
+
+      <g class="dg-you">
+        <path class="dg-box" d="M539 18 C600 21 680 17 750 20 C752 50 751 78 749 110 C685 108 610 112 540 109 C537 80 538 48 539 18 Z"/>
+        <text class="dg-handle-t" x="558" y="48">@ijmh2</text>
+        <text class="dg-you-tag" x="700" y="48">you</text>
+      </g>
+
       <g class="dg-sub">
-        <text x="28"  y="68">their agent, their plan</text>
-        <text x="292" y="68">their agent, their plan</text>
-        <text x="556" y="68">their agent, their plan</text>
-        <text x="28"  y="90">their files, their keys</text>
-        <text x="292" y="90">their files, their keys</text>
-        <text x="556" y="90">their files, their keys</text>
+        <text x="30"  y="72">their agent, their plan</text>
+        <text x="294" y="72">their agent, their plan</text>
+        <text x="558" y="72">their agent, their plan</text>
+        <text x="30"  y="95">their files, their keys</text>
+        <text x="294" y="95">their files, their keys</text>
+        <text x="558" y="95">their files, their keys</text>
       </g>
 
       <g class="dg-line">
-        <path d="M116 112 L116 168 Q116 180 128 180 L368 180"/>
-        <path d="M380 112 L380 180"/>
-        <path d="M644 112 L644 168 Q644 180 632 180 L392 180"/>
-        <path d="M380 180 L380 226"/>
+        <path d="M116 112 C114 135 118 158 117 176 C160 179 300 177 372 180"/>
+        <path d="M380 112 C378 135 382 158 380 180"/>
+        <path d="M644 112 C646 136 642 158 643 177 C580 180 450 178 388 180"/>
+        <path d="M380 180 C382 196 378 210 380 224"/>
       </g>
-      <g class="dg-dot"><circle cx="380" cy="180" r="3.5"/></g>
+      <g class="dg-dot"><circle cx="380" cy="180" r="4.5" fill="#a8322a"/></g>
 
       <g class="dg-relay">
-        <rect x="230" y="226" width="300" height="86" rx="9"/>
-        <text class="dg-relay-t" x="256" y="256">the room</text>
-        <text class="dg-sub" x="256" y="278">one shared conversation</text>
-        <text class="dg-sub" x="256" y="298">holds no code · runs nothing</text>
+        <path class="dg-box" d="M234 230 C300 227 400 231 527 228 C529 255 528 285 526 309 C440 312 320 310 235 311 C232 285 233 256 234 230 Z"/>
+        <text class="dg-relay-t" x="258" y="262">the room</text>
+        <text class="dg-sub" x="258" y="285">one shared conversation</text>
+        <text class="dg-sub" x="258" y="304">holds no code &#183; runs nothing</text>
       </g>
 
       <g class="dg-note">
-        <text x="8"   y="140">agents run here</text>
-        <text x="556" y="140">and only here</text>
+        <text x="12"  y="146">agents run here</text>
+        <text x="558" y="146">and only here</text>
       </g>
     </svg>
   </section>

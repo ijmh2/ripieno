@@ -114,6 +114,8 @@ function layout({ title, body, slug, description }) {
 <meta property="og:title" content="${title}">
 <meta property="og:description" content="${description}">
 <meta property="og:type" content="website">
+<link rel="preload" href="fonts/kalam-700-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/patrickhand-400-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="site.css">
 </head>
 <body>
@@ -139,6 +141,23 @@ function firstParagraph(html) {
   const match = html.match(/<p>([\s\S]*?)<\/p>/);
   const text = (match?.[1] ?? "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
   return text.slice(0, 180).replace(/"/g, "&quot;");
+}
+
+/**
+ * The two handwritten faces the design needs, served from this origin. The
+ * pages still make no external request — see the note at the top of site.css.
+ */
+function copyFonts() {
+  const from = path.join(ROOT, "site", "fonts");
+  if (!fs.existsSync(from)) return 0;
+  const to = path.join(OUT, "fonts");
+  fs.mkdirSync(to, { recursive: true });
+  let n = 0;
+  for (const file of fs.readdirSync(from)) {
+    fs.copyFileSync(path.join(from, file), path.join(to, file));
+    n += 1;
+  }
+  return n;
 }
 
 function copyImages() {
@@ -183,6 +202,7 @@ function build() {
   }
   console.log("  site/index.html".padEnd(26) + "-> index.html (hand-authored)");
   const images = copyImages();
+  const fonts = copyFonts();
   // Tells GitHub Pages not to run Jekyll, which would drop files beginning "_".
   fs.writeFileSync(path.join(OUT, ".nojekyll"), "");
 
@@ -192,7 +212,7 @@ function build() {
     console.log(`  CNAME -> ${domain}`);
   }
 
-  console.log(`\n  ${PAGES.length} pages, ${images} images -> site/dist`);
+  console.log(`\n  ${PAGES.length} pages, ${images} images, ${fonts} font files -> site/dist`);
 }
 
 function serve(port) {
@@ -203,6 +223,9 @@ function serve(port) {
     ".png": "image/png",
     ".gif": "image/gif",
     ".svg": "image/svg+xml",
+    ".woff2": "font/woff2",
+    ".txt": "text/plain; charset=utf-8",
+    ".mp4": "video/mp4",
   };
   http
     .createServer((req, res) => {
