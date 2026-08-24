@@ -28,6 +28,13 @@ const ROOT = path.join(__dirname, "..");
 const OUT = path.join(ROOT, "site", "dist");
 
 /**
+ * Where the site lives, for the absolute URLs a social scraper needs — it has
+ * no page to resolve a relative one against. Override to preview a different
+ * origin; the default is the domain the site is actually served from.
+ */
+const SITE_URL = (process.env.RIPIENO_SITE_URL || "https://ripieno.app").replace(/\/+$/, "");
+
+/**
  * Every *document* page, in nav order. `source` is the file that owns the words
  * and nothing here may restate them.
  *
@@ -113,7 +120,11 @@ function layout({ title, body, slug, description }) {
 <meta name="description" content="${description}">
 <meta property="og:title" content="${title}">
 <meta property="og:description" content="${description}">
-<meta property="og:type" content="website">
+<meta property="og:type" content="article">
+<meta property="og:url" content="${SITE_URL}/${slug}.html">
+<link rel="canonical" href="${SITE_URL}/${slug}.html">
+<meta property="og:image" content="${SITE_URL}/docs/images/room-light.png">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="preload" href="fonts/kalam-700-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/patrickhand-400-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="site.css">
