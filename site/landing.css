@@ -555,8 +555,11 @@ ol.steps pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
   padding-bottom: 6px;
 }
 .foot-tag { max-width: 42ch; font-style: italic; }
+/* One per line. inline-block let them run together as a paragraph — the
+   line-through on hover only ever crosses the text, so block costs nothing. */
 .foot-cols a {
-  display: inline-block;
+  display: block;
+  width: fit-content;
   color: var(--ink-soft);
   text-decoration: none;
   margin-bottom: 8px;
