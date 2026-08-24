@@ -671,3 +671,11 @@ ol.steps pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
 }
 
 @media (max-width: 767px) { .room { transform: rotate(0.6deg); } }
+
+.cta-note {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-faint);
+  margin: 18px 0 0;
+}

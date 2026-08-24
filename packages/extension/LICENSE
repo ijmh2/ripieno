@@ -2,29 +2,41 @@ Ripieno — Alpha Terms
 
 Copyright (c) 2026 Ivan Hart. All rights reserved.
 
-Ripieno is source-available, not open source. The source may be read and
+Ripieno is source-available, not open source. The source may be read, built and
 checked; the permissions below are the only ones granted.
 
 
-DURING THE ALPHA YOU MAY
+FREE, WITH NO LICENCE REQUIRED
 
-  - Install and use Ripieno free of charge, for personal or internal use,
-    on any number of machines.
-  - Read, build, and modify the source for your own use, so that every
-    claim this project makes about itself can be verified.
-  - Run your own relay and your own shared-workspace host.
-
-
-YOU MAY NOT
-
-  - Redistribute Ripieno, or a modified version of it.
-  - Offer Ripieno, or any service based on it, to third parties.
-  - Use it to build a competing product.
-  - Remove or alter this notice.
+  - Personal use, by an individual, on any number of their own machines.
+  - Non-commercial use: study, teaching, research, and hobby projects.
+  - Evaluation by an organisation, for up to 30 days.
+  - Reading, building and modifying the source for any of the above, so that
+    every claim this project makes about itself can be verified.
+  - Running your own relay and your own shared-workspace host for any of the
+    above.
 
 
-Licensing for commercial and team use will be announced before 1.0.
-Personal use will remain free.
+REQUIRES A COMMERCIAL LICENCE
+
+  - Any other use by or for an organisation, including a company, a charity, a
+    public body, or a sole trader acting in the course of business.
+
+  This applies however Ripieno is run. Hosting it yourself does not avoid it:
+  what is licensed is the use, not the delivery. Contact the author to arrange
+  terms; they will be reasonable, and individuals will never be charged.
+
+
+NOT PERMITTED UNDER ANY LICENCE HERE
+
+  - Redistributing Ripieno, or a modified version of it.
+  - Offering Ripieno, or any service based on it, to third parties.
+  - Using it to build a competing product.
+  - Removing or altering this notice.
+
+
+Commercial terms will be published before 1.0. Personal and non-commercial use
+will remain free permanently.
 
 
 THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
