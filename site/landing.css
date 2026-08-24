@@ -570,7 +570,7 @@ ol.steps pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 @media (min-width: 768px) {
   .landing section { padding: 84px 0; }
-  .hero { grid-template-columns: 1fr 320px; gap: 64px; padding: 64px 0 84px; }
+  .hero { grid-template-columns: 1fr 380px; gap: 56px; padding: 64px 0 84px; }
   .feature { grid-template-columns: 1fr 1fr; gap: 64px; }
   .feature.reverse .feature-copy { order: 2; }
   ol.steps { grid-template-columns: repeat(3, 1fr); }
@@ -586,3 +586,85 @@ ol.steps pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
   .btn { width: 100%; }
   .band { padding-block: 56px; }
 }
+
+/* ---------------- the room, drawn ---------------- */
+
+/*
+ * The hero used to be a 320px PNG of the real panel. Two problems: the source
+ * had text clipped at its right edge, which reads as a rendering fault, and a
+ * photographic element on a page where everything else is drawn put two visual
+ * registers side by side. Rebuilt from the same parts as the cards further down,
+ * so the whole page is one register and only the terminals are literal.
+ */
+.hero-shot { position: relative; justify-self: start; width: 100%; }
+
+.room {
+  background: var(--card);
+  border: 3px solid var(--ink);
+  border-radius: var(--wobbly-md);
+  box-shadow: var(--shadow-lg);
+  padding: 16px 18px 18px;
+  transform: rotate(1.2deg);
+  font-size: 0.95rem;
+}
+.room > * + * { margin-top: 12px; }
+
+.room-top { display: flex; align-items: center; gap: 9px; }
+.room-code { font-family: var(--marker-font); font-weight: 700; font-size: 1.1rem; }
+.room-byo {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  padding: 2px 7px;
+  background: var(--postit);
+  border: 2px solid var(--ink);
+  border-radius: var(--wobbly-pill);
+}
+
+.room .roster { margin-bottom: 0; }
+.room .chat { gap: 10px; }
+.room .cm { font-size: 0.92rem; }
+
+.room-log {
+  background: var(--muted);
+  border-radius: var(--wobbly-sm);
+  padding: 10px 12px;
+  font-size: 0.84rem;
+  line-height: 1.65;
+}
+.room-log-h {
+  font-family: var(--marker-font);
+  font-weight: 700;
+  font-size: 0.74rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--marker);
+  margin-bottom: 6px;
+}
+.rl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rl .ok { color: var(--green); font-weight: 700; }
+.rl .bad { color: var(--marker); font-weight: 700; }
+.rl em { color: var(--marker); font-style: italic; }
+.rl code { font-size: 0.78rem; background: var(--card); }
+
+.room-appr {
+  border: 2px solid var(--ink);
+  border-left-width: 4px;
+  border-radius: var(--wobbly-sm);
+  padding: 11px 13px;
+  background: var(--card);
+}
+.ra-t { font-family: var(--marker-font); font-weight: 700; font-size: 0.92rem; margin-bottom: 8px; }
+.room-appr .cmd { font-size: 0.74rem; margin-bottom: 10px; }
+.room-appr .ui-btns { margin-bottom: 0; }
+.room-appr .ui-btn { font-size: 0.84rem; padding: 4px 12px; }
+
+.room-composer {
+  border: 2px dashed var(--rule-strong);
+  border-radius: var(--wobbly-pill);
+  padding: 8px 14px;
+  color: var(--ink-faint);
+  font-size: 0.88rem;
+}
+
+@media (max-width: 767px) { .room { transform: rotate(0.6deg); } }

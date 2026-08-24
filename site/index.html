@@ -48,13 +48,40 @@
         <li>Self-hosted, or no host at all</li>
       </ul>
     </div>
+    <!-- Drawn, not photographed. Everything illustrative on this page is markup;
+         only the two terminals are literal machine output. Mixing a screenshot in
+         put two visual registers on one page, and left the reader unsure which
+         parts were real — which on a page ending in "What's actually real" is the
+         one ambiguity worth spending markup to remove. -->
     <div class="hero-shot">
-      <!-- Light only, deliberately: a sketchbook is paper, and the dark panel on
-           a paper page was the half-applied theme this design set out to avoid. -->
-      <picture>
-        <img src="docs/images/room-light.png" width="320" height="820"
-             alt="The Ripieno room panel: three people in different colours, an agent reply citing files from two members' workspaces, an action log naming which agent did what on whose machine, and an approval card asking permission to run a command.">
-      </picture>
+      <div class="room" role="img" aria-label="The Ripieno room panel: three people present with their own agents, a message from ijmh1, a correction from you, an agent reply acting on it, an action log naming which agent did what on whose machine, and an approval card asking permission to run a command.">
+        <div class="room-top">
+          <span class="room-code">tgtbt-review</span>
+          <span class="room-byo">BYO</span>
+        </div>
+        <div class="roster">
+          <span class="pres you">● @ijmh2</span>
+          <span class="pres">● @ijmh1</span>
+          <span class="pres busy">◐ their coder</span>
+        </div>
+        <div class="chat">
+          <div class="cm sam"><b>@ijmh1</b>use close-to-close returns</div>
+          <div class="cm kate"><b>@ijmh2</b>careful — the 18th had a half-day</div>
+          <div class="cm bot"><b>@ijmh1's coder</b>Good catch. Re-running with an explicit half-day mask.</div>
+        </div>
+        <div class="room-log">
+          <div class="room-log-h">Work · 3 · 1 failed</div>
+          <div class="rl"><span class="ok">✓</span> wrote <code>room.ts</code> <em>on @ijmh1</em></div>
+          <div class="rl"><span class="ok">✓</span> read <code>latest.json</code> <em>on @ijmh2</em></div>
+          <div class="rl"><span class="bad">✕</span> <code>npm test</code> — exit 1</div>
+        </div>
+        <div class="room-appr">
+          <div class="ra-t">@ijmh1's coder wants to run Bash</div>
+          <code class="cmd">npm test -- --runInBand</code>
+          <div class="ui-btns"><span class="ui-btn pri">Allow once</span><span class="ui-btn sec">Deny</span></div>
+        </div>
+        <div class="room-composer">Message…  @ people · / commands</div>
+      </div>
     </div>
   </section>
 
