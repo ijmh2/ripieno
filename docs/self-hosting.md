@@ -44,7 +44,7 @@ Either way it prints what you need on startup and there is no token to mint:
   Ripieno relay ready
 
     URL     wss://relay.example.com
-    Token   dd0bce7fc9992ca0a7b2ce0b6ac9dc068b83b7d1150fe0f1  (generated, saved)
+    Token   0123456789abcdef0123456789abcdef0123456789abcdef  (generated, saved)
     Room    general
     Members verified against GitHub
 ```
