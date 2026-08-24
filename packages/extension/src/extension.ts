@@ -723,10 +723,39 @@ export function activate(context: vscode.ExtensionContext): void {
 
       const changed = new Set<string>([spec.id]);
       if (response.value === "automatic") {
-        for (const other of specs.values()) {
-          if (other.id !== spec.id && responseModeForSpec(other) === "automatic") {
-            other.responseMode = "mentions";
-            changed.add(other.id);
+        const others = [...specs.values()].filter(
+          (other) => other.id !== spec.id && responseModeForSpec(other) === "automatic"
+        );
+        if (others.length > 0) {
+          // Asked rather than done. Promoting one agent used to silently demote
+          // the others, and because an agent with no explicit setting is
+          // automatic only by position, what a member saw was a setting they had
+          // never touched changing to its opposite on its own.
+          //
+          // Both answers are legitimate, so this offers both. Several automatic
+          // agents do not cascade — an unnamed agent message wakes nobody at any
+          // depth — so the cost is duplicate replies, not a runaway room.
+          const names = others.map((other) => labelFor(other.label)).join(", ");
+          const onlyThis = `Only ${labelFor(spec.label)}`;
+          const keepBoth = others.length === 1 ? "Keep both" : "Keep them all";
+          const choice = await vscode.window.showWarningMessage(
+            `${names} already ${others.length === 1 ? "answers" : "answer"} unaddressed messages.`,
+            {
+              modal: true,
+              detail:
+                others.length === 1
+                  ? "Keeping both means every message nobody names gets two replies, one from each agent. Neither wakes the other, so it stays two."
+                  : "Keeping them all means every message nobody names is answered once by each agent. They do not wake each other.",
+            },
+            onlyThis,
+            keepBoth
+          );
+          if (!choice) return;
+          if (choice === onlyThis) {
+            for (const other of others) {
+              other.responseMode = "mentions";
+              changed.add(other.id);
+            }
           }
         }
       }
@@ -739,8 +768,16 @@ export function activate(context: vscode.ExtensionContext): void {
       for (const agentId of restart) {
         if (await attachAgent(agentId)) reattached += 1;
       }
+      // Name the agents that changed as a consequence, not just the one that was
+      // asked about. A member who is told only what they clicked has to go and
+      // check the others to find out what it cost.
+      const demoted = [...changed]
+        .filter((agentId) => agentId !== spec.id)
+        .map((agentId) => labelFor(specs.get(agentId)?.label ?? agentId));
       void vscode.window.showInformationMessage(
         `${labelFor(spec.label)} now uses ${describeResponseMode(spec).toLocaleLowerCase()}${
+          demoted.length > 0 ? `; ${demoted.join(", ")} now wait${demoted.length === 1 ? "s" : ""} to be named` : ""
+        }${
           reattached > 0
             ? " and active agents were restarted safely"
             : restart.length > 0
