@@ -19,11 +19,21 @@ class TestClient {
   private readonly socket: WebSocket;
   readonly received: ServerMsg[] = [];
 
+  /** Why the relay hung up, if it did — an eviction shows up here as 4000. */
+  readonly closes: Array<{ code: number; reason: string }> = [];
+
   constructor(socket: WebSocket) {
     this.socket = socket;
     socket.on("message", (raw: WebSocket.RawData) => {
       this.received.push(JSON.parse(String(raw)) as ServerMsg);
     });
+    socket.on("close", (code: number, reason: Buffer) => {
+      this.closes.push({ code, reason: String(reason) });
+    });
+  }
+
+  get open(): boolean {
+    return this.socket.readyState === this.socket.OPEN;
   }
 
   static async connect(): Promise<TestClient> {
@@ -131,6 +141,48 @@ describe("byo room end-to-end", () => {
     assert.equal(seen.authorHandle, "mellery");
 
     mira.close();
+    sam.close();
+  });
+
+  test("one person's two devices are both in the room, as one member", async () => {
+    const laptop = await TestClient.connect();
+    const desktop = await TestClient.connect();
+    const sam = await TestClient.connect();
+    const mira = { handle: "mellery", displayName: "Mira" };
+
+    laptop.send({ t: "join", room: "e2e-devices", member: mira });
+    await laptop.waitForJoined();
+    desktop.send({ t: "join", room: "e2e-devices", member: mira });
+    const second = await desktop.waitForJoined();
+    sam.send({ t: "join", room: "e2e-devices", member: { handle: "swhitfield", displayName: "Sam" } });
+    await sam.waitForJoined();
+
+    // The same identity twice: the second device must not have hung up on the
+    // first, which is what a 4000 in `closes` would mean.
+    assert.equal(laptop.open, true);
+    assert.deepEqual(laptop.closes, []);
+    // And the room still describes one person rather than one entry per device.
+    assert.equal(second.roster.filter((r) => r.handle === "mellery").length, 1);
+
+    // Both machines hear the room...
+    sam.send({ t: "say", text: "which of you is reading this?" });
+    await laptop.waitForEntry((e) => e.text === "which of you is reading this?");
+    await desktop.waitForEntry((e) => e.text === "which of you is reading this?");
+
+    // ...and either may speak as them.
+    desktop.send({ t: "say", text: "both of us" });
+    const spoken = await sam.waitForEntry((e) => e.text === "both of us");
+    assert.equal(spoken.authorHandle, "mellery");
+
+    // One device closing does not take the person out of the room with it.
+    desktop.close();
+    sam.send({ t: "say", text: "still there?" });
+    await laptop.waitForEntry((e) => e.text === "still there?");
+    laptop.send({ t: "say", text: "still here" });
+    const after = await sam.waitForEntry((e) => e.text === "still here");
+    assert.equal(after.authorHandle, "mellery");
+
+    laptop.close();
     sam.close();
   });
 
