@@ -91,7 +91,19 @@ export interface AgentIdentity {
 }
 
 export class Room {
-  private readonly connections = new Map<string, Connection>();
+  /**
+   * Every socket a member is reachable at, keyed by handle rather than by
+   * device — one person may be at two machines at once (a laptop and a
+   * desktop), and the second must not evict the first, exactly as one person's
+   * several agents must not evict each other.
+   *
+   * The roster stays one entry per handle: two of someone's machines are the
+   * same person, not two members. The invariant that keeps it that way is that
+   * a handle is a key here only while it has at least one live socket — so
+   * `connections.has(handle)` is still "are they present" and
+   * `connections.size` is still how many members are.
+   */
+  private readonly connections = new Map<string, Set<Connection>>();
   /**
    * Each member's own agents, keyed by agent id rather than by handle — one
    * person may run several at once (a coder and a reviewer, say), and they must
@@ -510,6 +522,11 @@ export class Room {
       this.roles.set(member.handle, "owner");
     }
 
+    // A second machine belonging to somebody already here is not an arrival:
+    // the roster has one entry for them either way, and announcing it again
+    // would fill the transcript with one person's laptops greeting each other.
+    const announceArrival = role === "agent" || !this.connections.has(member.handle);
+
     let label: string;
     let myAgentId: string | undefined;
     if (role === "agent") {
@@ -540,11 +557,12 @@ export class Room {
       });
     } else {
       label = member.displayName;
-      this.connections.get(member.handle)?.socket.close(
-        4000,
-        `another session joined as @${member.handle}`
-      );
-      this.connections.set(member.handle, { member, socket });
+      // Added, not swapped in. Keying the *set* by handle and the entries by
+      // socket is what lets one identity hold two sessions at once; closing the
+      // one already there is what used to stop it.
+      const live = this.connections.get(member.handle);
+      if (live) live.add({ member, socket });
+      else this.connections.set(member.handle, new Set([{ member, socket }]));
     }
 
     this.sendTo(socket, {
@@ -576,7 +594,7 @@ export class Room {
       roster: this.roster,
       transcript: this.transcript,
     });
-    this.system(`${label} joined the room.`);
+    if (announceArrival) this.system(`${label} joined the room.`);
     this.broadcastRoster();
     this.scheduleHandoffExpiry();
     if (role === "agent" && myAgentId) this.replayHandoffDelivery(myAgentId);
@@ -1631,10 +1649,38 @@ export class Room {
       label = conn.label;
       this.agents.delete(key);
     } else {
-      const conn = this.connections.get(handle);
-      if (!conn) return;
-      if (socket && conn.socket !== socket) return;
-      label = isContainer(handle) ? "The shared workspace" : conn.member.displayName;
+      const live = this.connections.get(handle);
+      if (!live) return;
+      const gone = socket ? [...live].find((c) => c.socket === socket) : undefined;
+      // A named socket that is not registered is a stale close event, and must
+      // not take a live connection down with it. Naming no socket at all is the
+      // member leaving outright, so every machine of theirs goes.
+      if (socket && !gone) return;
+      const identity = gone ?? [...live][0];
+      label = isContainer(handle)
+        ? "The shared workspace"
+        : identity?.member.displayName ?? handle;
+      // Whether the machine their work goes to is the one that died — asked
+      // before the entry is removed, while `executorOf` can still be compared.
+      const executorLeft = gone !== undefined && this.executorOf(handle) === gone;
+      if (gone) live.delete(gone);
+      else live.clear();
+      if (live.size > 0) {
+        // Another of their machines is still here, so they have not left: the
+        // roster entry stands and nothing is announced. Departing on the first
+        // socket to drop would flicker a two-device member in and out of the
+        // roster every time either one reconnected.
+        //
+        // Their in-flight work is the exception. A tool call was dispatched to
+        // one machine rather than all of them, so if that is the machine that
+        // died, nothing that remains has been asked and nothing will answer.
+        // Say so now rather than leaving the agent to burn its full timeout —
+        // the same reason the full-departure path below does it. Re-dispatching
+        // to the surviving machine is not the answer: the call may already have
+        // written half its file on the one that went.
+        if (executorLeft) this.failRemoteCallsFor(handle);
+        return;
+      }
       this.connections.delete(handle);
       if (!isContainer(handle)) {
         await this.cancelPreClaimHandoffsFor(handle, "disconnected");
@@ -1740,8 +1786,8 @@ export class Room {
       this.replyRemote(requester.agentId, requestId, "This room has no shared workspace host.", true);
       return;
     }
-    const conn = this.connections.get(target);
-    if (!conn) {
+    const executor = this.executorOf(target);
+    if (!executor) {
       this.replyRemote(
         requester.agentId,
         requestId,
@@ -1761,7 +1807,7 @@ export class Room {
       name,
       input,
     });
-    this.sendTo(conn.socket, {
+    this.sendTo(executor.socket, {
       t: "remoteToolRequest",
       requestId: callId,
       requesterAgentId: requester.agentId,
@@ -1808,9 +1854,7 @@ export class Room {
    * do that" to everyone would make ordinary mistakes into public ones.
    */
   private systemTo(handle: string, text: string): void {
-    const conn = this.connections.get(handle);
-    if (!conn) return;
-    this.sendTo(conn.socket, {
+    this.sendToHandle(handle, {
       t: "entry",
       entry: {
         id: randomUUID(),
@@ -1914,8 +1958,8 @@ export class Room {
       return;
     }
 
-    const conn = this.connections.get(handle);
-    if (!conn || text.trim() === "") return;
+    const member = this.memberOf(handle);
+    if (!member || text.trim() === "") return;
 
     // The shared workspace is a container, not a person.
     //
@@ -1950,8 +1994,8 @@ export class Room {
       this.append({
         id: randomUUID(),
         kind: "system",
-        authorHandle: conn.member.handle,
-        authorName: conn.member.displayName,
+        authorHandle: member.handle,
+        authorName: member.displayName,
         text,
         ts: Date.now(),
       });
@@ -1965,12 +2009,12 @@ export class Room {
     this.append({
       id: randomUUID(),
       kind: "human",
-      authorHandle: conn.member.handle,
-      authorName: conn.member.displayName,
+      authorHandle: member.handle,
+      authorName: member.displayName,
       text,
       ts: Date.now(),
     });
-    await this.driver.say(conn.member, text);
+    await this.driver.say(member, text);
   }
 
   /**
@@ -2054,8 +2098,8 @@ export class Room {
   }
 
   onToolCall(handle: string, callId: string, name: string, input: Record<string, unknown>): void {
-    const conn = this.connections.get(handle);
-    if (!conn) {
+    const executor = this.executorOf(handle);
+    if (!executor) {
       // resolveTarget already rejects absent members; this is the race where
       // they disconnected in between. Fail fast rather than wait for the timeout.
       void this.driver.resolveToolCall(
@@ -2065,7 +2109,7 @@ export class Room {
       );
       return;
     }
-    this.sendTo(conn.socket, { t: "toolCall", callId, name, input });
+    this.sendTo(executor.socket, { t: "toolCall", callId, name, input });
   }
 
   onStatus(status: RoomStatus, waitingOn?: string): void {
@@ -2140,8 +2184,36 @@ export class Room {
 
   /** Attached agents observe the room too — that is how they see what to answer. */
   private broadcast(msg: ServerMsg): void {
-    for (const { socket } of this.connections.values()) this.sendTo(socket, msg);
+    for (const live of this.connections.values()) {
+      for (const { socket } of live) this.sendTo(socket, msg);
+    }
     for (const { socket } of this.agents.values()) this.sendTo(socket, msg);
+  }
+
+  /** Say something to every machine a member is at, or to nobody if they are gone. */
+  private sendToHandle(handle: string, msg: ServerMsg): void {
+    for (const { socket } of this.connections.get(handle) ?? []) this.sendTo(socket, msg);
+  }
+
+  /** Who a handle belongs to, from whichever of their connections answers first. */
+  private memberOf(handle: string): Member | undefined {
+    for (const conn of this.connections.get(handle) ?? []) return conn.member;
+    return undefined;
+  }
+
+  /**
+   * The one machine a member's *work* is dispatched to.
+   *
+   * Everything the relay tells a member goes to all of them, but running a tool
+   * is not a notification: fanning a remote tool call out to both of somebody's
+   * laptops would run the command twice and write the file twice, and then
+   * throw one of the two answers away. Their oldest live connection is the one
+   * that stays put — picking the newest would move execution onto whichever
+   * machine they happened to open last, mid-conversation.
+   */
+  private executorOf(handle: string): Connection | undefined {
+    for (const conn of this.connections.get(handle) ?? []) return conn;
+    return undefined;
   }
 
   private sendTo(socket: SocketLike, msg: ServerMsg): void {

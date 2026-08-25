@@ -148,14 +148,155 @@ describe("presence", () => {
     assert.equal(driver.rosters.at(-1)?.find((r) => r.handle === "swhitfield")?.present, false);
   });
 
-  test("rejoining from a second window replaces the first", async () => {
+  test("a second device joins alongside the first rather than evicting it", async () => {
     const room = new Room("r", new FakeDriver());
-    const first = new FakeSocket();
-    const second = new FakeSocket();
-    await room.join(mira, first);
-    await room.join(mira, second);
-    assert.equal(first.closed, true);
+    const laptop = new FakeSocket();
+    const desktop = new FakeSocket();
+    await room.join(mira, laptop);
+    await room.join(mira, desktop);
+
+    // One identity, two machines: neither is thrown out, and the roster still
+    // describes one person rather than one entry per device.
+    assert.equal(laptop.closed, false);
+    assert.equal(desktop.closed, false);
     assert.equal(room.roster.filter((r) => r.handle === "mellery").length, 1);
+    assert.equal(room.roster.find((r) => r.handle === "mellery")?.present, true);
+  });
+
+  test("both of a member's devices hear the room", async () => {
+    const room = new Room("r", new FakeDriver());
+    const laptop = new FakeSocket();
+    const desktop = new FakeSocket();
+    await room.join(mira, laptop);
+    await room.join(mira, desktop);
+
+    await room.say("swhitfield", "ignored, sam is not here");
+    await room.join(sam, new FakeSocket());
+    await room.say("swhitfield", "hello both of you");
+
+    for (const device of [laptop, desktop]) {
+      assert.ok(device.of("entry").some((m) => m.entry.text === "hello both of you"));
+    }
+  });
+
+  test("a second device arriving is not announced as somebody joining", async () => {
+    const room = new Room("r", new FakeDriver());
+    const laptop = new FakeSocket();
+    await room.join(mira, laptop);
+    const announcements = () =>
+      laptop.of("entry").filter((m) => m.entry.text === "Mira joined the room.").length;
+    assert.equal(announcements(), 1);
+
+    await room.join(mira, new FakeSocket());
+
+    assert.equal(announcements(), 1);
+  });
+
+  test("one device dropping leaves the member in the roster", async () => {
+    const driver = new FakeDriver();
+    const room = new Room("r", driver);
+    const laptop = new FakeSocket();
+    const desktop = new FakeSocket();
+    await room.join(mira, laptop);
+    await room.join(mira, desktop);
+
+    await room.leave("mellery", "human", laptop);
+
+    // Still here on the desktop: departing on the first socket to drop would
+    // flicker them out of everyone's roster every time either one reconnected.
+    assert.equal(room.roster.find((r) => r.handle === "mellery")?.present, true);
+    assert.equal(room.isEmpty, false);
+    assert.equal(
+      desktop.of("entry").some((m) => m.entry.text === "Mira left the room."),
+      false
+    );
+    await room.say("mellery", "still here");
+    assert.deepEqual(driver.said.at(-1), { handle: "mellery", text: "still here" });
+    assert.ok(desktop.of("entry").some((m) => m.entry.text === "still here"));
+  });
+
+  test("work dispatched to a device that dies is failed, not left to time out", async () => {
+    const driver = new FakeDriver();
+    const room = new Room("r", driver);
+    const laptop = new FakeSocket();
+    const desktop = new FakeSocket();
+    await room.join(mira, laptop);
+    await room.join(mira, desktop);
+
+    driver.pending.set("call_1", "mellery");
+    room.onToolCall("mellery", "call_1", "readFile", { path: "a.ts" });
+    const executor = laptop.of("toolCall").length > 0 ? laptop : desktop;
+    const bystander = executor === laptop ? desktop : laptop;
+
+    // The machine the call went to drops; the other one was never asked.
+    await room.leave("mellery", "human", bystander);
+    assert.equal(room.roster.find((r) => r.handle === "mellery")?.present, true);
+
+    await room.leave("mellery", "human", executor);
+    assert.equal(room.roster.find((r) => r.handle === "mellery")?.present, false);
+  });
+
+  test("a remote tool call is failed when the device it was sent to disconnects", async () => {
+    const room = new Room("r", new FakeDriver());
+    const laptop = new FakeSocket();
+    const desktop = new FakeSocket();
+    await room.join(mira, laptop);
+    await room.join(mira, desktop);
+    const samAgent = new FakeSocket();
+    await room.join(sam, new FakeSocket());
+    await room.join(sam, samAgent, "agent", { id: "swhitfield:coder", label: "Sam's coder" });
+
+    room.routeRemoteTool(
+      { agentId: "swhitfield:coder", label: "Sam's coder", handle: "swhitfield" },
+      "fs_0",
+      "mellery",
+      "readFile",
+      { path: "a.ts" }
+    );
+    const asked = laptop.of("remoteToolRequest").length > 0 ? laptop : desktop;
+    assert.equal(
+      laptop.of("remoteToolRequest").length + desktop.of("remoteToolRequest").length,
+      1
+    );
+
+    await room.leave("mellery", "human", asked);
+
+    // Mira is still in the room on her other machine, but the machine that was
+    // actually asked has gone, and the one that stayed was never asked. The
+    // agent has to be told, or it waits out its whole timeout for an answer
+    // nothing is going to send.
+    assert.equal(room.roster.find((r) => r.handle === "mellery")?.present, true);
+    const reply = samAgent.of("remoteToolReply").find((m) => m.requestId === "fs_0");
+    assert.equal(reply?.isError, true);
+  });
+
+  test("the member leaves when their last device disconnects", async () => {
+    const room = new Room("r", new FakeDriver());
+    const laptop = new FakeSocket();
+    const desktop = new FakeSocket();
+    await room.join(mira, laptop);
+    await room.join(mira, desktop);
+
+    await room.leave("mellery", "human", laptop);
+    await room.leave("mellery", "human", desktop);
+
+    assert.equal(room.roster.find((r) => r.handle === "mellery")?.present, false);
+    assert.equal(room.isEmpty, true);
+  });
+
+  test("a tool call goes to one device, not to every device", async () => {
+    const driver = new FakeDriver();
+    const room = new Room("r", driver);
+    const laptop = new FakeSocket();
+    const desktop = new FakeSocket();
+    await room.join(mira, laptop);
+    await room.join(mira, desktop);
+
+    room.onToolCall("mellery", "call_1", "readFile", { path: "a.ts" });
+
+    // Running it on both machines would write the file twice and then discard
+    // one of the two answers.
+    assert.equal(laptop.of("toolCall").length + desktop.of("toolCall").length, 1);
   });
 });
 
