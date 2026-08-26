@@ -18,6 +18,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs/promises");
+const http = require("node:http");
 const WebSocket = require("ws");
 
 const Module = require("node:module");
@@ -677,6 +678,50 @@ describe("a provider's event stream reaches the room as presence", () => {
     return host;
   }
 
+  async function openAiDraftAgent(r, content, failAfterFirst = false) {
+    const server = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        const midpoint = Math.ceil(content.length / 2);
+        const frame = (piece) =>
+          `data: ${JSON.stringify({ choices: [{ delta: { content: piece } }] })}\n\n`;
+        res.write(frame(content.slice(0, midpoint)));
+        setTimeout(() => {
+          if (failAfterFirst) {
+            res.destroy(new Error("provider stream interrupted"));
+            return;
+          }
+          res.write(frame(content.slice(midpoint)));
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`);
+          res.end("data: [DONE]\n\n");
+        }, failAfterFirst ? 260 : 180);
+      });
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanup.push(() => new Promise((resolve) => server.close(resolve)));
+    const address = server.address();
+    const host = new AgentHost({
+      id: "mira:drafter",
+      label: "Mira's drafter",
+      primary: true,
+      url: r.url,
+      room: r.code,
+      member: { handle: "mellery", displayName: "Mira" },
+      providerId: "grok",
+      model: "test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "local-test-key",
+      approvals: { start: async () => ({ url: "", token: "" }) },
+      permissionServerPath: "unused",
+      workspaceServerPath: "unused",
+      onStateChange: () => {},
+    });
+    host.attach();
+    cleanup.push(() => host.dispose());
+    return host;
+  }
+
   test("phases and a safe summary appear in the roster, and the stream's contents do not", async () => {
     const r = await room("presence");
     eventAgent(r, {
@@ -755,6 +800,69 @@ describe("a provider's event stream reaches the room as presence", () => {
 
     assert.deepEqual(said, ["Patched the runner and the test."]);
     assert.equal(said[0].includes("item.completed"), false, "machine framing is not a reply");
+  });
+
+  test("user-facing deltas reconcile to one post-processed authoritative entry", async () => {
+    const directive = [
+      "Visible answer.",
+      "```ripieno-context",
+      JSON.stringify({ kind: "note", title: "Draft reconciliation", body: "Final differs." }),
+      "```",
+    ].join("\n");
+    const r = await room("live-draft-e2e");
+    await openAiDraftAgent(r, directive);
+    const mira = await member(r, "mellery", "Mira");
+    const deltas = [];
+    const finals = [];
+    mira.ws.on("message", (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.t === "agentDelta") deltas.push(message);
+      if (message.t === "entry" && message.entry.kind === "agent") finals.push(message.entry);
+    });
+    await wait(350);
+
+    mira.say("Mira's drafter, record this answer");
+    await wait(3_500);
+
+    assert.ok(deltas.length > 0, "a real streamed provider should produce a live room preview");
+    assert.equal(deltas[0].agentId, "mellery::mira:drafter");
+    assert.equal(deltas[0].authorName, "Mira's drafter");
+    const previewText = deltas.map((message) => message.text).join("");
+    assert.ok(
+      directive.startsWith(previewText) && previewText.length > 0,
+      "relay coalescing may let the final entry overtake a pending tail, but never invent text"
+    );
+    assert.equal(finals.length, 1, "one streamed turn becomes one transcript entry");
+    assert.equal(finals[0].id, deltas[0].entryId, "final replaces the exact ephemeral row");
+    assert.equal(finals[0].text, "Visible answer.", "host post-processing is authoritative");
+    assert.notEqual(
+      previewText,
+      finals[0].text,
+      "reconciliation must not assume draft text equals final text"
+    );
+  });
+
+  test("a provider error withdraws its incomplete bubble and posts no transcript entry", async () => {
+    const r = await room("live-draft-error");
+    await openAiDraftAgent(r, "This answer never completes.", true);
+    const mira = await member(r, "mellery", "Mira");
+    const deltas = [];
+    const cancels = [];
+    const finals = [];
+    mira.ws.on("message", (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.t === "agentDelta") deltas.push(message);
+      if (message.t === "agentDeltaCancel") cancels.push(message);
+      if (message.t === "entry" && message.entry.kind === "agent") finals.push(message.entry);
+    });
+    await wait(350);
+
+    mira.say("Mira's drafter, start an answer");
+    await wait(3_500);
+
+    assert.ok(deltas.length > 0, "the visible fragment should have reached the room first");
+    assert.ok(cancels.some((message) => message.entryId === deltas[0].entryId));
+    assert.deepEqual(finals, [], "an interrupted provider stream is not transcript");
   });
 
   test("a directive block becomes a proposal and never reaches the room", async () => {

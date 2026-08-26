@@ -2519,7 +2519,8 @@ export function activate(context: vscode.ExtensionContext): void {
           sharedContextRevision,
           handoffs,
           handoffAudit,
-          handoffRevision
+          handoffRevision,
+          msg.drafts ?? []
         );
         roomsTree.setRoom(msg.room, msg.mode, msg.you.handle);
         roomsTree.setRoster(msg.roster, msg.workspaceHost);
@@ -2552,7 +2553,13 @@ export function activate(context: vscode.ExtensionContext): void {
         roomView.addEntry(msg.entry);
         break;
       case "agentDelta":
-        roomView.addDelta(msg.entryId, msg.text);
+        roomView.addDelta(
+          msg.entryId,
+          msg.text,
+          msg.agentId,
+          msg.authorHandle,
+          msg.authorName
+        );
         break;
       case "agentDeltaCancel":
         roomView.cancelDelta(msg.entryId);

@@ -716,6 +716,18 @@ body {
   min-width: 0;
 }
 
+/* Ephemeral and visibly unfinished. The final EntryMsg replaces this whole
+   row, so no partial text can quietly become transcript. */
+.row.agent.live-draft .bubble {
+  border-style: dashed;
+}
+
+.row.agent.live-draft .author::after {
+  content: " · drafting";
+  color: var(--vscode-descriptionForeground);
+  font-weight: 400;
+}
+
 /* BYO: an agent that belongs to a member wears their colour on its edge, while
    keeping the neutral fill that distinguishes agents from people. */
 .row.agent .bubble.owned {

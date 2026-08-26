@@ -52,6 +52,26 @@ test("shared context and agent inspectors are separate accessible room surfaces"
   assert.match(styles, /\.agent-inspector\s*\{/);
 });
 
+test("live response drafts are attributed, accessible and replaced wholesale by final transcript", () => {
+  assert.match(script, /row\.container\.dataset\.agentId = draft\.agentId/);
+  assert.match(script, /is drafting a reply/);
+  assert.match(script, /setAttribute\("aria-busy", "true"\)/);
+  assert.match(script, /caret\.setAttribute\("aria-hidden", "true"\)/);
+  assert.match(styles, /\.row\.agent\.live-draft \.bubble\s*\{[^}]*border-style:\s*dashed/s);
+  assert.match(styles, /content:\s*" · drafting"/);
+
+  // A joined snapshot carries the accumulated string once; subsequent frames
+  // append to its object rather than creating another author row.
+  assert.match(script, /liveDeltaText\.set\(draft\.entryId, draft\)/);
+  assert.match(script, /text:\s*`\$\{previous\?\.text \?\? ""\}\$\{message\.text\}`/);
+  assert.match(script, /const existing = rowEls\.get\(entryId\)/);
+
+  // Final text may differ after host post-processing (for example a stripped
+  // ripieno-context directive), so reconciliation replaces the whole preview.
+  assert.match(script, /existing\.container\.replaceWith\(row\.container\)/);
+  assert.match(script, /liveDeltaText\.delete\(entry\.id\)/);
+});
+
 test("invite onboarding is a compact accessible fixed three-step flow", () => {
   assert.match(roomViewHost, /id="onboardingSteps"[^>]*aria-label="Getting started progress"/);
   assert.match(script, /next\.steps\.length !== 3/);

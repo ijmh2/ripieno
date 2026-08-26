@@ -71,6 +71,20 @@ export type AgentActivity =
 export const MAX_PRESENCE_SUMMARY_CHARS = 240;
 export const MAX_PRESENCE_PATH_CHARS = 500;
 
+/**
+ * Live reply previews are untrusted, ephemeral wire data, not transcript.
+ *
+ * The frame cap bounds one JSON message, the agent cap bounds one preview, and
+ * the room cap bounds all previews currently visible. These are UTF-8 byte
+ * limits: JavaScript character counts understate non-ASCII payloads.
+ */
+export const MAX_AGENT_DRAFT_FRAME_BYTES = 4_096;
+export const MAX_AGENT_DRAFT_BYTES = 32_000;
+export const MAX_ROOM_DRAFT_BYTES = 128_000;
+export const MAX_AGENT_DRAFT_FRAMES_PER_SECOND = 20;
+export const MAX_ROOM_DRAFT_FRAMES_PER_SECOND = 80;
+export const AGENT_DRAFT_TTL_MS = 45_000;
+
 /** A bounded, non-durable presence update shown in an agent inspector. */
 export interface AgentPresence {
   phase: AgentActivity;
@@ -446,8 +460,8 @@ export interface JoinMsg {
    *
    * This is a gate, not authentication: it stops a publicly reachable relay
    * being open to anyone who finds the URL, but it does not establish who a
-   * member is — a holder of the secret can still claim any handle. Real
-   * per-member identity is Phase 3 work.
+   * member is — a holder of the secret can still claim any handle. Deployed
+   * relays that need attribution as fact must enable GitHub verification.
    */
   token?: string;
   /**
@@ -623,6 +637,24 @@ export interface AgentActivityMsg {
   sequence?: number;
 }
 
+/**
+ * One user-visible response fragment from the authenticated agent socket.
+ *
+ * There is deliberately no agent id or entry id here. The relay derives the
+ * former from the socket and mints the latter, then reuses it for final `say`.
+ */
+export interface AgentDraftMsg {
+  t: "agentDraft";
+  delta: string;
+  /** Positive, monotonically increasing for this agent connection. */
+  sequence: number;
+}
+
+/** Withdraw any incomplete preview owned by this authenticated agent. */
+export interface AgentDraftCancelMsg {
+  t: "agentDraftCancel";
+}
+
 /** The room's running totals, per agent. */
 export interface UsageMsg {
   t: "usage";
@@ -741,6 +773,8 @@ export type ClientMsg =
   | AgentUsageMsg
   | AgentStateMsg
   | AgentActivityMsg
+  | AgentDraftMsg
+  | AgentDraftCancelMsg
   | WorkspaceChangedMsg
   | GoalCreateMsg
   | GoalTransitionMsg
@@ -800,6 +834,8 @@ export interface JoinedMsg {
   roster: RosterEntry[];
   /** Replayed so a joiner sees the conversation so far. */
   transcript: TranscriptEntry[];
+  /** Current reply previews only. Never persisted or restored after restart. */
+  drafts?: AgentDraft[];
 }
 
 export interface RosterMsg {
@@ -813,12 +849,30 @@ export interface EntryMsg {
   entry: TranscriptEntry;
 }
 
+/** One relay-owned, non-durable reply preview. */
+export interface AgentDraft {
+  /** Relay-minted and reused by the one final authoritative transcript entry. */
+  entryId: string;
+  /** Exact agent identity derived from the connection. */
+  agentId: string;
+  authorHandle: string;
+  authorName: string;
+  /** Accumulated user-facing text, bounded in UTF-8 bytes by the relay. */
+  text: string;
+  /** Relay timestamp of the most recently accepted fragment. */
+  updatedAt: number;
+}
+
 /** Incremental agent text (live preview). Reconciled by the final EntryMsg. */
 export interface AgentDeltaMsg {
   t: "agentDelta";
   /** Matches the id of the TranscriptEntry that will arrive when complete. */
   entryId: string;
   text: string;
+  /** Present for BYO drafts; optional keeps older hosted-driver frames valid. */
+  agentId?: string;
+  authorHandle?: string;
+  authorName?: string;
 }
 
 /**

@@ -49,6 +49,7 @@ import {
   type RunnerToolResult,
 } from "./runners";
 import { PresenceStream } from "./presence";
+import { DraftStream } from "./draftStream";
 import {
   boundSummary,
   summarisePhase,
@@ -175,6 +176,8 @@ export class AgentHost implements vscode.Disposable {
    * than to whichever of them happened to be written last.
    */
   private readonly presence = new PresenceStream((message) => this.relay?.send(message));
+  /** User-facing response text only; relay still owns identity, quotas and id. */
+  private readonly drafts = new DraftStream((message) => this.relay?.send(message));
   /** The phase and summary a location event should be attached to. */
   private turnPhase: RunnerPhase = "thinking";
   private turnSummary: string | undefined;
@@ -431,6 +434,7 @@ export class AgentHost implements vscode.Disposable {
 
   dispose(): void {
     this.haltLocalExecution("agent detached");
+    this.drafts.dispose();
     this.presence.dispose();
     this.relay?.dispose();
     this.relay = undefined;
@@ -447,6 +451,7 @@ export class AgentHost implements vscode.Disposable {
     // Stop describing a turn that no longer has authority to run. The relay
     // drops this agent's presence when the socket goes, and a queued frame
     // must not arrive afterwards claiming otherwise.
+    this.drafts.cancel();
     this.presence.dispose();
     // Settle, do not merely forget. These promises back an open editor tab and
     // "propose change"; abandoning them left the tab spinning forever.
@@ -774,6 +779,7 @@ export class AgentHost implements vscode.Disposable {
     const unseen = this.unfedEntries().filter((e) => e.kind !== "system");
     if (unseen.length === 0) return;
     this.busy = true;
+    this.drafts.start();
     for (const entry of this.transcript) this.fedIds.add(entry.id);
     this.setState("thinking");
 
@@ -807,14 +813,19 @@ export class AgentHost implements vscode.Disposable {
 
       if (text) {
         this.publishActivity("responding", "Posting a reply to the room");
+        // The last draft frame is ordered before `say` on this socket. The
+        // relay reuses its own preview id for the authoritative entry.
+        this.drafts.complete();
         this.relay?.send({ t: "say", text });
         this.log(`posted ${text.length} chars`);
       } else {
+        this.drafts.cancel();
         this.log("no reply produced");
       }
     } catch (err) {
       if (!this.hasExecutionAuthority(epoch)) return;
       const detail = err instanceof Error ? err.message : String(err);
+      this.drafts.cancel();
       this.log(`turn failed: ${detail}`);
       // Provider failures are local account/configuration facts, not the
       // agent's answer. Keep them out of the shared transcript and give the
@@ -989,6 +1000,7 @@ export class AgentHost implements vscode.Disposable {
     const epoch = this.executionEpoch;
     const context = delivery.context;
     this.busy = true;
+    this.drafts.start();
     this.setState("thinking");
     let failed = false;
     try {
@@ -1012,9 +1024,11 @@ export class AgentHost implements vscode.Disposable {
       if (!this.hasExecutionAuthority(epoch)) return;
       if (text) {
         this.publishActivity("responding", "Posting the handoff result");
+        this.drafts.complete();
         this.relay?.send({ t: "say", text });
         this.log(`posted ${text.length} chars for accepted handoff ${context.handoff.id}`);
       } else {
+        this.drafts.cancel();
         this.log(`no reply produced for accepted handoff ${context.handoff.id}`);
       }
       await this.markLocalOutcome(
@@ -1026,6 +1040,7 @@ export class AgentHost implements vscode.Disposable {
       if (!this.hasExecutionAuthority(epoch)) return;
       failed = true;
       const detail = err instanceof Error ? err.message : String(err);
+      this.drafts.cancel();
       this.failureReason = detail;
       this.log(`handoff continuation failed: ${detail}`);
       this.setState("error");
@@ -1271,11 +1286,14 @@ export class AgentHost implements vscode.Disposable {
   private handleRunnerEvent(event: RunnerEvent): void {
     switch (event.type) {
       case "phase":
+        if (event.phase !== "responding") this.drafts.cancel();
         this.turnPhase = event.phase;
         this.turnSummary = boundSummary(summarisePhase(event.phase));
         this.publishActivity(event.phase, this.turnSummary);
         break;
       case "tool":
+        // Any earlier prose was pre-tool narration, not the final room reply.
+        this.drafts.cancel();
         this.turnSummary = event.safeSummary;
         this.publishActivity(this.turnPhase, event.safeSummary);
         break;
@@ -1289,8 +1307,12 @@ export class AgentHost implements vscode.Disposable {
         );
         break;
       case "draft":
+        this.drafts.publish(event.delta);
+        break;
       case "complete":
-        // Drafts are Phase 3, and the final text is what run() resolves to.
+        // The final text is post-processed before completion/reconciliation in
+        // respond()/runNextHandoff(); never trust a provider complete frame to
+        // bypass context-directive stripping or the authority epoch check.
         break;
     }
   }

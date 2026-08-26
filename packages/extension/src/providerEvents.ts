@@ -183,6 +183,8 @@ function locationFrom(
 }
 
 export class ClaudeStreamJsonAdapter extends JsonLineAdapter {
+  private draftResponded = false;
+
   protected line(raw: string): RunnerEvent[] {
     const frame = this.parse(raw);
     if (!frame) return [];
@@ -195,6 +197,26 @@ export class ClaudeStreamJsonAdapter extends JsonLineAdapter {
       if (session) this.sessionId = session;
       return [{ type: "phase", phase: "thinking" }];
     }
+    if (type === "stream_event") {
+      // `--include-partial-messages` wraps Anthropic's documented Messages API
+      // stream event. Only text_delta is user-visible response text. Thinking,
+      // signatures, usage, diagnostics and tool JSON are deliberately ignored.
+      this.recognised = true;
+      const event = record(frame.event);
+      const delta = record(event?.delta);
+      const piece =
+        text(event?.type) === "content_block_delta" && text(delta?.type) === "text_delta"
+          ? text(delta?.text)
+          : undefined;
+      if (!piece) return [];
+      const visible: RunnerEvent[] = [];
+      if (!this.draftResponded) {
+        this.draftResponded = true;
+        visible.push({ type: "phase", phase: "responding" });
+      }
+      visible.push({ type: "draft", delta: piece });
+      return visible;
+    }
     if (type === "assistant") {
       this.recognised = true;
       const message = record(frame.message);
@@ -203,8 +225,8 @@ export class ClaudeStreamJsonAdapter extends JsonLineAdapter {
         const block = record(raw);
         const kind = text(block?.type);
         if (kind === "text") {
-          // The text itself is a draft, which is Phase 3. The room is told only
-          // that a reply is being written.
+          // Aggregate assistant frames establish phase only. Their text would
+          // duplicate the documented text_delta frames handled above.
           events.push({ type: "phase", phase: "responding" });
         } else if (kind === "tool_use") {
           const name = text(block?.name) ?? "";
@@ -580,6 +602,7 @@ export class OpenAiStreamAdapter {
         this.responded = true;
         events.push({ type: "phase", phase: "responding" });
       }
+      events.push({ type: "draft", delta: piece });
     }
     const calls = Array.isArray(delta?.tool_calls) ? (delta?.tool_calls as unknown[]) : [];
     for (const rawCall of calls) {

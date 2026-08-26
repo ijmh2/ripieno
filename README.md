@@ -211,9 +211,10 @@ runs commands; an API-key agent can only talk. Presenting both as "an agent"
 without distinction would let somebody ask Grok to fix a file and get a
 confident answer while nothing happened.
 
-The API-key path is tested against a mock endpoint — request shape, auth,
-history, token accounting and each failure mode — but has not been run against
-a live provider, so treat vendor quirks as unproven.
+The API-key path is tested over a real local HTTP/SSE exchange — request shape,
+auth, history, token accounting, live response drafts and failure cancellation
+— but has not been run against every named vendor, so treat vendor quirks as
+unproven.
 
 Usage is per agent, and in BYO it is **turns and tokens, never a price**. Claude
 Code reports a dollar figure on a subscription too, where it is what those
@@ -229,8 +230,11 @@ twelve tools (`room_read`, `room_post`, `room_roster`, `room_actions`,
 `context_read`, `context_add` and six `workspace_*`). Agent context additions
 are proposals until a person accepts them in the Context tab.
 
-The room also has an **Agents** tab for live observable activity and a durable
-**Context** tab shared by every participant. See
+The room also has an **Agents** tab for live observable activity, a durable
+**Context** tab shared by every participant, and bounded ephemeral reply bubbles
+while Claude or an OpenAI-compatible agent writes. The relay attributes those
+bubbles to the exact agent and replaces each with one final transcript entry;
+hidden reasoning and provider diagnostics are never draft channels. See
 [the live collaboration plan](docs/live-collaboration-plan.md) for the shipped
 foundation, privacy boundaries and staged path to editor presence and live
 proposed diffs.

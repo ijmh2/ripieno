@@ -26,6 +26,8 @@ class Driver implements RoomDriver {
   async resolveToolCall(): Promise<void> {}
 }
 
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 describe("crash-safe relay-authoritative handoff", () => {
   let room: Room;
   let miraHuman: Socket;
@@ -109,6 +111,9 @@ describe("crash-safe relay-authoritative handoff", () => {
       "sam", "req_accept", offered.id, offered.nonce, "accept", 1, "sam::reviewer"
     );
     const assigned = room.handoffList.find((item) => item.id === offered.id)!;
+    room.publishAgentDraft("mira::coder", "source is still writing", 1);
+    const sourceDraftId = miraHuman.messages("agentDelta").at(-1)?.entryId;
+    assert.ok(sourceDraftId);
     const saves: string[] = [];
     room.onCriticalChanged = async () => {
       const persistedStatus = room.handoffList.find((item) => item.id === offered.id)!.status;
@@ -124,6 +129,11 @@ describe("crash-safe relay-authoritative handoff", () => {
     );
     assert.deepEqual(saves, ["claimed"]);
     assert.equal(miraAgent.messages("handoffReleased").length, 1);
+    assert.equal(
+      miraHuman.messages("agentDeltaCancel").at(-1)?.entryId,
+      sourceDraftId,
+      "authority transfer withdraws the source's incomplete reply"
+    );
     assert.equal(samAgent.messages("handoffStart").length, 1);
     const before = room.snapshot().transcript.length;
     await room.say("mira", "stale source output", "agent", "mira::coder");
@@ -216,6 +226,33 @@ describe("crash-safe relay-authoritative handoff", () => {
       { path: "secret.txt" }
     );
     assert.equal(miraHuman.messages("remoteToolRequest").length, before);
+  });
+
+  test("role revocation cancels a pending draft before slow handoff persistence", async () => {
+    const offered = offer("Do not leak a coalesced response after authority changes");
+    await room.decideHandoff(
+      "sam", "req_accept_slow_revoke", offered.id, offered.nonce, "accept", 1, "sam::reviewer"
+    );
+    room.publishAgentDraft("sam::reviewer", "published", 1);
+    room.publishAgentDraft("sam::reviewer", " pending tail", 2);
+    const preview = miraHuman.messages("agentDelta").at(-1)!;
+    const publishedFrames = miraHuman.messages("agentDelta").length;
+
+    let releaseCritical!: () => void;
+    const critical = new Promise<void>((resolve) => { releaseCritical = resolve; });
+    room.onCriticalChanged = () => critical;
+    const revoking = room.setRole("mira", "sam", "viewer");
+
+    assert.equal(miraHuman.messages("agentDeltaCancel").at(-1)?.entryId, preview.entryId);
+    await wait(Room.draftLimits.minPublishIntervalMs + 25);
+    assert.equal(
+      miraHuman.messages("agentDelta").length,
+      publishedFrames,
+      "the pending tail stays cancelled while durable handoff storage is blocked"
+    );
+
+    releaseCritical();
+    await revoking;
   });
 
   test("claim then demotion durably becomes outcomeUnknown before eviction and allows explicit retry", async () => {

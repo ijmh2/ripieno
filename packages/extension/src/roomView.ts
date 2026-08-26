@@ -8,6 +8,7 @@
 import * as vscode from "vscode";
 import type {
   ActionEntry,
+  AgentDraft,
   ContextAuditEntry,
   ContextItem,
   ContextKind,
@@ -58,12 +59,19 @@ interface RoomState {
   handoffRevision: number;
   /** Configured on this machine, including agents not attached to the room. */
   localAgents: LocalAgentOnboarding[];
-  /** entryId -> accumulated streamed text, cleared once the final entry lands. */
-  liveDeltas: Map<string, string>;
+  /** entryId -> relay-attributed preview, cleared once the final entry lands. */
+  liveDeltas: Map<string, LiveDelta>;
   status: RoomStatus;
   waitingOn?: string;
   connection: ConnectionState;
 }
+
+type LiveDelta = Pick<AgentDraft, "entryId" | "text"> & {
+  agentId?: string;
+  authorHandle?: string;
+  authorName?: string;
+  updatedAt?: number;
+};
 
 interface PendingApproval {
   id: string;
@@ -115,7 +123,7 @@ type ToWebview =
       handoffAudit: HandoffAuditEntry[];
       handoffRevision: number;
       onboarding: OnboardingDecision;
-      liveDeltas: [string, string][];
+      liveDeltas: LiveDelta[];
       status: RoomStatus;
       waitingOn?: string;
       connection: ConnectionState;
@@ -136,7 +144,14 @@ type ToWebview =
       handoffAudit: HandoffAuditEntry[];
       handoffRevision: number;
     }
-  | { type: "delta"; entryId: string; text: string }
+  | {
+      type: "delta";
+      entryId: string;
+      text: string;
+      agentId?: string;
+      authorHandle?: string;
+      authorName?: string;
+    }
   | { type: "deltaCancel"; entryId: string }
   | { type: "roster"; roster: RosterEntry[]; you?: RosterEntry; onboarding: OnboardingDecision }
   | { type: "onboarding"; onboarding: OnboardingDecision }
@@ -256,7 +271,8 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     contextRevision = 0,
     handoffs: HandoffOffer[] = [],
     handoffAudit: HandoffAuditEntry[] = [],
-    handoffRevision = 0
+    handoffRevision = 0,
+    drafts: AgentDraft[] = []
   ): void {
     this.state = {
       room,
@@ -275,7 +291,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       you,
       roster,
       transcript: [...transcript],
-      liveDeltas: new Map(),
+      liveDeltas: new Map(drafts.map((draft) => [draft.entryId, { ...draft }])),
       status: "idle",
       waitingOn: undefined,
       connection: this.state.connection,
@@ -358,10 +374,23 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     this.post({ type: "entry", entry });
   }
 
-  addDelta(entryId: string, text: string): void {
-    const acc = (this.state.liveDeltas.get(entryId) ?? "") + text;
-    this.state.liveDeltas.set(entryId, acc);
-    this.post({ type: "delta", entryId, text });
+  addDelta(
+    entryId: string,
+    text: string,
+    agentId?: string,
+    authorHandle?: string,
+    authorName?: string
+  ): void {
+    const current = this.state.liveDeltas.get(entryId);
+    this.state.liveDeltas.set(entryId, {
+      entryId,
+      text: `${current?.text ?? ""}${text}`,
+      agentId: agentId ?? current?.agentId,
+      authorHandle: authorHandle ?? current?.authorHandle,
+      authorName: authorName ?? current?.authorName,
+      updatedAt: Date.now(),
+    });
+    this.post({ type: "delta", entryId, text, agentId, authorHandle, authorName });
   }
 
   /**
@@ -464,7 +493,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       handoffAudit: this.state.handoffAudit,
       handoffRevision: this.state.handoffRevision,
       onboarding: this.onboarding(),
-      liveDeltas: [...this.state.liveDeltas.entries()],
+      liveDeltas: [...this.state.liveDeltas.values()],
       status: this.state.status,
       waitingOn: this.state.waitingOn,
       connection: this.state.connection,

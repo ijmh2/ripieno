@@ -229,6 +229,11 @@ describe("a streamed turn", () => {
       events.filter((event) => event.type === "phase").map((event) => event.phase),
       ["thinking", "responding"]
     );
+    assert.deepEqual(
+      events.filter((event) => event.type === "draft").map((event) => event.delta),
+      ["It ", "builds."],
+      "only the endpoint's assistant content channel becomes a live draft"
+    );
     const complete = events.at(-1);
     assert.equal(complete.type, "complete");
     assert.equal(complete.text, "It builds.");

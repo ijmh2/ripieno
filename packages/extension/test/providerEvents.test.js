@@ -152,6 +152,24 @@ describe("Claude Code stream JSON", () => {
     assert.deepEqual(events, []);
   });
 
+  test("only documented user-visible partial text becomes a draft", () => {
+    const adapter = new ClaudeStreamJsonAdapter("/work/room");
+    const frames = [
+      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "private plan" } } },
+      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "It " } } },
+      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "input_json_delta", partial_json: '{"token":"secret"}' } } },
+      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "builds." } } },
+    ].map((frame) => `${JSON.stringify(frame)}\n`).join("");
+    const events = drain(adapter, frames, 11);
+    assert.deepEqual(
+      events.filter((event) => event.type === "draft").map((event) => event.delta),
+      ["It ", "builds."]
+    );
+    const shared = JSON.stringify(events);
+    assert.equal(shared.includes("private plan"), false);
+    assert.equal(shared.includes("secret"), false);
+  });
+
   test("MCP tool names are classified by their leaf", () => {
     assert.equal(toolKindFor("mcp__workspace__read_file"), "read");
     assert.equal(toolKindFor("mcp__workspace__run_command"), "run");
@@ -258,6 +276,10 @@ describe("OpenAI-compatible streaming", () => {
     const adapter = new OpenAiStreamAdapter();
     const events = drain(adapter, fixture("openai-stream.sse"));
     assert.deepEqual(phases(events), ["responding"]);
+    assert.deepEqual(
+      events.filter((event) => event.type === "draft").map((event) => event.delta),
+      ["It ", "builds."]
+    );
     assert.equal(adapter.content, "It builds.");
     assert.equal(adapter.finishReason, "stop");
     assert.equal(adapter.usage.inputTokens, 120);

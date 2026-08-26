@@ -172,6 +172,9 @@ export class ClaudeCodeRunner implements ModelRunner {
       "stream-json",
       // Claude refuses stream-json under --print without this.
       "--verbose",
+      // Emits documented `stream_event` / `text_delta` frames. The adapter
+      // accepts only those user-visible deltas and ignores thinking/diagnostics.
+      "--include-partial-messages",
       "--mcp-config",
       this.opts.mcpConfig,
       "--strict-mcp-config",
@@ -323,11 +326,10 @@ const MAX_TOOL_ROUNDS = 3;
  * files. That is a real difference from a Claude Code agent and the room says so
  * rather than letting people assume otherwise.
  *
- * The request streams. Not to stream a draft into the room — that is Phase 3 —
- * but because a finished answer is the one moment at which live activity is no
- * longer useful, and because tool calls arrive on the same channel: this is the
- * one built-in provider with a native function-calling path, so it is how a
- * hosted model gets `context_add` rather than only being able to read.
+ * The request streams user-facing assistant content into the room's bounded
+ * ephemeral draft channel. Tool calls arrive on the same provider stream but
+ * are mapped only to safe activity events; this is also how a hosted model gets
+ * `context_add` rather than only being able to read.
  */
 export class OpenAiCompatRunner implements ModelRunner {
   readonly capability = "conversation" as const;

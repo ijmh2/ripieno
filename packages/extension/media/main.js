@@ -73,7 +73,7 @@
 
   /** entryId -> { container, textEl } for rows currently in the DOM. */
   const rowEls = new Map();
-  /** entryId -> accumulated raw text while an agent reply is streaming. */
+  /** entryId -> relay-attributed ephemeral reply while an agent is streaming. */
   const liveDeltaText = new Map();
 
   /* ---------------------------------------------------------------- */
@@ -316,7 +316,7 @@
     bubble.appendChild(textEl);
 
     container.appendChild(bubble);
-    return { container, textEl, isSystem: false };
+    return { container, bubble, textEl, isSystem: false };
   }
 
   function renderFinalEntry(entry) {
@@ -325,13 +325,20 @@
     rowEls.set(entry.id, row);
   }
 
-  function renderLiveBubble(entryId, text) {
-    const row = buildRow("agent", "agent", "Agent", text);
+  function renderLiveBubble(draft) {
+    const authorHandle = draft.authorHandle || "agent";
+    const authorName = draft.authorName || "Agent";
+    const row = buildRow("agent", authorHandle, authorName, draft.text);
+    row.container.classList.add("live-draft");
+    row.container.dataset.agentId = draft.agentId || "";
+    row.container.setAttribute("aria-label", `${authorName} is drafting a reply`);
+    row.bubble?.setAttribute("aria-busy", "true");
     const caret = document.createElement("span");
     caret.className = "caret";
+    caret.setAttribute("aria-hidden", "true");
     row.textEl.appendChild(caret);
     transcriptEl.appendChild(row.container);
-    rowEls.set(entryId, row);
+    rowEls.set(draft.entryId, row);
   }
 
   function isPinnedToBottom() {
@@ -604,9 +611,14 @@
       for (const entry of msg.transcript) {
         renderFinalEntry(entry);
       }
-      for (const [entryId, text] of msg.liveDeltas) {
-        liveDeltaText.set(entryId, text);
-        renderLiveBubble(entryId, text);
+      for (const raw of msg.liveDeltas) {
+        // Tuple support is retained for a webview restored across an extension
+        // upgrade; current snapshots carry provenance objects.
+        const draft = Array.isArray(raw)
+          ? { entryId: raw[0], text: raw[1] }
+          : raw;
+        liveDeltaText.set(draft.entryId, draft);
+        renderLiveBubble(draft);
       }
     }
 
@@ -642,20 +654,29 @@
     }, !wasLive);
   }
 
-  function applyDelta(entryId, text) {
+  function applyDelta(message) {
+    const entryId = message.entryId;
     const wasLive = liveDeltaText.has(entryId);
-    const acc = (liveDeltaText.get(entryId) ?? "") + text;
-    liveDeltaText.set(entryId, acc);
+    const previous = liveDeltaText.get(entryId);
+    const draft = {
+      entryId,
+      text: `${previous?.text ?? ""}${message.text}`,
+      agentId: message.agentId || previous?.agentId,
+      authorHandle: message.authorHandle || previous?.authorHandle,
+      authorName: message.authorName || previous?.authorName,
+    };
+    liveDeltaText.set(entryId, draft);
     withAutoscroll(() => {
       clearEmptyState();
       const existing = rowEls.get(entryId);
       if (existing) {
-        existing.textEl.innerHTML = renderMarkdown(acc);
+        existing.textEl.innerHTML = renderMarkdown(draft.text);
         const caret = document.createElement("span");
         caret.className = "caret";
+        caret.setAttribute("aria-hidden", "true");
         existing.textEl.appendChild(caret);
       } else {
-        renderLiveBubble(entryId, acc);
+        renderLiveBubble(draft);
       }
     }, !wasLive);
   }
@@ -714,7 +735,7 @@
         applyEntry(msg.entry);
         break;
       case "delta":
-        applyDelta(msg.entryId, msg.text);
+        applyDelta(msg);
         break;
       case "deltaCancel":
         applyDeltaCancel(msg.entryId);

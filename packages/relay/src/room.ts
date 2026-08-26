@@ -11,6 +11,7 @@ import type {
   ActionEntry,
   AgentActivity,
   AgentCapability,
+  AgentDraft,
   AgentPresence,
   AttachedAgent,
   ConnectionRole,
@@ -63,6 +64,12 @@ import {
   MAX_HANDOFF_OUTCOME_CHARS,
   MAX_PRESENCE_PATH_CHARS,
   MAX_PRESENCE_SUMMARY_CHARS,
+  AGENT_DRAFT_TTL_MS,
+  MAX_AGENT_DRAFT_BYTES,
+  MAX_AGENT_DRAFT_FRAME_BYTES,
+  MAX_AGENT_DRAFT_FRAMES_PER_SECOND,
+  MAX_ROOM_DRAFT_BYTES,
+  MAX_ROOM_DRAFT_FRAMES_PER_SECOND,
   WORKSPACE_HANDLE,
 } from "@ripieno/protocol";
 import { toRosterEntry } from "./roomCore.js";
@@ -111,6 +118,21 @@ interface AgentConnection extends Connection {
   /** The newest presence held back by the rate limit, published on the flush. */
   activityPending?: AgentPresence;
   activityTimer?: NodeJS.Timeout;
+  /** Highest accepted live-draft sequence on this exact socket. */
+  draftSequence?: number;
+  draft?: LiveAgentDraft;
+  draftRateStartedAt?: number;
+  draftRateFrames?: number;
+}
+
+interface LiveAgentDraft extends AgentDraft {
+  bytes: number;
+  /** Text already delivered to clients; joined snapshots must not expose pending bytes. */
+  publishedText: string;
+  pending: string;
+  publishedAt?: number;
+  flushTimer?: NodeJS.Timeout;
+  expiryTimer?: NodeJS.Timeout;
 }
 
 /** Identifies an agent connection; humans are identified by handle alone. */
@@ -244,6 +266,22 @@ export class Room {
     ttlMs: 45_000,
     sweepMs: 5_000,
   };
+  /**
+   * Relay-side limits for untrusted live reply previews. Tests may shorten the
+   * time fields, but production always uses the protocol's byte/rate caps.
+   */
+  static readonly draftLimits = {
+    maxFrameBytes: MAX_AGENT_DRAFT_FRAME_BYTES,
+    maxAgentBytes: MAX_AGENT_DRAFT_BYTES,
+    maxRoomBytes: MAX_ROOM_DRAFT_BYTES,
+    maxAgentFramesPerSecond: MAX_AGENT_DRAFT_FRAMES_PER_SECOND,
+    maxRoomFramesPerSecond: MAX_ROOM_DRAFT_FRAMES_PER_SECOND,
+    minPublishIntervalMs: 100,
+    ttlMs: AGENT_DRAFT_TTL_MS,
+  };
+  private activeDraftBytes = 0;
+  private draftRoomRateStartedAt = 0;
+  private draftRoomRateFrames = 0;
   /** Outstanding remote tool requests, so a reply can find who asked. */
   private readonly remoteCalls = new Map<
     string,
@@ -536,6 +574,12 @@ export class Room {
     }
     this.roles.set(handle, role);
     if (role === "viewer") {
+      // Drafts are ephemeral and authority has already changed in memory. Drop
+      // them before the durability barrier below so a coalesced tail cannot be
+      // published while handoff state is waiting on slow storage.
+      for (const agent of this.agents.values()) {
+        if (agent.member.handle === handle) this.cancelAgentDraft(agent);
+      }
       const handoffsChanged = this.transitionHandoffsForRemoval(
         handle,
         "role revoked",
@@ -725,6 +769,9 @@ export class Room {
     for (const agent of this.agents.values()) {
       if (!agent.activity) continue;
       if (now - agent.activity.updatedAt > Room.presenceLimits.ttlMs) {
+        // A host whose heartbeat is stale no longer has a truthful live reply
+        // either. Withdraw it even if its own TTL has not fired yet.
+        this.cancelAgentDraft(agent);
         agent.activity = undefined;
         agent.state = undefined;
         agent.activityPending = undefined;
@@ -744,6 +791,175 @@ export class Room {
   private clearPresenceTimer(agent: AgentConnection): void {
     if (agent.activityTimer) clearTimeout(agent.activityTimer);
     agent.activityTimer = undefined;
+  }
+
+  /** Current ephemeral previews, copied for a newly joined client. */
+  private get liveDrafts(): AgentDraft[] {
+    return [...this.agents.values()]
+      .map((agent) => agent.draft)
+      .filter((draft): draft is LiveAgentDraft => Boolean(draft?.publishedText))
+      .map(({ entryId, agentId, authorHandle, authorName, publishedText, updatedAt }) => ({
+        entryId,
+        agentId,
+        authorHandle,
+        authorName,
+        text: publishedText,
+        updatedAt,
+      }));
+  }
+
+  /**
+   * Accept one user-facing response fragment from an authenticated agent.
+   *
+   * Identity and preview id never come from the frame. Ordering, UTF-8 byte
+   * accounting, rate limits and coalescing are all relay-owned, so a custom or
+   * compromised host cannot make everybody else's room grow without bound.
+   */
+  publishAgentDraft(agentId: string, rawDelta: string, rawSequence: number): void {
+    const agent = this.isAgentAuthorized(agentId) ? this.agents.get(agentId) : undefined;
+    if (!agent || typeof rawDelta !== "string" || rawDelta.length === 0) return;
+    if (!Number.isSafeInteger(rawSequence) || rawSequence <= 0) return;
+    if (rawSequence <= (agent.draftSequence ?? 0)) return;
+    agent.draftSequence = rawSequence;
+
+    const bytes = Buffer.byteLength(rawDelta, "utf8");
+    if (bytes === 0 || bytes > Room.draftLimits.maxFrameBytes) {
+      if (agent.draft) this.cancelAgentDraft(agent);
+      return;
+    }
+    const now = Date.now();
+    if (!this.spendDraftRate(agent, now)) {
+      if (agent.draft) this.cancelAgentDraft(agent);
+      return;
+    }
+
+    let draft = agent.draft;
+    if (
+      (draft?.bytes ?? 0) + bytes > Room.draftLimits.maxAgentBytes ||
+      this.activeDraftBytes + bytes > Room.draftLimits.maxRoomBytes
+    ) {
+      if (draft) this.cancelAgentDraft(agent);
+      return;
+    }
+    if (!draft) {
+      draft = agent.draft = {
+        entryId: randomUUID(),
+        agentId: agent.id,
+        authorHandle: agent.member.handle,
+        authorName: agent.label,
+        text: "",
+        updatedAt: now,
+        bytes: 0,
+        publishedText: "",
+        pending: "",
+      };
+    }
+    draft.text += rawDelta;
+    draft.pending += rawDelta;
+    draft.bytes += bytes;
+    draft.updatedAt = now;
+    this.activeDraftBytes += bytes;
+    this.refreshDraftExpiry(agent, draft);
+
+    const since = now - (draft.publishedAt ?? 0);
+    if (since >= Room.draftLimits.minPublishIntervalMs) {
+      this.flushAgentDraft(agent, draft);
+      return;
+    }
+    if (!draft.flushTimer) {
+      draft.flushTimer = setTimeout(
+        () => this.flushAgentDraft(agent, draft!),
+        Room.draftLimits.minPublishIntervalMs - since
+      );
+      draft.flushTimer.unref?.();
+    }
+  }
+
+  /** Explicit turn teardown from the exact agent connection. */
+  cancelAgentDraftById(agentId: string): void {
+    const agent = this.isAgentAuthorized(agentId) ? this.agents.get(agentId) : undefined;
+    if (agent?.draft) this.cancelAgentDraft(agent);
+  }
+
+  private spendDraftRate(agent: AgentConnection, now: number): boolean {
+    if (!agent.draftRateStartedAt || now - agent.draftRateStartedAt >= 1_000) {
+      agent.draftRateStartedAt = now;
+      agent.draftRateFrames = 0;
+    }
+    if (!this.draftRoomRateStartedAt || now - this.draftRoomRateStartedAt >= 1_000) {
+      this.draftRoomRateStartedAt = now;
+      this.draftRoomRateFrames = 0;
+    }
+    agent.draftRateFrames = (agent.draftRateFrames ?? 0) + 1;
+    this.draftRoomRateFrames += 1;
+    return (
+      agent.draftRateFrames <= Room.draftLimits.maxAgentFramesPerSecond &&
+      this.draftRoomRateFrames <= Room.draftLimits.maxRoomFramesPerSecond
+    );
+  }
+
+  private flushAgentDraft(agent: AgentConnection, draft: LiveAgentDraft): void {
+    if (draft.flushTimer) clearTimeout(draft.flushTimer);
+    draft.flushTimer = undefined;
+    if (this.agents.get(agent.id) !== agent || agent.draft !== draft || !draft.pending) return;
+    const text = takeUtf8Prefix(draft.pending, Room.draftLimits.maxFrameBytes);
+    if (!text) return;
+    draft.pending = draft.pending.slice(text.length);
+    draft.publishedText += text;
+    draft.publishedAt = Date.now();
+    this.broadcast({
+      t: "agentDelta",
+      entryId: draft.entryId,
+      text,
+      agentId: agent.id,
+      authorHandle: agent.member.handle,
+      authorName: agent.label,
+    });
+    // Coalescing must not turn individually valid input frames into an
+    // oversized output frame. Drain any remainder at the same paced interval.
+    if (draft.pending) {
+      draft.flushTimer = setTimeout(
+        () => this.flushAgentDraft(agent, draft),
+        Room.draftLimits.minPublishIntervalMs
+      );
+      draft.flushTimer.unref?.();
+    }
+  }
+
+  private refreshDraftExpiry(agent: AgentConnection, draft: LiveAgentDraft): void {
+    if (draft.expiryTimer) clearTimeout(draft.expiryTimer);
+    draft.expiryTimer = setTimeout(() => {
+      if (this.agents.get(agent.id) === agent && agent.draft === draft) {
+        this.cancelAgentDraft(agent);
+      }
+    }, Room.draftLimits.ttlMs);
+    draft.expiryTimer.unref?.();
+  }
+
+  /**
+   * Withdraw a preview and release every byte/timer it owns. This is used by
+   * provider errors, explicit cancellation, detach, revocation and stale
+   * presence; leaving a bubble behind would claim text no transcript contains.
+   */
+  private cancelAgentDraft(agent: AgentConnection, broadcast = true): void {
+    const draft = agent.draft;
+    if (!draft) return;
+    if (draft.flushTimer) clearTimeout(draft.flushTimer);
+    if (draft.expiryTimer) clearTimeout(draft.expiryTimer);
+    this.activeDraftBytes = Math.max(0, this.activeDraftBytes - draft.bytes);
+    agent.draft = undefined;
+    if (broadcast) this.broadcast({ t: "agentDeltaCancel", entryId: draft.entryId });
+  }
+
+  /** Reuse the relay-minted preview id for the final durable transcript row. */
+  private completeAgentDraft(agent: AgentConnection): string | undefined {
+    const draft = agent.draft;
+    if (!draft) return undefined;
+    if (draft.flushTimer) clearTimeout(draft.flushTimer);
+    if (draft.expiryTimer) clearTimeout(draft.expiryTimer);
+    this.activeDraftBytes = Math.max(0, this.activeDraftBytes - draft.bytes);
+    agent.draft = undefined;
+    return draft.entryId;
   }
 
   /* ---------------------------------------------------------------- */
@@ -798,6 +1014,7 @@ export class Room {
       // several agents at once without them evicting each other.
       const replaced = this.agents.get(id);
       if (replaced) {
+        this.cancelAgentDraft(replaced);
         this.clearPresenceTimer(replaced);
         replaced.socket.close(4000, `another connection claimed the agent id ${id}`);
       }
@@ -849,6 +1066,7 @@ export class Room {
       youAgentId: myAgentId,
       roster: this.roster,
       transcript: this.transcript,
+      drafts: this.liveDrafts,
     });
     if (announceArrival) this.system(`${label} joined the room.`);
     this.broadcastRoster();
@@ -1747,6 +1965,7 @@ export class Room {
     // any later reconnect attempt by the released source id.
     this.releasedAgents.add(handoff.sourceAgentId);
     if (source) {
+      this.cancelAgentDraft(source);
       this.clearPresenceTimer(source);
       this.agents.delete(source.id);
     }
@@ -2245,6 +2464,10 @@ export class Room {
       // entry still being present; only a live replacement socket suppresses
       // the stale close event.
       if (conn && socket && conn.socket !== socket) return;
+      // The socket is already gone. Cancel ephemeral text before waiting for
+      // any durable handoff transition so a pending coalesced frame cannot
+      // publish after detach.
+      if (conn) this.cancelAgentDraft(conn);
       const handoffsChanged = this.transitionHandoffsForRemoval(
         handle,
         "disconnected",
@@ -2530,7 +2753,10 @@ export class Room {
     this.handoffExpiryTimer = undefined;
     if (this.presenceSweepTimer) clearInterval(this.presenceSweepTimer);
     this.presenceSweepTimer = undefined;
-    for (const agent of this.agents.values()) this.clearPresenceTimer(agent);
+    for (const agent of this.agents.values()) {
+      this.cancelAgentDraft(agent, false);
+      this.clearPresenceTimer(agent);
+    }
     await this.driver.close?.();
   }
 
@@ -2550,13 +2776,17 @@ export class Room {
     text = text.slice(0, Room.MAX_MESSAGE_CHARS);
     if (role === "agent") {
       const conn = this.agents.get(agentId ?? `${handle}:default`);
-      if (!conn || !this.isAgentAuthorized(conn.id) || text.trim() === "") return;
+      if (!conn || !this.isAgentAuthorized(conn.id)) return;
+      if (text.trim() === "") {
+        this.cancelAgentDraft(conn);
+        return;
+      }
       const depth = (this.chainDepth.get(conn.id) ?? 0) + 1;
       this.chainDepth.set(conn.id, depth);
       // Attributed to its owner, in their colour, and named so two of one
       // person's agents are told apart rather than blurring into "the agent".
       this.append({
-        id: randomUUID(),
+        id: this.completeAgentDraft(conn) ?? randomUUID(),
         kind: "agent",
         authorHandle: conn.member.handle,
         authorName: conn.label,
@@ -3117,6 +3347,19 @@ function summariseResult(content: string, isError: boolean): string {
  */
 function isContainer(handle: string): boolean {
   return handle === WORKSPACE_HANDLE;
+}
+
+/** Take a UTF-8-bounded prefix without cutting a surrogate pair in half. */
+function takeUtf8Prefix(value: string, maxBytes: number): string {
+  let bytes = 0;
+  let codeUnits = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (bytes + characterBytes > maxBytes) break;
+    bytes += characterBytes;
+    codeUnits += character.length;
+  }
+  return value.slice(0, codeUnits);
 }
 
 /**

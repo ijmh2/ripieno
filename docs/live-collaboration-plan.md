@@ -63,7 +63,7 @@ an attributed proposal.
   extension-hosted Claude MCP bridge.
 - Bounded automatic context injection for all extension-hosted runners.
 
-### Phase 2 — provider-grade live activity
+### Phase 2 — provider event and live-activity foundation (implemented)
 
 Replace the runner's final-string-only contract with a structured event stream:
 
@@ -86,13 +86,34 @@ This phase also gives every built-in provider a structured `context_add` path.
 Until then, all providers inspect injected context, while direct context tools
 are available to MCP-attached agents and the extension-hosted Claude path.
 
-### Phase 3 — live response drafts
+Codex and Gemini's documented-shape adapters remain unverified against installed
+binaries and their presets do not yet enable JSON output. That gap is recorded
+explicitly in the Phase 2 handoff rather than being hidden by the implemented
+event contract.
 
-- Stream user-facing response drafts into an ephemeral bubble keyed by agent.
-- Reconcile the draft with one final authoritative transcript entry.
-- Cancel incomplete drafts on error, detach or authority revocation.
-- Never stream hidden reasoning or provider diagnostic channels.
-- Apply per-agent and per-room byte/rate limits at the relay.
+### Phase 3 — live response drafts (implemented)
+
+- Claude documented `text_delta` and OpenAI-compatible assistant-content deltas
+  are the only provider channels that emit drafts. Hidden reasoning, tool JSON,
+  terminal output and diagnostics never do.
+- An agent frame contains only a delta and monotonic sequence. The relay derives
+  exact agent/owner/label from the authenticated socket and mints one active
+  preview id; payloads cannot choose either identity or transcript id.
+- Relay limits use UTF-8 bytes: 4,096 per frame, 32,000 per agent preview and
+  128,000 across active room previews, plus 20 input frames/second per agent and
+  80/second per room. Broadcasts are coalesced to 100 ms and split at whole
+  UTF-8 code points so coalescing never creates an oversized output frame.
+- Drafts expire after 45 seconds and are never persisted. A snapshot of text
+  already published is included for a client joining while a draft is live;
+  an unpublished coalescing tail arrives once as a later delta.
+- The next final `say` from that exact agent reuses the relay-minted preview id,
+  producing one authoritative transcript entry and replacing the bubble whole.
+- Incomplete previews are canceled on provider error, empty result, explicit
+  cancellation, detach, exact-id replacement, room-role revocation, handoff
+  authority transfer, stale presence or draft expiry.
+- The accessible bubble names the exact attributed agent, is marked busy and
+  visibly provisional. Older agents that only send `say`, and older clients
+  that understand the original two-field `agentDelta`, continue to work.
 
 ### Phase 4 — full Room editor panel
 

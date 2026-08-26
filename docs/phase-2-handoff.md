@@ -4,6 +4,10 @@ Written for whoever picks up Phase 3. It assumes you have read
 [`live-collaboration-plan.md`](./live-collaboration-plan.md) but not that you were
 here when Phase 2 was built.
 
+> Phase 3 has since been implemented. Its current contract, limits, verification
+> and remaining gaps are in [`phase-3-handoff.md`](./phase-3-handoff.md). The
+> historical notes below remain useful for understanding the provider boundary.
+
 ## State when this was written
 
 Branch `codex/yc-multiplayer`, rebased onto `origin/main` at `fb67012` with a

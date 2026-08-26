@@ -567,6 +567,18 @@ export function startServer(config: ServerConfig): Relay {
             );
             break;
 
+          case "agentDraft":
+            // User-facing draft text is attributed exactly like presence: the
+            // authenticated socket chooses the agent, never a payload field.
+            if (!joined?.agentId || joined.role !== "agent") return;
+            joined.room.publishAgentDraft(joined.agentId, msg.delta, msg.sequence);
+            break;
+
+          case "agentDraftCancel":
+            if (!joined?.agentId || joined.role !== "agent") return;
+            joined.room.cancelAgentDraftById(joined.agentId);
+            break;
+
           case "setRole":
             if (!joined) return send(socket, "join a room before changing roles");
             if (joined.role !== "human") {

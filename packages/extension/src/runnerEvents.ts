@@ -17,10 +17,9 @@ export type RunnerPhase = "thinking" | "reading" | "editing" | "running" | "resp
 /**
  * One thing a turn did that the room may know about.
  *
- * `draft` is defined here because it is part of the agreed union, but Phase 2
- * emits `phase`, `location`, `tool` and `complete` only. Streaming user-facing
- * drafts into the room is Phase 3, and needs the ephemeral bubble, transcript
- * reconciliation and relay byte limits that go with it.
+ * `draft` is only user-facing assistant response text from a provider's known
+ * output channel. Hidden reasoning, diagnostic strings, tool JSON and terminal
+ * output may produce a safe phase/tool event but never a draft.
  */
 export type RunnerEvent =
   | { type: "phase"; phase: RunnerPhase }
