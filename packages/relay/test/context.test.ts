@@ -57,6 +57,49 @@ describe("relay-authoritative shared context", () => {
     assert.equal(miraSocket.sent.at(-1)?.t, "context");
   });
 
+  test("reclaiming a full room drops the item but keeps its audit trail", () => {
+    const actor = { handle: "swhitfield", role: "human" as const };
+    // One item that can be reclaimed, retired so it is a legitimate candidate.
+    const doomed = room.createContext(actor, "ctxreq_doomed", "note", "Doomed", "b");
+    room.updateContext(actor, "ctxreq_retire", doomed.item!.id, 1, { status: "archived" });
+    const auditBefore = room.contextAuditLog.filter((e) => e.contextId === doomed.item!.id);
+    assert.equal(auditBefore.length, 2, "create and archive were both recorded");
+
+    // Fill to the cap so the next create must reclaim.
+    for (let index = room.contextList.length; index < 200; index++) {
+      const filled = room.createContext(actor, `ctxreq_fill_${index}`, "note", `Fill ${index}`, "b");
+      assert.equal(filled.ok, true);
+    }
+    const forced = room.createContext(actor, "ctxreq_forced", "note", "Forced", "b");
+    assert.equal(forced.ok, true, "the terminal item made room for this one");
+
+    assert.equal(
+      room.contextList.some((item) => item.id === doomed.item!.id),
+      false,
+      "the reclaimed item is gone"
+    );
+    assert.deepEqual(
+      room.contextAuditLog.filter((e) => e.contextId === doomed.item!.id).map((e) => e.action),
+      ["create", "archive"],
+      "who wrote and who retired it survives the reclaim"
+    );
+  });
+
+  test("a retry of a reclaimed item's create does not mint a second item", () => {
+    const actor = { handle: "swhitfield", role: "human" as const };
+    const first = room.createContext(actor, "ctxreq_once", "note", "Once", "b");
+    room.updateContext(actor, "ctxreq_retire2", first.item!.id, 1, { status: "archived" });
+    for (let index = room.contextList.length; index < 200; index++) {
+      room.createContext(actor, `ctxreq_pad_${index}`, "note", `Pad ${index}`, "b");
+    }
+    room.createContext(actor, "ctxreq_evict", "note", "Evict", "b");
+    const before = room.contextList.length;
+    // The original request id, replayed exactly as a reconnecting client would.
+    const replay = room.createContext(actor, "ctxreq_once", "note", "Once", "b");
+    assert.equal(replay.ok, true);
+    assert.equal(room.contextList.length, before, "the receipt still suppresses a duplicate");
+  });
+
   test("agent additions are proposals with exact agent provenance", async () => {
     const agentSocket = new Socket();
     await room.join(mira, agentSocket, "agent", {

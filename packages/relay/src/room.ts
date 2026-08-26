@@ -1443,19 +1443,26 @@ export class Room {
     });
   }
 
-  /** Make room only by retiring the oldest already-terminal item. */
+  /**
+   * Make room only by retiring the oldest already-terminal item.
+   *
+   * The item goes; its audit trail does not. Attribution is the whole point of
+   * this store, and a history that quietly loses entries whenever the room gets
+   * busy is not one anybody can rely on — the audit log is separately bounded
+   * and evicts oldest-first on its own terms.
+   *
+   * The idempotency receipts stay for a nearer reason: dropping them would let
+   * a retry of the original create mint a second item, so a reclaim would turn
+   * a duplicate-safe request into a duplicating one. They are reclaimed under
+   * pressure by `rememberContextResult`, which already prefers receipts whose
+   * item is gone.
+   */
   private reclaimOldestTerminalContext(): boolean {
     const terminal = [...this.context.values()]
       .filter((item) => item.status === "archived" || item.status === "superseded")
       .sort((left, right) => left.updatedAt - right.updatedAt || left.createdAt - right.createdAt)[0];
     if (!terminal) return false;
     this.context.delete(terminal.id);
-    for (let index = this.contextAudit.length - 1; index >= 0; index--) {
-      if (this.contextAudit[index]!.contextId === terminal.id) this.contextAudit.splice(index, 1);
-    }
-    for (const [key, receipt] of this.contextRequests) {
-      if (receipt.contextId === terminal.id) this.contextRequests.delete(key);
-    }
     return true;
   }
 
