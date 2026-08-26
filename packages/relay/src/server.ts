@@ -552,6 +552,19 @@ export function startServer(config: ServerConfig): Relay {
             joined.room.setAgentState(joined.agentId, msg.state);
             break;
 
+          case "agentActivity":
+            // Rich presence is ephemeral and self-authored. The socket, never
+            // the payload, chooses which agent appears to be active.
+            if (!joined?.agentId || joined.role !== "agent") return;
+            joined.room.setAgentActivity(
+              joined.agentId,
+              msg.phase,
+              msg.summary,
+              msg.path,
+              msg.line
+            );
+            break;
+
           case "setRole":
             if (!joined) return send(socket, "join a room before changing roles");
             if (joined.role !== "human") {
@@ -595,6 +608,51 @@ export function startServer(config: ServerConfig): Relay {
                 msg.goalId,
                 msg.action,
                 msg.expectedVersion
+              )
+            );
+            break;
+
+          case "contextCreate":
+            if (!joined) return send(socket, "join a room before adding context");
+            if (joined.role === "workspace") {
+              return send(socket, "the shared workspace cannot author room context");
+            }
+            sendMessage(
+              socket,
+              joined.room.createContext(
+                {
+                  handle: joined.handle,
+                  role: joined.role,
+                  agentId: joined.agentId,
+                  agentLabel: joined.role === "agent" ? joined.label : undefined,
+                },
+                msg.requestId,
+                msg.kind,
+                msg.title,
+                msg.body,
+                msg.tags
+              )
+            );
+            break;
+
+          case "contextUpdate":
+            if (!joined) return send(socket, "join a room before changing context");
+            if (joined.role === "workspace") {
+              return send(socket, "the shared workspace cannot change room context");
+            }
+            sendMessage(
+              socket,
+              joined.room.updateContext(
+                {
+                  handle: joined.handle,
+                  role: joined.role,
+                  agentId: joined.agentId,
+                  agentLabel: joined.role === "agent" ? joined.label : undefined,
+                },
+                msg.requestId,
+                msg.contextId,
+                msg.expectedVersion,
+                { title: msg.title, body: msg.body, tags: msg.tags, status: msg.status }
               )
             );
             break;

@@ -11,6 +11,9 @@ import { validateRelayTransportUrl } from "@ripieno/relay-client";
 import type {
   ActionEntry,
   ClientMsg,
+  ContextItem,
+  ContextKind,
+  ContextResultMsg,
   RosterEntry,
   ServerMsg,
   TranscriptEntry,
@@ -40,6 +43,8 @@ export class RoomClient {
   private readonly transcript: TranscriptEntry[] = [];
   private roster: RosterEntry[] = [];
   private actions: ActionEntry[] = [];
+  private context: ContextItem[] = [];
+  private contextRevision = 0;
   private host: string | undefined;
   /** Remote tool calls awaiting a reply from the member executing them. */
   private readonly pendingRemote = new Map<
@@ -47,6 +52,10 @@ export class RoomClient {
     { resolve: (r: { content: string; isError: boolean }) => void; timer: NodeJS.Timeout }
   >();
   private nextRequest = 0;
+  private readonly pendingContext = new Map<
+    string,
+    { resolve: (result: ContextResultMsg) => void; timer: NodeJS.Timeout }
+  >();
   private ready?: Promise<void>;
   /** Index of the last entry already handed to the agent, so reads are incremental. */
   private cursor = 0;
@@ -86,6 +95,17 @@ export class RoomClient {
       socket.on("close", () => {
         this.socket = undefined;
         this.ready = undefined;
+        for (const [requestId, pending] of this.pendingContext) {
+          clearTimeout(pending.timer);
+          pending.resolve({
+            t: "contextResult",
+            requestId,
+            ok: false,
+            contextRevision: this.contextRevision,
+            message: "The room disconnected before acknowledging the context proposal.",
+          });
+        }
+        this.pendingContext.clear();
       });
     });
     return this.ready;
@@ -111,6 +131,8 @@ export class RoomClient {
         this.roster = msg.roster;
         this.host = msg.workspaceHost;
         this.actions = msg.actions ?? [];
+        this.context = msg.context ?? [];
+        this.contextRevision = msg.contextRevision ?? 0;
         // On first attach, everything before us is history rather than news.
         // On a reconnect, whatever arrived while we were away is genuinely new.
         if (firstAttach) {
@@ -128,6 +150,29 @@ export class RoomClient {
       case "action":
         this.actions.push(msg.entry);
         break;
+      case "context":
+        if (msg.contextRevision >= this.contextRevision) {
+          this.context = msg.context;
+          this.contextRevision = msg.contextRevision;
+        }
+        break;
+      case "contextResult": {
+        const pending = this.pendingContext.get(msg.requestId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          this.pendingContext.delete(msg.requestId);
+          pending.resolve(msg);
+        }
+        if (
+          msg.ok &&
+          msg.context &&
+          msg.contextRevision >= this.contextRevision
+        ) {
+          this.context = msg.context;
+          this.contextRevision = msg.contextRevision;
+        }
+        break;
+      }
       case "remoteToolReply": {
         const pending = this.pendingRemote.get(msg.requestId);
         if (pending) {
@@ -160,6 +205,42 @@ export class RoomClient {
 
   currentActions(): ActionEntry[] {
     return this.actions;
+  }
+
+  currentContext(): ContextItem[] {
+    return this.context.map((item) => structuredClone(item));
+  }
+
+  async addContext(
+    kind: ContextKind,
+    title: string,
+    body: string,
+    tags?: string[],
+    timeoutMs = 5000
+  ): Promise<ContextResultMsg> {
+    const requestId = `ctxreq_mcp_${Date.now()}_${this.nextRequest++}`;
+    if (!this.send({ t: "contextCreate", requestId, kind, title, body, tags })) {
+      return {
+        t: "contextResult",
+        requestId,
+        ok: false,
+        contextRevision: this.contextRevision,
+        message: "Not connected to the room.",
+      };
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingContext.delete(requestId);
+        resolve({
+          t: "contextResult",
+          requestId,
+          ok: false,
+          contextRevision: this.contextRevision,
+          message: "The room did not acknowledge the context proposal.",
+        });
+      }, timeoutMs);
+      this.pendingContext.set(requestId, { resolve, timer });
+    });
   }
 
   workspaceHost(): string | undefined {

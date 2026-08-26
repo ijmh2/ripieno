@@ -18,6 +18,9 @@ import path from "node:path";
 import type {
   ActionEntry,
   AgentUsage,
+  ContextAuditEntry,
+  ContextItem,
+  ContextResultMsg,
   Goal,
   GoalAuditEntry,
   GoalResultMsg,
@@ -32,6 +35,9 @@ import {
   MAX_GOALS,
   MAX_GOAL_AUDIT_ENTRIES,
   MAX_GOAL_REQUESTS,
+  MAX_CONTEXT_AUDIT_ENTRIES,
+  MAX_CONTEXT_ITEMS,
+  MAX_CONTEXT_REQUESTS,
   MAX_HANDOFFS,
   MAX_HANDOFF_AUDIT_ENTRIES,
   MAX_HANDOFF_REQUESTS,
@@ -57,6 +63,16 @@ export interface HandoffRequestReceipt {
   result: HandoffResultMsg;
 }
 
+/** Durable idempotency receipt for a context mutation. */
+export interface ContextRequestReceipt {
+  actorKey: string;
+  requestId: string;
+  fingerprint: string;
+  kind: "create" | "update";
+  contextId?: string;
+  result: ContextResultMsg;
+}
+
 export interface RoomSnapshot {
   transcript: TranscriptEntry[];
   actions: ActionEntry[];
@@ -73,6 +89,10 @@ export interface RoomSnapshot {
   goalAudit?: GoalAuditEntry[];
   goalRequests?: GoalRequestReceipt[];
   roomRevision?: number;
+  context?: ContextItem[];
+  contextAudit?: ContextAuditEntry[];
+  contextRequests?: ContextRequestReceipt[];
+  contextRevision?: number;
   handoffs?: HandoffOffer[];
   handoffAudit?: HandoffAuditEntry[];
   handoffRequests?: HandoffRequestReceipt[];
@@ -173,6 +193,12 @@ export class FileRoomStore implements RoomStore {
         goalAudit: (parsed.goalAudit ?? []).slice(-MAX_GOAL_AUDIT_ENTRIES),
         goalRequests: (parsed.goalRequests ?? []).slice(-MAX_GOAL_REQUESTS),
         roomRevision: Number.isSafeInteger(parsed.roomRevision) ? parsed.roomRevision : 0,
+        context: (parsed.context ?? []).slice(-MAX_CONTEXT_ITEMS),
+        contextAudit: (parsed.contextAudit ?? []).slice(-MAX_CONTEXT_AUDIT_ENTRIES),
+        contextRequests: (parsed.contextRequests ?? []).slice(-MAX_CONTEXT_REQUESTS),
+        contextRevision: Number.isSafeInteger(parsed.contextRevision)
+          ? parsed.contextRevision
+          : 0,
         handoffs: (parsed.handoffs ?? []).slice(-MAX_HANDOFFS),
         handoffAudit: (parsed.handoffAudit ?? []).slice(-MAX_HANDOFF_AUDIT_ENTRIES),
         handoffRequests: (parsed.handoffRequests ?? []).slice(-MAX_HANDOFF_REQUESTS),
@@ -209,6 +235,10 @@ export class FileRoomStore implements RoomStore {
       goalAudit: (snapshot.goalAudit ?? []).slice(-MAX_GOAL_AUDIT_ENTRIES),
       goalRequests: (snapshot.goalRequests ?? []).slice(-MAX_GOAL_REQUESTS),
       roomRevision: snapshot.roomRevision ?? 0,
+      context: (snapshot.context ?? []).slice(-MAX_CONTEXT_ITEMS),
+      contextAudit: (snapshot.contextAudit ?? []).slice(-MAX_CONTEXT_AUDIT_ENTRIES),
+      contextRequests: (snapshot.contextRequests ?? []).slice(-MAX_CONTEXT_REQUESTS),
+      contextRevision: snapshot.contextRevision ?? 0,
       handoffs: (snapshot.handoffs ?? []).slice(-MAX_HANDOFFS),
       handoffAudit: (snapshot.handoffAudit ?? []).slice(-MAX_HANDOFF_AUDIT_ENTRIES),
       handoffRequests: (snapshot.handoffRequests ?? []).slice(-MAX_HANDOFF_REQUESTS),

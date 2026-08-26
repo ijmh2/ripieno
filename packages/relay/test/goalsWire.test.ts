@@ -169,5 +169,42 @@ describe("raw goal mutation boundary", () => {
     assert.equal(joined.goals?.[0]?.id, created.goal?.id);
     assert.equal(joined.roomRevision, 1);
   });
-});
 
+  test("agent context proposals derive exact provenance from the authenticated socket", async () => {
+    const human = await connect();
+    human.send({
+      t: "join",
+      room: "agent-context",
+      member: { handle: "ivan", displayName: "Ivan" },
+    });
+    await human.waitFor("joined");
+
+    const agent = await connect();
+    agent.send({
+      t: "join",
+      room: "agent-context",
+      role: "agent",
+      agentId: "reviewer",
+      agentLabel: "Ivan's reviewer",
+      member: { handle: "ivan", displayName: "Ivan" },
+    });
+    await agent.waitFor("joined");
+    agent.send({
+      t: "contextCreate",
+      requestId: "ctxreq_wire",
+      kind: "fact",
+      title: "Wire attribution",
+      body: "The relay derives the agent id.",
+      tags: ["security"],
+    });
+    const result = await agent.waitFor(
+      "contextResult",
+      (message) => message.requestId === "ctxreq_wire"
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.item?.status, "proposed");
+    assert.equal(result.item?.authorHandle, "ivan");
+    assert.equal(result.item?.authorAgentId, "ivan::reviewer");
+    assert.equal(result.item?.authorAgentLabel, "Ivan's reviewer");
+  });
+});

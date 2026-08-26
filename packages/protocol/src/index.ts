@@ -34,6 +34,12 @@ export interface AttachedAgent {
    * report for it, and "we do not know" must not render as "idle".
    */
   state?: AgentActivity;
+  /**
+   * Ephemeral, agent-authored presence. Unlike the Work log this is not a
+   * durable claim that something happened; it is only where the agent says its
+   * current attention is. The relay derives the agent identity from the socket.
+   */
+  activity?: AgentPresence;
 }
 
 export type AgentCapability = "conversation" | "workspace";
@@ -45,7 +51,26 @@ export type AgentCapability = "conversation" | "workspace";
  * "detached" are answered by presence in the roster, and a room only needs to
  * know whether waiting for this agent is worthwhile.
  */
-export type AgentActivity = "idle" | "thinking";
+export type AgentActivity =
+  | "idle"
+  | "thinking"
+  | "reading"
+  | "editing"
+  | "running"
+  | "responding"
+  | "awaiting-approval";
+
+/** A bounded, non-durable presence update shown in an agent inspector. */
+export interface AgentPresence {
+  phase: AgentActivity;
+  /** Human-readable observable work, never hidden reasoning or raw terminal output. */
+  summary?: string;
+  /** Workspace-relative path when sharing an exact location is appropriate. */
+  path?: string;
+  /** Optional 1-based line anchor. */
+  line?: number;
+  updatedAt: number;
+}
 
 /**
  * What a member may do in a room.
@@ -162,6 +187,65 @@ export interface GoalAuditEntry {
   toStatus: GoalStatus;
   goalVersion: number;
   roomRevision: number;
+  ts: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Durable shared room context                                        */
+/* ------------------------------------------------------------------ */
+
+export const MAX_CONTEXT_ITEMS = 200;
+export const MAX_CONTEXT_TITLE_CHARS = 160;
+export const MAX_CONTEXT_BODY_CHARS = 4_000;
+export const MAX_CONTEXT_TAGS = 8;
+export const MAX_CONTEXT_TAG_CHARS = 32;
+export const MAX_CONTEXT_AUDIT_ENTRIES = 1_000;
+export const MAX_CONTEXT_REQUESTS = 1_000;
+export const MAX_CONTEXT_REQUEST_ID_CHARS = 128;
+
+export type ContextKind =
+  | "decision"
+  | "fact"
+  | "constraint"
+  | "question"
+  | "reference"
+  | "note";
+export type ContextStatus = "proposed" | "accepted" | "superseded" | "archived";
+
+/**
+ * One attributed unit of room memory.
+ *
+ * People create accepted context. Agent-created context starts proposed so a
+ * model cannot silently turn an assertion into a durable room instruction.
+ */
+export interface ContextItem {
+  id: string;
+  kind: ContextKind;
+  title: string;
+  body: string;
+  tags: string[];
+  status: ContextStatus;
+  authorHandle: string;
+  authorName: string;
+  authorAgentId?: string;
+  authorAgentLabel?: string;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ContextAuditEntry {
+  id: string;
+  contextId: string;
+  requestId: string;
+  actorHandle: string;
+  actorAgentId?: string;
+  actorAgentLabel?: string;
+  action: "create" | "edit" | "accept" | "supersede" | "archive";
+  fromStatus?: ContextStatus;
+  toStatus: ContextStatus;
+  contextVersion: number;
+  contextRevision: number;
   ts: number;
 }
 
@@ -494,6 +578,15 @@ export interface AgentStateMsg {
   state: AgentActivity;
 }
 
+/** Rich ephemeral presence. The relay supplies identity and timestamp. */
+export interface AgentActivityMsg {
+  t: "agentActivity";
+  phase: AgentActivity;
+  summary?: string;
+  path?: string;
+  line?: number;
+}
+
 /** The room's running totals, per agent. */
 export interface UsageMsg {
   t: "usage";
@@ -527,6 +620,31 @@ export interface GoalTransitionMsg {
   action: GoalTransition;
   /** Optimistic concurrency guard from the latest authoritative snapshot. */
   expectedVersion: number;
+}
+
+export interface ContextCreateMsg {
+  t: "contextCreate";
+  requestId: string;
+  kind: ContextKind;
+  title: string;
+  body: string;
+  tags?: string[];
+}
+
+/**
+ * Edit content or make one lifecycle transition, guarded by the latest item
+ * version. Combining the two is refused so an acceptance can never smuggle in
+ * an unseen text change.
+ */
+export interface ContextUpdateMsg {
+  t: "contextUpdate";
+  requestId: string;
+  contextId: string;
+  expectedVersion: number;
+  title?: string;
+  body?: string;
+  tags?: string[];
+  status?: Exclude<ContextStatus, "proposed">;
 }
 
 export interface HandoffOfferMsg {
@@ -586,9 +704,12 @@ export type ClientMsg =
   | SetRoleMsg
   | AgentUsageMsg
   | AgentStateMsg
+  | AgentActivityMsg
   | WorkspaceChangedMsg
   | GoalCreateMsg
   | GoalTransitionMsg
+  | ContextCreateMsg
+  | ContextUpdateMsg
   | HandoffOfferMsg
   | HandoffDecisionMsg
   | HandoffClaimMsg
@@ -623,6 +744,10 @@ export interface JoinedMsg {
   goals?: Goal[];
   goalAudit?: GoalAuditEntry[];
   roomRevision?: number;
+  /** Authoritative durable shared context snapshot. */
+  context?: ContextItem[];
+  contextAudit?: ContextAuditEntry[];
+  contextRevision?: number;
   /** Authoritative durable handoff snapshot. */
   handoffs?: HandoffOffer[];
   handoffAudit?: HandoffAuditEntry[];
@@ -775,6 +900,26 @@ export interface GoalResultMsg {
   message?: string;
 }
 
+/** Full authoritative state, broadcast after every shared-context mutation. */
+export interface ContextStateMsg {
+  t: "context";
+  context: ContextItem[];
+  contextAudit: ContextAuditEntry[];
+  contextRevision: number;
+}
+
+/** Direct acknowledgement, including durable idempotent retry results. */
+export interface ContextResultMsg {
+  t: "contextResult";
+  requestId: string;
+  ok: boolean;
+  contextRevision: number;
+  item?: ContextItem;
+  context?: ContextItem[];
+  contextAudit?: ContextAuditEntry[];
+  message?: string;
+}
+
 /** Full authoritative state, broadcast after every handoff mutation or expiry. */
 export interface HandoffStateMsg {
   t: "handoffs";
@@ -838,6 +983,8 @@ export type ServerMsg =
   | UsageMsg
   | GoalStateMsg
   | GoalResultMsg
+  | ContextStateMsg
+  | ContextResultMsg
   | HandoffStateMsg
   | HandoffResultMsg
   | HandoffAssignmentMsg

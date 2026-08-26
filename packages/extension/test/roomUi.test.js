@@ -21,10 +21,25 @@ test("only the signed-in member's human messages use the outgoing side", () => {
 });
 
 test("the composer offers every implemented room command", () => {
-  for (const command of ["/help", "/agents", "/model", "/attach", "/detach", "/goal", "/handoff"]) {
+  for (const command of ["/help", "/agents", "/model", "/attach", "/detach", "/goal", "/context", "/handoff"]) {
     assert.match(script, new RegExp(`insert: "${command.replace("/", "\\/")}"`));
   }
   assert.match(script, /\/model.*Choose an agent and provider model/);
+});
+
+test("shared context and agent inspectors are separate accessible room surfaces", () => {
+  assert.match(roomViewHost, /role="tablist" aria-label="Ripieno room surfaces"/);
+  assert.match(roomViewHost, /id="contextPanel"[^>]*role="tabpanel"/);
+  assert.match(roomViewHost, /id="agentsPanel"[^>]*role="tabpanel"/);
+  assert.match(roomViewHost, /Durable, attributed memory/);
+  assert.match(script, /type: "contextCreate"/);
+  assert.match(script, /type: "contextStatus"/);
+  assert.match(roomViewHost, /Agent additions remain proposed/);
+  assert.match(script, /agent\.activity/);
+  assert.match(roomViewHost, /Hidden reasoning and raw logs are never shared/);
+  assert.match(styles, /\.surface-tabs\s*\{/);
+  assert.match(styles, /\.context-card\.proposed/);
+  assert.match(styles, /\.agent-inspector\s*\{/);
 });
 
 test("invite onboarding is a compact accessible fixed three-step flow", () => {

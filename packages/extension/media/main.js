@@ -31,6 +31,22 @@
   const handoffAnnouncementsEl = document.getElementById("handoffAnnouncements");
   const approvalStackEl = document.getElementById("approvalStack");
   const jumpLatestEl = document.getElementById("jumpLatest");
+  const surfaceTabsEl = document.getElementById("surfaceTabs");
+  const roomPanelEl = document.getElementById("roomPanel");
+  const contextPanelEl = document.getElementById("contextPanel");
+  const agentsPanelEl = document.getElementById("agentsPanel");
+  const contextCountEl = document.getElementById("contextCount");
+  const agentCountEl = document.getElementById("agentCount");
+  const contextFormEl = document.getElementById("contextForm");
+  const contextKindEl = document.getElementById("contextKind");
+  const contextTitleEl = document.getElementById("contextTitle");
+  const contextBodyEl = document.getElementById("contextBody");
+  const contextTagsEl = document.getElementById("contextTags");
+  const contextAddEl = document.getElementById("contextAdd");
+  const contextValidationEl = document.getElementById("contextValidation");
+  const contextListEl = document.getElementById("contextList");
+  const contextAnnouncementsEl = document.getElementById("contextAnnouncements");
+  const agentInspectorsEl = document.getElementById("agentInspectors");
   // Mirrors MAX_COMPOSER_CHARS in roomViewMessages.ts. The host remains the
   // authority; this copy prevents a legitimate draft being cleared on rejection.
   const MAX_COMPOSER_CHARS = 32_000;
@@ -46,6 +62,9 @@
   let goals = [];
   let goalAudit = [];
   let roomRevision = 0;
+  let context = [];
+  let contextAudit = [];
+  let contextRevision = 0;
   let handoffs = [];
   let handoffAudit = [];
   let handoffRevision = 0;
@@ -107,6 +126,39 @@
   /* ---------------------------------------------------------------- */
   /* Rendering                                                         */
   /* ---------------------------------------------------------------- */
+
+  let activeSurface = ["room", "context", "agents"].includes(vscode.getState()?.surface)
+    ? vscode.getState().surface
+    : "room";
+
+  function showSurface(surface, focus = false) {
+    if (!["room", "context", "agents"].includes(surface)) return;
+    activeSurface = surface;
+    const panels = { room: roomPanelEl, context: contextPanelEl, agents: agentsPanelEl };
+    for (const button of surfaceTabsEl.querySelectorAll("[role=tab]")) {
+      const selected = button.dataset.surface === surface;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
+      if (selected && focus) button.focus();
+    }
+    for (const [name, panel] of Object.entries(panels)) panel.hidden = name !== surface;
+    vscode.setState({ ...(vscode.getState() || {}), surface });
+  }
+
+  surfaceTabsEl.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-surface]");
+    if (button) showSurface(button.dataset.surface);
+  });
+  surfaceTabsEl.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    const order = ["room", "context", "agents"];
+    const delta = event.key === "ArrowRight" ? 1 : -1;
+    const next = order[(order.indexOf(activeSurface) + delta + order.length) % order.length];
+    showSurface(next, true);
+    event.preventDefault();
+  });
+  showSurface(activeSurface);
 
   function clearEmptyState() {
     const el = transcriptEl.querySelector(".empty-state");
@@ -355,6 +407,72 @@
       overflow.textContent = `+${people.length - visible.length}`;
       rosterEl.appendChild(overflow);
     }
+    renderAgentInspectors();
+  }
+
+  function renderAgentInspectors() {
+    agentInspectorsEl.innerHTML = "";
+    const agents = roster
+      .filter((member) => member.kind !== "workspace")
+      .flatMap((member) => (member.agents || []).map((agent) => ({ member, agent })));
+    agentCountEl.textContent = agents.length > 0 ? String(agents.length) : "";
+    if (agents.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "agents-empty";
+      empty.textContent = "No agents are attached to this room.";
+      agentInspectorsEl.appendChild(empty);
+      return;
+    }
+    for (const { member, agent } of agents) {
+      const inspector = document.createElement("article");
+      inspector.className = "agent-inspector";
+      inspector.style.setProperty("--ripieno-hue", `var(--ripieno-hue-${member.color})`);
+      inspector.setAttribute("role", "listitem");
+
+      const header = document.createElement("div");
+      header.className = "agent-inspector-header";
+      const identity = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = agent.label;
+      const owner = document.createElement("span");
+      owner.textContent = `owned by ${member.displayName || member.handle} (@${member.handle})`;
+      identity.append(title, owner);
+      const capability = document.createElement("span");
+      capability.className = `agent-capability ${agent.capability || "unknown"}`;
+      capability.textContent = agent.capability === "workspace" ? "workspace" : agent.capability === "conversation" ? "conversation" : "capability unknown";
+      header.append(identity, capability);
+
+      const presence = agent.activity;
+      const phase = presence?.phase || agent.state || "unknown";
+      const activity = document.createElement("div");
+      activity.className = `agent-presence ${phase}`;
+      const dot = document.createElement("span");
+      dot.className = "agent-presence-dot";
+      dot.setAttribute("aria-hidden", "true");
+      const activityText = document.createElement("span");
+      activityText.textContent = presence?.summary || (phase === "unknown" ? "Activity not reported" : phase.replaceAll("-", " "));
+      activity.append(dot, activityText);
+
+      inspector.setAttribute(
+        "aria-label",
+        `${agent.label}, owned by ${member.displayName || member.handle}, ${activityText.textContent}`
+      );
+      inspector.append(header, activity);
+      if (presence?.path) {
+        const location = document.createElement("code");
+        location.className = "agent-location";
+        location.textContent = `${presence.path}${presence.line ? `:${presence.line}` : ""}`;
+        inspector.appendChild(location);
+      }
+      if (presence?.updatedAt) {
+        const updated = document.createElement("time");
+        updated.className = "agent-updated";
+        updated.dateTime = new Date(presence.updatedAt).toISOString();
+        updated.textContent = `updated ${formatTime(presence.updatedAt)}`;
+        inspector.appendChild(updated);
+      }
+      agentInspectorsEl.appendChild(inspector);
+    }
   }
 
   function statusClass() {
@@ -412,6 +530,10 @@
     renderComposerValidation(messageLength);
     composerEl.disabled = offline || notJoined || readOnly;
     sendButtonEl.disabled = composerEl.disabled || messageLength === 0 || tooLong;
+    for (const field of [contextKindEl, contextTitleEl, contextBodyEl, contextTagsEl]) {
+      field.disabled = offline || notJoined || readOnly;
+    }
+    contextAddEl.disabled = offline || notJoined || readOnly;
     composerEl.placeholder =
       connection === "connecting"
         ? "Connecting…"
@@ -453,6 +575,9 @@
     goals = msg.goals || [];
     goalAudit = msg.goalAudit || [];
     roomRevision = msg.roomRevision || 0;
+    context = msg.context || [];
+    contextAudit = msg.contextAudit || [];
+    contextRevision = msg.contextRevision || 0;
     handoffs = msg.handoffs || [];
     handoffAudit = msg.handoffAudit || [];
     handoffRevision = msg.handoffRevision || 0;
@@ -485,6 +610,7 @@
     renderRoster();
     renderOnboarding(msg.onboarding);
     renderGoals();
+    renderContext();
     renderHandoffs();
     renderActions();
     for (const approval of msg.approvals || []) {
@@ -553,6 +679,7 @@
     currentUser = you;
     renderRoster();
     renderHandoffs();
+    renderContext();
     renderOnboarding(nextOnboarding);
     const empty = transcriptEl.querySelector(".empty-state");
     if (empty) {
@@ -615,6 +742,16 @@
           roomRevision = msg.roomRevision;
           renderGoals();
           if (shouldAnnounce) announceLatestGoalChange();
+        }
+        break;
+      case "context":
+        if (msg.contextRevision >= contextRevision) {
+          const shouldAnnounce = msg.contextRevision > contextRevision;
+          context = msg.context;
+          contextAudit = msg.contextAudit || [];
+          contextRevision = msg.contextRevision;
+          renderContext();
+          if (shouldAnnounce) announceLatestContextChange();
         }
         break;
       case "handoffs":
@@ -710,6 +847,173 @@
       goalsListEl.appendChild(row);
     }
   }
+
+  /* ---------------------------------------------------------------- */
+  /* Durable shared room context                                      */
+  /* ---------------------------------------------------------------- */
+
+  function displayedContextId(id) {
+    const bare = id.startsWith("context_") ? id.slice(8) : id;
+    return bare.slice(0, 8);
+  }
+
+  function latestContextAudit(contextId) {
+    for (let index = contextAudit.length - 1; index >= 0; index--) {
+      if (contextAudit[index].contextId === contextId) return contextAudit[index];
+    }
+    return undefined;
+  }
+
+  function contextAuditVerb(action) {
+    return action === "create" ? "added" : action === "edit" ? "edited" : action === "accept" ? "accepted" : action === "archive" ? "archived" : "superseded";
+  }
+
+  function announceLatestContextChange() {
+    const latest = contextAudit[contextAudit.length - 1];
+    if (!latest) return;
+    const item = context.find((candidate) => candidate.id === latest.contextId);
+    const actor = latest.actorAgentLabel || `@${latest.actorHandle}`;
+    contextAnnouncementsEl.textContent = `${actor} ${contextAuditVerb(latest.action)} ${item?.kind || "context"}${item ? `: ${item.title}` : ""}`;
+  }
+
+  function contextStatusButton(item, status, label) {
+    const button = document.createElement("button");
+    button.className = `context-action ${status}`;
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      button.disabled = true;
+      vscode.postMessage({
+        type: "contextStatus",
+        id: item.id,
+        expectedVersion: item.version,
+        status,
+      });
+    });
+    return button;
+  }
+
+  function renderContext() {
+    contextListEl.innerHTML = "";
+    const live = context.filter((item) => item.status !== "archived" && item.status !== "superseded").length;
+    contextCountEl.textContent = live > 0 ? String(live) : "";
+    if (!currentRoom) {
+      const empty = document.createElement("div");
+      empty.className = "context-empty";
+      empty.textContent = "Join a room to inspect shared context.";
+      contextListEl.appendChild(empty);
+      return;
+    }
+    if (context.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "context-empty";
+      empty.textContent = "No shared context yet. Add a decision, fact, constraint, question, reference or note.";
+      contextListEl.appendChild(empty);
+      return;
+    }
+    const sorted = [...context].sort((left, right) => {
+      const rank = (status) => status === "accepted" ? 0 : status === "proposed" ? 1 : 2;
+      return rank(left.status) - rank(right.status) || right.updatedAt - left.updatedAt;
+    });
+    for (const item of sorted) {
+      const contextCard = document.createElement("article");
+      contextCard.className = `context-card ${item.status}`;
+      contextCard.setAttribute("role", "listitem");
+      const heading = document.createElement("div");
+      heading.className = "context-card-heading";
+      const kind = document.createElement("span");
+      kind.className = "context-kind-badge";
+      kind.textContent = item.kind;
+      const status = document.createElement("span");
+      status.className = `context-status ${item.status}`;
+      status.textContent = item.status;
+      heading.append(kind, status);
+
+      const title = document.createElement("strong");
+      title.className = "context-card-title";
+      title.textContent = item.title;
+      const body = document.createElement("div");
+      body.className = "context-card-body";
+      body.textContent = item.body || "No additional detail.";
+      const author = item.authorAgentLabel
+        ? `${item.authorAgentLabel} (@${item.authorHandle})`
+        : `@${item.authorHandle}`;
+      const meta = document.createElement("div");
+      meta.className = "context-card-meta";
+      meta.textContent = `${displayedContextId(item.id)} · ${author} · v${item.version}`;
+      contextCard.setAttribute("aria-label", `${item.status} ${item.kind}: ${item.title}, added by ${author}`);
+      contextCard.append(heading, title, body, meta);
+
+      if (item.tags.length > 0) {
+        const tags = document.createElement("div");
+        tags.className = "context-card-tags";
+        for (const value of item.tags) {
+          const tag = document.createElement("span");
+          tag.textContent = value;
+          tags.appendChild(tag);
+        }
+        contextCard.appendChild(tags);
+      }
+      const latest = latestContextAudit(item.id);
+      if (latest) {
+        const provenance = document.createElement("div");
+        provenance.className = "context-provenance";
+        provenance.textContent = `${contextAuditVerb(latest.action)} by ${latest.actorAgentLabel || `@${latest.actorHandle}`} · ${formatTime(latest.ts)}`;
+        contextCard.appendChild(provenance);
+      }
+
+      const canAct = currentUser?.role === "owner" || currentUser?.role === "member";
+      const canRetire = currentUser?.role === "owner" || item.authorHandle === currentUser?.handle;
+      if (canAct && item.status === "proposed") {
+        const actions = document.createElement("div");
+        actions.className = "context-card-actions";
+        actions.appendChild(contextStatusButton(item, "accepted", "Accept"));
+        if (canRetire) actions.appendChild(contextStatusButton(item, "archived", "Archive"));
+        contextCard.appendChild(actions);
+      } else if (canRetire && item.status === "accepted") {
+        const actions = document.createElement("div");
+        actions.className = "context-card-actions";
+        actions.append(
+          contextStatusButton(item, "superseded", "Supersede"),
+          contextStatusButton(item, "archived", "Archive")
+        );
+        contextCard.appendChild(actions);
+      }
+      contextListEl.appendChild(contextCard);
+    }
+  }
+
+  contextFormEl.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const title = contextTitleEl.value.trim();
+    const body = contextBodyEl.value.trim();
+    const tags = contextTagsEl.value
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+    const invalidTag = tags.find((tag) => tag.length > 32);
+    if (!title || title.length > 160 || body.length > 4000 || tags.length > 8 || invalidTag) {
+      contextValidationEl.textContent = invalidTag
+        ? "Each tag must be at most 32 characters."
+        : tags.length > 8
+          ? "Use at most 8 tags."
+          : "Add a title of up to 160 characters and detail of up to 4,000 characters.";
+      contextValidationEl.hidden = false;
+      return;
+    }
+    contextValidationEl.hidden = true;
+    contextValidationEl.textContent = "";
+    vscode.postMessage({
+      type: "contextCreate",
+      kind: contextKindEl.value,
+      title,
+      body,
+      tags,
+    });
+    contextTitleEl.value = "";
+    contextBodyEl.value = "";
+    contextTagsEl.value = "";
+  });
 
   /* ---------------------------------------------------------------- */
   /* Explicit agent handoffs                                          */
@@ -1095,6 +1399,7 @@
     { insert: "/attach", label: "/attach", detail: "Attach one of your agents", kind: "command", color: 5 },
     { insert: "/detach", label: "/detach", detail: "Detach one of your agents", kind: "command", color: 5 },
     { insert: "/goal", label: "/goal", detail: "Create, inspect or update durable room goals", kind: "command", color: 5 },
+    { insert: "/context", label: "/context", detail: "Open durable shared room context", kind: "command", color: 5 },
     { insert: "/handoff", label: "/handoff", detail: "Offer, accept or inspect agent handoffs", kind: "command", color: 5 },
   ];
   let candidates = [];

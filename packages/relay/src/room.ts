@@ -11,8 +11,14 @@ import type {
   ActionEntry,
   AgentActivity,
   AgentCapability,
+  AgentPresence,
   AttachedAgent,
   ConnectionRole,
+  ContextAuditEntry,
+  ContextItem,
+  ContextKind,
+  ContextResultMsg,
+  ContextStatus,
   Goal,
   GoalAuditEntry,
   GoalResultMsg,
@@ -36,6 +42,14 @@ import {
   MAX_GOAL_REQUEST_ID_CHARS,
   MAX_GOAL_REQUESTS,
   MAX_GOAL_TEXT_CHARS,
+  MAX_CONTEXT_AUDIT_ENTRIES,
+  MAX_CONTEXT_BODY_CHARS,
+  MAX_CONTEXT_ITEMS,
+  MAX_CONTEXT_REQUEST_ID_CHARS,
+  MAX_CONTEXT_REQUESTS,
+  MAX_CONTEXT_TAG_CHARS,
+  MAX_CONTEXT_TAGS,
+  MAX_CONTEXT_TITLE_CHARS,
   HANDOFF_EXPIRY_MS,
   MAX_HANDOFFS,
   MAX_HANDOFF_AUDIT_ENTRIES,
@@ -53,6 +67,7 @@ import { toRosterEntry } from "./roomCore.js";
 import type { RoomDriver } from "./driver.js";
 import type { AgentUsage, RoomRole, TurnUsage } from "@ripieno/protocol";
 import type {
+  ContextRequestReceipt,
   GoalRequestReceipt,
   HandoffRequestReceipt,
   RoomSnapshot,
@@ -81,6 +96,7 @@ interface AgentConnection extends Connection {
   capability: AgentCapability;
   /** Last reported activity. Absent until its host says — see AgentActivity. */
   state?: AgentActivity;
+  activity?: AgentPresence;
 }
 
 /** Identifies an agent connection; humans are identified by handle alone. */
@@ -88,6 +104,13 @@ export interface AgentIdentity {
   id: string;
   label: string;
   capability?: AgentCapability;
+}
+
+export interface ContextMutationActor {
+  handle: string;
+  role: ConnectionRole;
+  agentId?: string;
+  agentLabel?: string;
 }
 
 export class Room {
@@ -180,6 +203,11 @@ export class Room {
   private readonly goalAudit: GoalAuditEntry[] = [];
   private readonly goalRequests = new Map<string, GoalRequestReceipt>();
   private roomRevision = 0;
+  /** Durable, attributed room memory shared by people and agents. */
+  private readonly context = new Map<string, ContextItem>();
+  private readonly contextAudit: ContextAuditEntry[] = [];
+  private readonly contextRequests = new Map<string, ContextRequestReceipt>();
+  private contextRevision = 0;
   /** Relay-authoritative, durable transfers of responsibility between local agents. */
   private readonly handoffs = new Map<string, HandoffOffer>();
   private readonly handoffAudit: HandoffAuditEntry[] = [];
@@ -244,6 +272,26 @@ export class Room {
       }
     }
     this.roomRevision = Number.isSafeInteger(snapshot.roomRevision) ? snapshot.roomRevision! : 0;
+    for (const item of (snapshot.context ?? []).slice(-MAX_CONTEXT_ITEMS)) {
+      if (item?.id) this.context.set(item.id, structuredClone(item));
+    }
+    this.contextAudit.push(
+      ...(snapshot.contextAudit ?? []).slice(-MAX_CONTEXT_AUDIT_ENTRIES).map((entry) => ({ ...entry }))
+    );
+    for (const receipt of (snapshot.contextRequests ?? []).slice(-MAX_CONTEXT_REQUESTS)) {
+      if (
+        typeof receipt.actorKey === "string" &&
+        (receipt.kind === "create" || receipt.kind === "update")
+      ) {
+        this.contextRequests.set(
+          contextRequestKey(receipt.actorKey, receipt.requestId),
+          structuredClone(receipt)
+        );
+      }
+    }
+    this.contextRevision = Number.isSafeInteger(snapshot.contextRevision)
+      ? snapshot.contextRevision!
+      : 0;
     const recoveredHandoffs: Array<{
       handoff: HandoffOffer;
       from: HandoffAuditEntry["fromStatus"];
@@ -315,6 +363,10 @@ export class Room {
       goalAudit: this.goalAuditLog,
       goalRequests: [...this.goalRequests.values()],
       roomRevision: this.roomRevision,
+      context: this.contextList,
+      contextAudit: this.contextAuditLog,
+      contextRequests: [...this.contextRequests.values()].map((receipt) => structuredClone(receipt)),
+      contextRevision: this.contextRevision,
       handoffs: this.handoffList,
       handoffAudit: this.handoffAuditLog,
       handoffRequests: [...this.handoffRequests.values()],
@@ -349,6 +401,14 @@ export class Room {
 
   get goalAuditLog(): GoalAuditEntry[] {
     return this.goalAudit.map((entry) => ({ ...entry }));
+  }
+
+  get contextList(): ContextItem[] {
+    return [...this.context.values()].map((item) => structuredClone(item));
+  }
+
+  get contextAuditLog(): ContextAuditEntry[] {
+    return this.contextAudit.map((entry) => ({ ...entry }));
   }
 
   get handoffList(): HandoffOffer[] {
@@ -478,6 +538,7 @@ export class Room {
         label: a.label,
         capability: a.capability,
         state: a.state,
+        activity: a.activity ? { ...a.activity } : undefined,
       }));
   }
 
@@ -494,6 +555,36 @@ export class Room {
     const agent = this.isAgentAuthorized(agentId) ? this.agents.get(agentId) : undefined;
     if (!agent || agent.state === state) return;
     agent.state = state;
+    agent.activity = { phase: state, updatedAt: Date.now() };
+    this.broadcastRoster();
+  }
+
+  /** Publish bounded, observable, non-durable agent presence. */
+  setAgentActivity(
+    agentId: string,
+    phase: AgentActivity,
+    rawSummary?: string,
+    rawPath?: string,
+    rawLine?: number
+  ): void {
+    const agent = this.isAgentAuthorized(agentId) ? this.agents.get(agentId) : undefined;
+    if (!agent || !validAgentActivity(phase)) return;
+    const summary = boundedOptional(rawSummary, 240);
+    // An exact cross-machine location is honest only in the single shared
+    // workspace. Private copies may differ and are not advertised by default.
+    const path = this.host ? boundedOptional(rawPath, 500) : undefined;
+    const line = path && Number.isSafeInteger(rawLine) && rawLine! > 0 ? rawLine : undefined;
+    const previous = agent.activity;
+    if (
+      previous?.phase === phase &&
+      previous.summary === summary &&
+      previous.path === path &&
+      previous.line === line
+    ) {
+      return;
+    }
+    agent.state = phase;
+    agent.activity = { phase, summary, path, line, updatedAt: Date.now() };
     this.broadcastRoster();
   }
 
@@ -575,6 +666,9 @@ export class Room {
       goals: this.goalList,
       goalAudit: this.goalAuditLog,
       roomRevision: this.roomRevision,
+      context: this.contextList,
+      contextAudit: this.contextAuditLog,
+      contextRevision: this.contextRevision,
       handoffs: this.handoffList,
       handoffAudit: this.handoffAuditLog,
       handoffRevision: this.handoffRevision,
@@ -859,6 +953,346 @@ export class Room {
     }
     for (const [key, receipt] of this.goalRequests) {
       if (receipt.goalId === completed.id) this.goalRequests.delete(key);
+    }
+    return true;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Durable shared room context                                     */
+  /* ---------------------------------------------------------------- */
+
+  createContext(
+    actor: ContextMutationActor,
+    requestId: string,
+    rawKind: ContextKind,
+    rawTitle: string,
+    rawBody: string,
+    rawTags?: string[]
+  ): ContextResultMsg {
+    const actorKey = contextActorKey(actor);
+    const fingerprint = contextRequestFingerprint({
+      actorKey,
+      kind: "create",
+      contextKind: rawKind,
+      title: rawTitle,
+      body: rawBody,
+      tags: rawTags,
+    });
+    const replay = this.replayContextRequest(actorKey, requestId, fingerprint);
+    if (replay) return replay;
+    if (!validContextRequestId(requestId)) {
+      return this.contextFailure(requestId, "Context request ID is invalid.");
+    }
+    const fail = (message: string): ContextResultMsg =>
+      this.rememberContextResult(
+        actorKey,
+        requestId,
+        fingerprint,
+        "create",
+        undefined,
+        this.contextFailure(requestId, message)
+      );
+    const actorError = this.contextActorError(actor);
+    if (actorError) return fail(actorError);
+    if (!validContextKind(rawKind)) return fail("Choose a valid context kind.");
+
+    const title = normaliseContextText(rawTitle, MAX_CONTEXT_TITLE_CHARS);
+    const body = normaliseContextText(rawBody, MAX_CONTEXT_BODY_CHARS, true);
+    const tags = normaliseContextTags(rawTags);
+    if (!title) return fail(`A context title must be 1-${MAX_CONTEXT_TITLE_CHARS} characters.`);
+    if (body === undefined) return fail(`Context body must be at most ${MAX_CONTEXT_BODY_CHARS} characters.`);
+    if (!tags) {
+      return fail(
+        `Use at most ${MAX_CONTEXT_TAGS} tags of 1-${MAX_CONTEXT_TAG_CHARS} characters each.`
+      );
+    }
+    if (this.context.size >= MAX_CONTEXT_ITEMS && !this.reclaimOldestTerminalContext()) {
+      return fail(`This room already has the maximum of ${MAX_CONTEXT_ITEMS} live context items.`);
+    }
+
+    const now = Date.now();
+    const item: ContextItem = {
+      id: `context_${randomUUID()}`,
+      kind: rawKind,
+      title,
+      body,
+      tags,
+      status: actor.role === "agent" ? "proposed" : "accepted",
+      authorHandle: actor.handle,
+      authorName: this.known.get(actor.handle)?.displayName ?? actor.handle,
+      authorAgentId: actor.role === "agent" ? actor.agentId : undefined,
+      authorAgentLabel: actor.role === "agent" ? actor.agentLabel : undefined,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.context.set(item.id, item);
+    this.contextRevision += 1;
+    this.recordContextAudit(item, requestId, actor, "create", undefined);
+    const result: ContextResultMsg = {
+      t: "contextResult",
+      requestId,
+      ok: true,
+      contextRevision: this.contextRevision,
+      item: structuredClone(item),
+      context: this.contextList,
+      contextAudit: this.contextAuditLog,
+    };
+    this.rememberContextResult(actorKey, requestId, fingerprint, "create", item.id, result);
+    this.broadcastContext();
+    this.onChanged?.();
+    return result;
+  }
+
+  updateContext(
+    actor: ContextMutationActor,
+    requestId: string,
+    contextId: string,
+    expectedVersion: number,
+    changes: {
+      title?: string;
+      body?: string;
+      tags?: string[];
+      status?: Exclude<ContextStatus, "proposed">;
+    }
+  ): ContextResultMsg {
+    const actorKey = contextActorKey(actor);
+    const fingerprint = contextRequestFingerprint({
+      actorKey,
+      kind: "update",
+      contextId,
+      expectedVersion,
+      changes,
+    });
+    const replay = this.replayContextRequest(actorKey, requestId, fingerprint);
+    if (replay) return replay;
+    if (!validContextRequestId(requestId)) {
+      return this.contextFailure(requestId, "Context request ID is invalid.");
+    }
+    const fail = (message: string): ContextResultMsg =>
+      this.rememberContextResult(
+        actorKey,
+        requestId,
+        fingerprint,
+        "update",
+        typeof contextId === "string" ? contextId : undefined,
+        this.contextFailure(requestId, message)
+      );
+    const actorError = this.contextActorError(actor);
+    if (actorError) return fail(actorError);
+    const item = typeof contextId === "string" ? this.context.get(contextId) : undefined;
+    if (!item) return fail("Context item not found. Refresh the Context tab and try again.");
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== item.version) {
+      return fail(`Context changed since you last saw it (current version ${item.version}).`);
+    }
+
+    const editing =
+      changes.title !== undefined || changes.body !== undefined || changes.tags !== undefined;
+    const transitioning = changes.status !== undefined;
+    if (editing === transitioning) {
+      return fail("Edit context text or change its status in one request, not both.");
+    }
+
+    if (actor.role === "agent") {
+      if (transitioning) return fail("Agents can propose context; a person must accept or retire it.");
+      if (item.authorAgentId !== actor.agentId || item.status !== "proposed") {
+        return fail("An agent may edit only its own proposed context.");
+      }
+    } else if (editing && item.authorHandle !== actor.handle && this.roleOf(actor.handle) !== "owner") {
+      return fail("Only the context author or room owner may edit this item.");
+    }
+
+    const before = item.status;
+    let action: ContextAuditEntry["action"] = "edit";
+    if (transitioning) {
+      if (actor.role !== "human") return fail("Only a person may change context status.");
+      const next = changes.status!;
+      if (!validContextTransition(item.status, next)) {
+        return fail(`Cannot change ${item.status} context to ${next}.`);
+      }
+      if (
+        next !== "accepted" &&
+        item.authorHandle !== actor.handle &&
+        this.roleOf(actor.handle) !== "owner"
+      ) {
+        return fail("Only the context author or room owner may retire this item.");
+      }
+      item.status = next;
+      action = next === "accepted" ? "accept" : next === "archived" ? "archive" : "supersede";
+    } else {
+      const title =
+        changes.title === undefined
+          ? item.title
+          : normaliseContextText(changes.title, MAX_CONTEXT_TITLE_CHARS);
+      const body =
+        changes.body === undefined
+          ? item.body
+          : normaliseContextText(changes.body, MAX_CONTEXT_BODY_CHARS, true);
+      const tags = changes.tags === undefined ? item.tags : normaliseContextTags(changes.tags);
+      if (!title) return fail(`A context title must be 1-${MAX_CONTEXT_TITLE_CHARS} characters.`);
+      if (body === undefined) return fail(`Context body must be at most ${MAX_CONTEXT_BODY_CHARS} characters.`);
+      if (!tags) {
+        return fail(
+          `Use at most ${MAX_CONTEXT_TAGS} tags of 1-${MAX_CONTEXT_TAG_CHARS} characters each.`
+        );
+      }
+      item.title = title;
+      item.body = body;
+      item.tags = tags;
+    }
+
+    item.version += 1;
+    item.updatedAt = Date.now();
+    this.contextRevision += 1;
+    this.recordContextAudit(item, requestId, actor, action, before);
+    const result: ContextResultMsg = {
+      t: "contextResult",
+      requestId,
+      ok: true,
+      contextRevision: this.contextRevision,
+      item: structuredClone(item),
+      context: this.contextList,
+      contextAudit: this.contextAuditLog,
+    };
+    this.rememberContextResult(actorKey, requestId, fingerprint, "update", item.id, result);
+    this.broadcastContext();
+    this.onChanged?.();
+    return result;
+  }
+
+  private contextActorError(actor: ContextMutationActor): string | undefined {
+    if (actor.role === "workspace" || isContainer(actor.handle)) {
+      return "The shared workspace cannot author room context.";
+    }
+    if (!this.canAct(actor.handle)) return "Viewers cannot change room context.";
+    if (actor.role === "human") {
+      return this.connections.has(actor.handle)
+        ? undefined
+        : "Only a present room member can change context.";
+    }
+    const connected = actor.agentId ? this.agents.get(actor.agentId) : undefined;
+    return connected &&
+      connected.member.handle === actor.handle &&
+      this.isAgentAuthorized(connected.id)
+      ? undefined
+      : "Only an attached, authorised agent can change context.";
+  }
+
+  private replayContextRequest(
+    actorKey: string,
+    requestId: string,
+    fingerprint: string
+  ): ContextResultMsg | undefined {
+    if (!validContextRequestId(requestId)) return undefined;
+    const prior = this.contextRequests.get(contextRequestKey(actorKey, requestId));
+    if (!prior) return undefined;
+    if (prior.fingerprint !== fingerprint) {
+      return this.contextFailure(
+        requestId,
+        "That request ID was already used for a different context mutation."
+      );
+    }
+    if (!prior.result.ok) return { ...prior.result };
+    const current = prior.contextId ? this.context.get(prior.contextId) : undefined;
+    return {
+      ...prior.result,
+      contextRevision: this.contextRevision,
+      item: current ? structuredClone(current) : undefined,
+      context: this.contextList,
+      contextAudit: this.contextAuditLog,
+    };
+  }
+
+  private contextFailure(requestId: string, message: string): ContextResultMsg {
+    return {
+      t: "contextResult",
+      requestId,
+      ok: false,
+      contextRevision: this.contextRevision,
+      message,
+    };
+  }
+
+  private rememberContextResult(
+    actorKey: string,
+    requestId: string,
+    fingerprint: string,
+    kind: ContextRequestReceipt["kind"],
+    contextId: string | undefined,
+    result: ContextResultMsg
+  ): ContextResultMsg {
+    this.contextRequests.set(contextRequestKey(actorKey, requestId), {
+      actorKey,
+      requestId,
+      fingerprint,
+      kind,
+      contextId,
+      result: durableContextResult(result),
+    });
+    while (this.contextRequests.size > MAX_CONTEXT_REQUESTS) {
+      const evictable = [...this.contextRequests.entries()].find(
+        ([, receipt]) =>
+          !(
+            receipt.kind === "create" &&
+            receipt.result.ok &&
+            receipt.contextId !== undefined &&
+            this.context.has(receipt.contextId)
+          )
+      );
+      if (!evictable) break;
+      this.contextRequests.delete(evictable[0]);
+    }
+    this.onChanged?.();
+    return result;
+  }
+
+  private recordContextAudit(
+    item: ContextItem,
+    requestId: string,
+    actor: ContextMutationActor,
+    action: ContextAuditEntry["action"],
+    fromStatus: ContextStatus | undefined
+  ): void {
+    this.contextAudit.push({
+      id: randomUUID(),
+      contextId: item.id,
+      requestId,
+      actorHandle: actor.handle,
+      actorAgentId: actor.role === "agent" ? actor.agentId : undefined,
+      actorAgentLabel: actor.role === "agent" ? actor.agentLabel : undefined,
+      action,
+      fromStatus,
+      toStatus: item.status,
+      contextVersion: item.version,
+      contextRevision: this.contextRevision,
+      ts: Date.now(),
+    });
+    if (this.contextAudit.length > MAX_CONTEXT_AUDIT_ENTRIES) {
+      this.contextAudit.splice(0, this.contextAudit.length - MAX_CONTEXT_AUDIT_ENTRIES);
+    }
+  }
+
+  private broadcastContext(): void {
+    this.broadcast({
+      t: "context",
+      context: this.contextList,
+      contextAudit: this.contextAuditLog,
+      contextRevision: this.contextRevision,
+    });
+  }
+
+  /** Make room only by retiring the oldest already-terminal item. */
+  private reclaimOldestTerminalContext(): boolean {
+    const terminal = [...this.context.values()]
+      .filter((item) => item.status === "archived" || item.status === "superseded")
+      .sort((left, right) => left.updatedAt - right.updatedAt || left.createdAt - right.createdAt)[0];
+    if (!terminal) return false;
+    this.context.delete(terminal.id);
+    for (let index = this.contextAudit.length - 1; index >= 0; index--) {
+      if (this.contextAudit[index]!.contextId === terminal.id) this.contextAudit.splice(index, 1);
+    }
+    for (const [key, receipt] of this.contextRequests) {
+      if (receipt.contextId === terminal.id) this.contextRequests.delete(key);
     }
     return true;
   }
@@ -2251,6 +2685,86 @@ function validGoalRequestId(value: unknown): value is string {
   );
 }
 
+function validContextRequestId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_CONTEXT_REQUEST_ID_CHARS &&
+    /^[A-Za-z0-9._:-]+$/.test(value)
+  );
+}
+
+function validContextKind(value: unknown): value is ContextKind {
+  return (
+    value === "decision" ||
+    value === "fact" ||
+    value === "constraint" ||
+    value === "question" ||
+    value === "reference" ||
+    value === "note"
+  );
+}
+
+function validContextTransition(from: ContextStatus, to: Exclude<ContextStatus, "proposed">): boolean {
+  if (from === "proposed") return to === "accepted" || to === "superseded" || to === "archived";
+  if (from === "accepted") return to === "superseded" || to === "archived";
+  return false;
+}
+
+function normaliseContextText(
+  value: unknown,
+  max: number,
+  allowEmpty = false
+): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = redactHandoffText(value).trim();
+  if ((!allowEmpty && text.length === 0) || text.length > max) return undefined;
+  return text;
+}
+
+function normaliseContextTags(value: unknown): string[] | undefined {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_CONTEXT_TAGS) return undefined;
+  const tags: string[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "string") return undefined;
+    const tag = redactHandoffText(raw).trim();
+    if (tag.length === 0 || tag.length > MAX_CONTEXT_TAG_CHARS) return undefined;
+    if (!tags.some((existing) => existing.toLowerCase() === tag.toLowerCase())) tags.push(tag);
+  }
+  return tags;
+}
+
+function contextActorKey(actor: ContextMutationActor): string {
+  return actor.role === "agent" && actor.agentId ? actor.agentId : actor.handle;
+}
+
+function contextRequestFingerprint(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function contextRequestKey(actorKey: string, requestId: string): string {
+  return `${actorKey}\0${requestId}`;
+}
+
+function validAgentActivity(value: unknown): value is AgentActivity {
+  return (
+    value === "idle" ||
+    value === "thinking" ||
+    value === "reading" ||
+    value === "editing" ||
+    value === "running" ||
+    value === "responding" ||
+    value === "awaiting-approval"
+  );
+}
+
+function boundedOptional(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = redactHandoffText(value).trim();
+  return trimmed ? trimmed.slice(0, max) : undefined;
+}
+
 function validHandoffRequestId(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -2295,6 +2809,19 @@ function durableGoalResult(result: GoalResultMsg): GoalResultMsg {
     roomRevision: result.roomRevision,
   };
   if (result.goal) durable.goal = { ...result.goal };
+  if (result.message !== undefined) durable.message = result.message;
+  return durable;
+}
+
+/** Receipts retain one result, never the full context and audit snapshot. */
+function durableContextResult(result: ContextResultMsg): ContextResultMsg {
+  const durable: ContextResultMsg = {
+    t: "contextResult",
+    requestId: result.requestId,
+    ok: result.ok,
+    contextRevision: result.contextRevision,
+  };
+  if (result.item) durable.item = structuredClone(result.item);
   if (result.message !== undefined) durable.message = result.message;
   return durable;
 }

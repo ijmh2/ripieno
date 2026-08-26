@@ -8,6 +8,9 @@
 import * as vscode from "vscode";
 import type {
   ActionEntry,
+  ContextAuditEntry,
+  ContextItem,
+  ContextKind,
   Goal,
   GoalAuditEntry,
   HandoffAuditEntry,
@@ -47,6 +50,9 @@ interface RoomState {
   goals: Goal[];
   goalAudit: GoalAuditEntry[];
   roomRevision: number;
+  context: ContextItem[];
+  contextAudit: ContextAuditEntry[];
+  contextRevision: number;
   handoffs: HandoffOffer[];
   handoffAudit: HandoffAuditEntry[];
   handoffRevision: number;
@@ -75,6 +81,9 @@ function emptyState(connection: ConnectionState): RoomState {
     goals: [],
     goalAudit: [],
     roomRevision: 0,
+    context: [],
+    contextAudit: [],
+    contextRevision: 0,
     handoffs: [],
     handoffAudit: [],
     handoffRevision: 0,
@@ -99,6 +108,9 @@ type ToWebview =
       goals: Goal[];
       goalAudit: GoalAuditEntry[];
       roomRevision: number;
+      context: ContextItem[];
+      contextAudit: ContextAuditEntry[];
+      contextRevision: number;
       handoffs: HandoffOffer[];
       handoffAudit: HandoffAuditEntry[];
       handoffRevision: number;
@@ -112,6 +124,12 @@ type ToWebview =
   | { type: "entry"; entry: TranscriptEntry }
   | { type: "action"; entry: ActionEntry }
   | { type: "goals"; goals: Goal[]; goalAudit: GoalAuditEntry[]; roomRevision: number }
+  | {
+      type: "context";
+      context: ContextItem[];
+      contextAudit: ContextAuditEntry[];
+      contextRevision: number;
+    }
   | {
       type: "handoffs";
       handoffs: HandoffOffer[];
@@ -148,6 +166,17 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly onComposerSend: (text: string) => void,
+    private readonly onContextCreate: (request: {
+      kind: ContextKind;
+      title: string;
+      body: string;
+      tags: string[];
+    }) => void,
+    private readonly onContextStatus: (request: {
+      id: string;
+      expectedVersion: number;
+      status: "accepted" | "superseded" | "archived";
+    }) => void,
     private readonly onHandoffAction: (request: {
       action: HandoffDecision;
       id: string;
@@ -172,6 +201,10 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
         this.postSnapshot();
       } else if (msg.type === "send") {
         this.onComposerSend(msg.text);
+      } else if (msg.type === "contextCreate") {
+        this.onContextCreate(msg);
+      } else if (msg.type === "contextStatus") {
+        this.onContextStatus(msg);
       } else if (msg.type === "approvalVerdict") {
         const pending = this.pendingApprovals.get(msg.id);
         if (!pending) return;
@@ -218,6 +251,9 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     goals: Goal[] = [],
     goalAudit: GoalAuditEntry[] = [],
     roomRevision = 0,
+    context: ContextItem[] = [],
+    contextAudit: ContextAuditEntry[] = [],
+    contextRevision = 0,
     handoffs: HandoffOffer[] = [],
     handoffAudit: HandoffAuditEntry[] = [],
     handoffRevision = 0
@@ -229,6 +265,9 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       goals,
       goalAudit,
       roomRevision,
+      context,
+      contextAudit,
+      contextRevision,
       handoffs,
       handoffAudit,
       handoffRevision,
@@ -281,6 +320,23 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       goals: this.state.goals,
       goalAudit: this.state.goalAudit,
       roomRevision: next.roomRevision,
+    });
+  }
+
+  setContextState(
+    context: ContextItem[],
+    contextAudit: ContextAuditEntry[],
+    contextRevision: number
+  ): void {
+    if (contextRevision < this.state.contextRevision) return;
+    this.state.context = context.map((item) => structuredClone(item));
+    this.state.contextAudit = contextAudit.map((entry) => ({ ...entry }));
+    this.state.contextRevision = contextRevision;
+    this.post({
+      type: "context",
+      context: this.state.context,
+      contextAudit: this.state.contextAudit,
+      contextRevision,
     });
   }
 
@@ -401,6 +457,9 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       goals: this.state.goals,
       goalAudit: this.state.goalAudit,
       roomRevision: this.state.roomRevision,
+      context: this.state.context,
+      contextAudit: this.state.contextAudit,
+      contextRevision: this.state.contextRevision,
       handoffs: this.state.handoffs,
       handoffAudit: this.state.handoffAudit,
       handoffRevision: this.state.handoffRevision,
@@ -459,6 +518,12 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   <div id="statusPill" class="status-pill idle" role="status" aria-live="polite">idle</div>
   <div id="roster" class="roster" role="list" aria-label="People in this room"></div>
 </header>
+<nav id="surfaceTabs" class="surface-tabs" role="tablist" aria-label="Ripieno room surfaces">
+  <button id="roomTab" class="surface-tab active" type="button" role="tab" aria-selected="true" aria-controls="roomPanel" data-surface="room">Room</button>
+  <button id="contextTab" class="surface-tab" type="button" role="tab" aria-selected="false" aria-controls="contextPanel" data-surface="context">Context <span id="contextCount" class="tab-count"></span></button>
+  <button id="agentsTab" class="surface-tab" type="button" role="tab" aria-selected="false" aria-controls="agentsPanel" data-surface="agents">Agents <span id="agentCount" class="tab-count"></span></button>
+</nav>
+<section id="roomPanel" class="surface-panel" role="tabpanel" aria-labelledby="roomTab">
 <section id="onboarding" class="onboarding" aria-labelledby="onboardingTitle">
   <h2 id="onboardingTitle" class="sr-only">Getting started</h2>
   <ol id="onboardingSteps" class="onboarding-steps" aria-label="Getting started progress"></ol>
@@ -490,6 +555,41 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   <textarea id="composer" class="composer" rows="1" aria-label="Message the room" aria-controls="mentions" aria-describedby="composerValidation" aria-expanded="false" aria-autocomplete="list" placeholder="Message the room…"></textarea>
   <button id="sendButton" class="send-button" type="button">Send</button>
 </div>
+</section>
+<section id="contextPanel" class="surface-panel context-panel" role="tabpanel" aria-labelledby="contextTab" hidden>
+  <header class="panel-intro">
+    <strong>Shared room context</strong>
+    <span>Durable, attributed memory. Agent additions remain proposed until a person accepts them.</span>
+  </header>
+  <form id="contextForm" class="context-form">
+    <div class="context-form-row">
+      <select id="contextKind" class="context-kind" aria-label="Context kind">
+        <option value="decision">Decision</option>
+        <option value="fact">Fact</option>
+        <option value="constraint">Constraint</option>
+        <option value="question">Question</option>
+        <option value="reference">Reference</option>
+        <option value="note" selected>Note</option>
+      </select>
+      <input id="contextTitle" class="context-title-input" maxlength="160" required aria-label="Context title" placeholder="What should the room remember?" />
+    </div>
+    <textarea id="contextBody" class="context-body-input" maxlength="4000" rows="3" aria-label="Context detail" placeholder="Detail, evidence, or rationale…"></textarea>
+    <div class="context-form-row">
+      <input id="contextTags" class="context-tags-input" aria-label="Context tags" placeholder="tags, comma-separated" />
+      <button id="contextAdd" class="context-add" type="submit">Add</button>
+    </div>
+    <div id="contextValidation" class="composer-validation" role="alert" hidden></div>
+  </form>
+  <div id="contextList" class="context-list" role="list" aria-label="Shared room context"></div>
+  <div id="contextAnnouncements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+</section>
+<section id="agentsPanel" class="surface-panel agents-panel" role="tabpanel" aria-labelledby="agentsTab" hidden>
+  <header class="panel-intro">
+    <strong>Agent inspectors</strong>
+    <span>Live observable activity, ownership and capability. Hidden reasoning and raw logs are never shared.</span>
+  </header>
+  <div id="agentInspectors" class="agent-inspectors" role="list" aria-label="Agents in this room"></div>
+</section>
 <script nonce="${csp}" src="${scriptUri}"></script>
 </body>
 </html>`;

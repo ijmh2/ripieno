@@ -13,6 +13,14 @@ export const MAX_COMPOSER_CHARS = 32_000;
 const MAX_APPROVAL_ID_CHARS = 128;
 const MAX_HANDOFF_ID_CHARS = 128;
 const MAX_AGENT_ID_CHARS = 128;
+const CONTEXT_KINDS = [
+  "decision",
+  "fact",
+  "constraint",
+  "question",
+  "reference",
+  "note",
+] as const;
 
 export type RoomViewMessage =
   | { type: "ready" }
@@ -25,7 +33,23 @@ export type RoomViewMessage =
       expectedVersion: number;
       targetAgentId?: string;
     }
-  | { type: "onboardingAction"; action: "startSolo" | "joinRoom" | "addAgent" | "attachAgent" };
+  | {
+      type: "onboardingAction";
+      action: "startSolo" | "joinRoom" | "addAgent" | "attachAgent";
+    }
+  | {
+      type: "contextCreate";
+      kind: (typeof CONTEXT_KINDS)[number];
+      title: string;
+      body: string;
+      tags: string[];
+    }
+  | {
+      type: "contextStatus";
+      id: string;
+      expectedVersion: number;
+      status: "accepted" | "superseded" | "archived";
+    };
 
 export type OnboardingAction = Extract<RoomViewMessage, { type: "onboardingAction" }>["action"];
 export type OnboardingCommand =
@@ -125,9 +149,68 @@ export function parseRoomViewMessage(value: unknown): RoomViewMessage | undefine
       }
       return { type: "onboardingAction", action: value.action };
 
+    case "contextCreate": {
+      if (
+        !hasExactKeys(value, ["type", "kind", "title", "body", "tags"]) ||
+        !isContextKind(value.kind) ||
+        typeof value.title !== "string" ||
+        typeof value.body !== "string" ||
+        !Array.isArray(value.tags)
+      ) {
+        return undefined;
+      }
+      const title = value.title.trim();
+      const body = value.body.trim();
+      const tags = value.tags;
+      if (
+        title.length === 0 ||
+        title.length > 160 ||
+        body.length > 4_000 ||
+        tags.length > 8 ||
+        !tags.every(
+          (tag): tag is string =>
+            typeof tag === "string" && tag.trim().length > 0 && tag.trim().length <= 32
+        )
+      ) {
+        return undefined;
+      }
+      return {
+        type: "contextCreate",
+        kind: value.kind,
+        title,
+        body,
+        tags: tags.map((tag) => tag.trim()),
+      };
+    }
+
+    case "contextStatus":
+      if (
+        !hasExactKeys(value, ["type", "id", "expectedVersion", "status"]) ||
+        typeof value.id !== "string" ||
+        value.id.length === 0 ||
+        value.id.length > 128 ||
+        !Number.isSafeInteger(value.expectedVersion) ||
+        (value.expectedVersion as number) < 1 ||
+        (value.status !== "accepted" &&
+          value.status !== "superseded" &&
+          value.status !== "archived")
+      ) {
+        return undefined;
+      }
+      return {
+        type: "contextStatus",
+        id: value.id,
+        expectedVersion: value.expectedVersion as number,
+        status: value.status,
+      };
+
     default:
       return undefined;
   }
+}
+
+function isContextKind(value: unknown): value is (typeof CONTEXT_KINDS)[number] {
+  return typeof value === "string" && (CONTEXT_KINDS as readonly string[]).includes(value);
 }
 
 /**

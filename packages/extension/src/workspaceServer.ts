@@ -108,6 +108,36 @@ const SHARED =
   "that you did it.";
 
 server.registerTool(
+  "context_read",
+  {
+    title: "Read shared room context",
+    description:
+      "Read the room's durable attributed decisions, facts, constraints, questions, references and notes. " +
+      "Agent proposals are marked unverified until a person accepts them.",
+    inputSchema: {},
+  },
+  async () => reply(await call("context_read", {}))
+);
+
+server.registerTool(
+  "context_add",
+  {
+    title: "Propose shared room context",
+    description:
+      "Add durable attributed room memory. Your addition is a proposal until a person accepts it. " +
+      "Never store hidden reasoning, secrets, raw logs or transient progress here.",
+    inputSchema: {
+      kind: z.enum(["decision", "fact", "constraint", "question", "reference", "note"]),
+      title: z.string().min(1).max(160),
+      body: z.string().max(4000).optional(),
+      tags: z.array(z.string().min(1).max(32)).max(8).optional(),
+    },
+  },
+  async ({ kind, title, body, tags }) =>
+    reply(await call("context_add", { kind, title, body: body ?? "", tags }))
+);
+
+server.registerTool(
   "workspace_read_file",
   {
     title: "Read from the shared workspace",

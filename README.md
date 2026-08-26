@@ -157,6 +157,8 @@ Type `/` in the room composer to see the commands Ripieno handles locally:
   `/model gpt-5.6-terra agent 2`; `/model default [agent]` returns to the
   provider default.
 - `/agents` shows each agent's provider, model and connection state.
+- `/context` points to the durable shared Context tab, where people can add,
+  accept, supersede and archive attributed room memory.
 - `/attach [agent]` and `/detach [agent]` act on one agent, using a picker when
   the name is omitted.
 
@@ -223,8 +225,15 @@ An agent can also join over MCP instead. See the
 [MCP setup guide](docs/mcp.md) before copying `.mcp.json.example`: remote relays
 need a room token and verified relays additionally need a GitHub token, and MCP
 client configuration commonly stores those values as plain text. That path gets
-ten tools (`room_read`, `room_post`, `room_roster`, `room_actions` and six
-`workspace_*`).
+twelve tools (`room_read`, `room_post`, `room_roster`, `room_actions`,
+`context_read`, `context_add` and six `workspace_*`). Agent context additions
+are proposals until a person accepts them in the Context tab.
+
+The room also has an **Agents** tab for live observable activity and a durable
+**Context** tab shared by every participant. See
+[the live collaboration plan](docs/live-collaboration-plan.md) for the shipped
+foundation, privacy boundaries and staged path to editor presence and live
+proposed diffs.
 
 ## The shared workspace
 

@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import { spawn } from "child_process";
 import { randomUUID } from "node:crypto";
 import type {
+  ContextAuditEntry,
+  ContextItem,
   Goal,
   GoalAuditEntry,
   HandoffAuditEntry,
@@ -64,6 +66,7 @@ import {
 import { parseModelValue, resolveModelRequest } from "./agentCommands";
 import { displayGoalId, parseGoalCommand, resolveGoalReference } from "./goalCommands";
 import { GoalMutationQueue, type GoalMutationMsg } from "./goalMutations";
+import { ContextMutationQueue, type ContextMutationMsg } from "./contextMutations";
 import {
   displayHandoffId,
   parseHandoffCommand,
@@ -95,11 +98,15 @@ export function activate(context: vscode.ExtensionContext): void {
   let goals: Goal[] = [];
   let goalAudit: GoalAuditEntry[] = [];
   let goalsRevision = 0;
+  let sharedContext: ContextItem[] = [];
+  let sharedContextAudit: ContextAuditEntry[] = [];
+  let sharedContextRevision = 0;
   let handoffs: HandoffOffer[] = [];
   let handoffAudit: HandoffAuditEntry[] = [];
   let handoffRevision = 0;
   let latestRoster: RosterEntry[] = [];
   const pendingGoalMutations = new GoalMutationQueue();
+  const pendingContextMutations = new ContextMutationQueue();
   /**
    * Proves who `me` is to the relay, when it asks.
    *
@@ -259,6 +266,20 @@ export function activate(context: vscode.ExtensionContext): void {
       if (handleRoomCommand(text)) return;
       relay?.send({ t: "say", text });
     },
+    (request) =>
+      sendContextMutation({
+        t: "contextCreate",
+        requestId: `ctxreq_${randomUUID()}`,
+        ...request,
+      }),
+    (request) =>
+      sendContextMutation({
+        t: "contextUpdate",
+        requestId: `ctxreq_${randomUUID()}`,
+        contextId: request.id,
+        expectedVersion: request.expectedVersion,
+        status: request.status,
+      }),
     (request) => sendHandoffDecision(request.action, request.id, request.expectedVersion, request.targetAgentId)
   );
 
@@ -1433,6 +1454,7 @@ export function activate(context: vscode.ExtensionContext): void {
             "  /goal list                     — list room goals",
             "  /goal show <id>                — show one goal",
             "  /goal pause|resume|complete <id> — change a goal you own",
+            "  /context                       — inspect or add durable shared room context in the Context tab",
             "  /handoff offer @member [source-agent] -- <task> — offer a bounded task",
             "  /handoff list                  — list agent handoffs",
             "  /handoff accept <id> [target-agent] — accept with one of your agents",
@@ -1468,6 +1490,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
       case "goal":
         void handleGoalCommand(trimmed);
+        return true;
+
+      case "context":
+        note("Open the Context tab above the room to inspect, add, accept or retire durable shared context.");
         return true;
 
       case "handoff":
@@ -1654,6 +1680,15 @@ export function activate(context: vscode.ExtensionContext): void {
   function sendGoalMutation(message: GoalMutationMsg): void {
     if (!relay || !currentRoom) return;
     pendingGoalMutations.track(currentRoom, message);
+    relay.send(message);
+  }
+
+  function sendContextMutation(message: ContextMutationMsg): void {
+    if (!relay || !currentRoom) {
+      note("Join a room before changing shared context.");
+      return;
+    }
+    pendingContextMutations.track(currentRoom, message);
     relay.send(message);
   }
 
@@ -2424,11 +2459,15 @@ export function activate(context: vscode.ExtensionContext): void {
     goals = [];
     goalAudit = [];
     goalsRevision = 0;
+    sharedContext = [];
+    sharedContextAudit = [];
+    sharedContextRevision = 0;
     handoffs = [];
     handoffAudit = [];
     handoffRevision = 0;
     latestRoster = [];
     pendingGoalMutations.clear();
+    pendingContextMutations.clear();
     setInRoomContext(false);
     setCanAttachAgentsContext(true);
     roomView.reset();
@@ -2459,6 +2498,9 @@ export function activate(context: vscode.ExtensionContext): void {
         goals = msg.goals ?? [];
         goalAudit = msg.goalAudit ?? [];
         goalsRevision = msg.roomRevision ?? 0;
+        sharedContext = msg.context ?? [];
+        sharedContextAudit = msg.contextAudit ?? [];
+        sharedContextRevision = msg.contextRevision ?? 0;
         handoffs = msg.handoffs ?? [];
         handoffAudit = msg.handoffAudit ?? [];
         handoffRevision = msg.handoffRevision ?? 0;
@@ -2472,6 +2514,9 @@ export function activate(context: vscode.ExtensionContext): void {
           goals,
           goalAudit,
           msg.roomRevision ?? 0,
+          sharedContext,
+          sharedContextAudit,
+          sharedContextRevision,
           handoffs,
           handoffAudit,
           handoffRevision
@@ -2488,6 +2533,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // A socket write is not an acknowledgement. If the previous connection
         // died after commit, replaying the same id returns the current state.
         for (const mutation of pendingGoalMutations.forRoom(msg.room)) relay?.send(mutation);
+        for (const mutation of pendingContextMutations.forRoom(msg.room)) relay?.send(mutation);
         break;
       case "roster":
         latestRoster = msg.roster;
@@ -2552,6 +2598,28 @@ export function activate(context: vscode.ExtensionContext): void {
           goalAudit = msg.goalAudit;
           goalsRevision = msg.roomRevision;
           roomView.setGoalState(msg.goals, msg.goalAudit, msg.roomRevision);
+        }
+        break;
+      case "context":
+        if (msg.contextRevision < sharedContextRevision) break;
+        sharedContext = msg.context;
+        sharedContextAudit = msg.contextAudit;
+        sharedContextRevision = msg.contextRevision;
+        roomView.setContextState(msg.context, msg.contextAudit, msg.contextRevision);
+        break;
+      case "contextResult":
+        pendingContextMutations.acknowledge(msg.requestId);
+        if (!msg.ok) {
+          note(msg.message ?? "Shared context could not be changed.");
+        } else if (
+          msg.context &&
+          msg.contextAudit &&
+          msg.contextRevision >= sharedContextRevision
+        ) {
+          sharedContext = msg.context;
+          sharedContextAudit = msg.contextAudit;
+          sharedContextRevision = msg.contextRevision;
+          roomView.setContextState(msg.context, msg.contextAudit, msg.contextRevision);
         }
         break;
       case "handoffs":

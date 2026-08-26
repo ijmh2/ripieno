@@ -44,6 +44,31 @@ describe("room webview message boundary", () => {
     );
     assert.deepEqual(
       parseRoomViewMessage({
+        type: "contextCreate",
+        kind: "decision",
+        title: "  Use structured context  ",
+        body: "  Keep provenance.  ",
+        tags: [" architecture "],
+      }),
+      {
+        type: "contextCreate",
+        kind: "decision",
+        title: "Use structured context",
+        body: "Keep provenance.",
+        tags: ["architecture"],
+      }
+    );
+    assert.deepEqual(
+      parseRoomViewMessage({
+        type: "contextStatus",
+        id: "context_1",
+        expectedVersion: 2,
+        status: "accepted",
+      }),
+      { type: "contextStatus", id: "context_1", expectedVersion: 2, status: "accepted" }
+    );
+    assert.deepEqual(
+      parseRoomViewMessage({
         type: "handoffAction",
         action: "accept",
         id: "handoff_1",
@@ -100,6 +125,12 @@ describe("room webview message boundary", () => {
       { type: "handoffAction", action: "accept", id: "handoff_1", expectedVersion: 1, targetAgentId: "" },
       { type: "handoffAction", action: "decline", id: "handoff_1", expectedVersion: 1, targetAgentId: "sam::reviewer" },
       { type: "handoffAction", action: "cancel", id: "handoff_1", expectedVersion: 1, command: "anything" },
+      { type: "contextCreate", kind: "thought", title: "Hidden", body: "", tags: [] },
+      { type: "contextCreate", kind: "note", title: "", body: "", tags: [] },
+      { type: "contextCreate", kind: "note", title: "x", body: "", tags: new Array(9).fill("tag") },
+      { type: "contextStatus", id: "context_1", expectedVersion: 0, status: "accepted" },
+      { type: "contextStatus", id: "context_1", expectedVersion: 1, status: "proposed" },
+      { type: "contextStatus", id: "context_1", expectedVersion: 1, status: "accepted", body: "smuggled" },
     ]) {
       assert.equal(parseRoomViewMessage(value), undefined, JSON.stringify(value)?.slice(0, 160));
     }

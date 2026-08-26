@@ -202,6 +202,312 @@ body {
 }
 
 /* -------------------------------------------------------------- */
+/* Room / Context / Agents surfaces                               */
+/* -------------------------------------------------------------- */
+
+.surface-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+
+.surface-tab {
+  min-width: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 6px 4px 5px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.surface-tab.active {
+  border-bottom-color: var(--vscode-focusBorder);
+  color: var(--vscode-foreground);
+  font-weight: 600;
+}
+
+.surface-tab:focus-visible,
+.context-action:focus-visible,
+.context-add:focus-visible,
+.context-form input:focus-visible,
+.context-form textarea:focus-visible,
+.context-form select:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
+}
+
+.tab-count {
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+  border-radius: 999px;
+  padding: 0 4px;
+  font-size: 9px;
+}
+
+.tab-count:empty {
+  display: none;
+}
+
+.surface-panel {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.surface-panel[hidden] {
+  display: none;
+}
+
+.context-panel,
+.agents-panel {
+  overflow-y: auto;
+}
+
+.panel-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  line-height: 1.35;
+}
+
+.panel-intro span {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.context-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+
+.context-form-row {
+  display: flex;
+  gap: 6px;
+}
+
+.context-form input,
+.context-form textarea,
+.context-form select {
+  min-width: 0;
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 4px;
+  padding: 5px 7px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font: inherit;
+}
+
+.context-kind {
+  flex: 0 0 92px;
+}
+
+.context-title-input,
+.context-tags-input {
+  flex: 1 1 auto;
+}
+
+.context-body-input {
+  resize: vertical;
+  min-height: 56px;
+  max-height: 180px;
+}
+
+.context-add,
+.context-action {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 9px;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.context-add,
+.context-action.accepted {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.context-add:disabled,
+.context-action:disabled,
+.context-form :disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.context-list,
+.agent-inspectors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.context-card,
+.agent-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--vscode-panel-border);
+  border-left: 3px solid var(--vscode-focusBorder);
+  border-radius: 4px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+}
+
+.context-card.proposed {
+  border-left-color: var(--vscode-inputValidation-warningForeground, #f4d871);
+}
+
+.context-card.archived,
+.context-card.superseded {
+  opacity: 0.58;
+}
+
+.context-card-heading,
+.agent-inspector-header,
+.context-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.context-kind-badge,
+.context-status,
+.agent-capability {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 999px;
+  padding: 1px 5px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.context-status.proposed {
+  color: var(--vscode-inputValidation-warningForeground, #f4d871);
+}
+
+.context-card-title,
+.context-card-body {
+  overflow-wrap: anywhere;
+}
+
+.context-card-body {
+  white-space: pre-wrap;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.context-card-meta,
+.context-provenance,
+.agent-updated,
+.agent-inspector-header > div > span {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+}
+
+.context-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.context-card-tags span {
+  border-radius: 999px;
+  padding: 1px 5px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  font-size: 9px;
+}
+
+.context-card-actions {
+  justify-content: flex-end;
+}
+
+.context-empty,
+.agents-empty {
+  padding: 20px 10px;
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.agent-inspector {
+  border-left-color: hsl(var(--ripieno-hue) 70% 50%);
+}
+
+.agent-inspector-header > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-inspector-header strong,
+.agent-inspector-header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-presence {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.agent-presence-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--vscode-descriptionForeground);
+}
+
+.agent-presence.thinking .agent-presence-dot,
+.agent-presence.reading .agent-presence-dot,
+.agent-presence.editing .agent-presence-dot,
+.agent-presence.running .agent-presence-dot,
+.agent-presence.responding .agent-presence-dot,
+.agent-presence.awaiting-approval .agent-presence-dot {
+  background: var(--vscode-progressBar-background, var(--vscode-focusBorder));
+  animation: ripieno-pulse 1.4s ease-in-out infinite;
+}
+
+.agent-presence.idle .agent-presence-dot {
+  background: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.agent-location {
+  overflow: hidden;
+  padding: 4px 5px;
+  border-radius: 3px;
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+/* -------------------------------------------------------------- */
 /* Three-step invite and agent onboarding                          */
 /* -------------------------------------------------------------- */
 
@@ -1116,7 +1422,8 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .status-pill.thinking,
-  .caret {
+  .caret,
+  .agent-presence-dot {
     animation: none;
   }
 }

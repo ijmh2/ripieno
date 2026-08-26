@@ -34,6 +34,8 @@ export interface RunContext {
   roster: string;
   /** Messages it has not seen yet, already attributed. */
   unseen: string;
+  /** Bounded, attributed shared room memory refreshed on every turn. */
+  context?: string;
   /** The whole recent room, sent when there is no prior session to build on. */
   recent: string;
   /** Where a workspace-capable runner should work. */
@@ -108,9 +110,10 @@ export class ClaudeCodeRunner implements ModelRunner {
     // model can learn that somebody has joined since; on a fresh one the system
     // text is about to go stale for the same reason, so it is stated here too
     // rather than only there.
+    const shared = ctx.context ? `${ctx.context}\n\n` : "";
     const prompt = this.sessionId
-      ? `${ctx.roster}\n\n${ctx.unseen}`
-      : `${ctx.system}\n\n${ctx.roster}\n\n--- the room so far ---\n${ctx.recent}`;
+      ? `${ctx.roster}\n\n${shared}${ctx.unseen}`
+      : `${ctx.system}\n\n${ctx.roster}\n\n${shared}--- the room so far ---\n${ctx.recent}`;
     const args = [
       "-p",
       prompt,
@@ -236,6 +239,7 @@ export class OpenAiCompatRunner implements ModelRunner {
   }
 
   async run(ctx: RunContext, log: (line: string) => void): Promise<string> {
+    const shared = ctx.context ? `${ctx.context}\n\n` : "";
     // The roster leads whichever message this turn adds. Stating it once would
     // not survive here either: the request is windowed to a trailing slice, so a
     // roster sent on turn one scrolls out of the conversation while the room it
@@ -244,10 +248,10 @@ export class OpenAiCompatRunner implements ModelRunner {
       this.history.push({ role: "system", content: ctx.system });
       this.history.push({
         role: "user",
-        content: `${ctx.roster}\n\n--- the room so far ---\n${ctx.recent}`,
+        content: `${ctx.roster}\n\n${shared}--- the room so far ---\n${ctx.recent}`,
       });
     } else {
-      this.history.push({ role: "user", content: `${ctx.roster}\n\n${ctx.unseen}` });
+      this.history.push({ role: "user", content: `${ctx.roster}\n\n${shared}${ctx.unseen}` });
     }
 
     // Keep the request bounded: the system prompt plus a trailing window. A room
@@ -357,7 +361,8 @@ export class CliRunner implements ModelRunner {
   run(ctx: RunContext, log: (line: string) => void): Promise<string> {
     // Every turn is a fresh process here, so the roster is never stale — but it
     // has to be included for the same reason, since nothing carries over.
-    const prompt = `${ctx.system}\n\n${ctx.roster}\n\n--- the room so far ---\n${ctx.recent}\n\n--- new ---\n${ctx.unseen}`;
+    const shared = ctx.context ? `${ctx.context}\n\n` : "";
+    const prompt = `${ctx.system}\n\n${ctx.roster}\n\n${shared}--- the room so far ---\n${ctx.recent}\n\n--- new ---\n${ctx.unseen}`;
     const usesPlaceholder = this.opts.args.some((a) => a.includes("{prompt}"));
     const args = this.opts.args.map((a) => a.replace("{prompt}", prompt));
 
