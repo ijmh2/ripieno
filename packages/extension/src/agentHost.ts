@@ -43,8 +43,19 @@ import {
   argsForAgentModel,
   type AgentPermission,
   type ModelRunner,
+  type RunContext,
   type RunnerCapability,
+  type RunnerTool,
+  type RunnerToolResult,
 } from "./runners";
+import { PresenceStream } from "./presence";
+import {
+  boundSummary,
+  summarisePhase,
+  type RunnerEvent,
+  type RunnerPhase,
+} from "./runnerEvents";
+import { describeContextDirective, extractContextProposals } from "./contextDirectives";
 
 /** Let the room settle before answering, so a burst produces one considered reply. */
 const DEBOUNCE_MS = 1500;
@@ -156,6 +167,17 @@ export interface HandoffDeliveryStore {
 export class AgentHost implements vscode.Disposable {
   private relay: RelayClient | undefined;
   private runner: ModelRunner | undefined;
+  /**
+   * Everything this agent tells the room it is doing.
+   *
+   * One place, so coalescing, sequencing and the heartbeat apply to every
+   * report — the workspace bridge's, the runner's and the turn's own — rather
+   * than to whichever of them happened to be written last.
+   */
+  private readonly presence = new PresenceStream((message) => this.relay?.send(message));
+  /** The phase and summary a location event should be attached to. */
+  private turnPhase: RunnerPhase = "thinking";
+  private turnSummary: string | undefined;
   private readonly output: vscode.OutputChannel;
   private readonly transcript: TranscriptEntry[] = [];
   /** Latest relay-authoritative shared memory, refreshed independently of chat. */
@@ -409,6 +431,7 @@ export class AgentHost implements vscode.Disposable {
 
   dispose(): void {
     this.haltLocalExecution("agent detached");
+    this.presence.dispose();
     this.relay?.dispose();
     this.relay = undefined;
     this.setState("detached");
@@ -421,6 +444,10 @@ export class AgentHost implements vscode.Disposable {
     this.terminallyEvicted = true;
     this.executionEpoch += 1;
     this.clearPending();
+    // Stop describing a turn that no longer has authority to run. The relay
+    // drops this agent's presence when the socket goes, and a queued frame
+    // must not arrive afterwards claiming otherwise.
+    this.presence.dispose();
     // Settle, do not merely forget. These promises back an open editor tab and
     // "propose change"; abandoning them left the tab spinning forever.
     for (const { timer, resolve } of this.remoteCalls.values()) {
@@ -494,36 +521,8 @@ export class AgentHost implements vscode.Disposable {
       return;
     }
     let result: { content: string; isError: boolean };
-    if (request.name === "context_read") {
-      result = { content: this.sharedContext(true), isError: false };
-    } else if (request.name === "context_add") {
-      const kind = request.input.kind;
-      const title = request.input.title;
-      const body = request.input.body;
-      const tags = request.input.tags;
-      if (
-        !validContextKind(kind) ||
-        typeof title !== "string" ||
-        (body !== undefined && typeof body !== "string") ||
-        (tags !== undefined && !Array.isArray(tags))
-      ) {
-        result = { content: "Invalid context proposal.", isError: true };
-      } else {
-        const proposed = await this.proposeContext(
-          kind,
-          title,
-          body ?? "",
-          Array.isArray(tags) && tags.every((tag) => typeof tag === "string")
-            ? (tags as string[])
-            : undefined
-        );
-        result = {
-          content: proposed.ok
-            ? `Proposed shared context ${proposed.item?.id ?? ""}; a person can now accept it.`
-            : proposed.message ?? "The context proposal was refused.",
-          isError: !proposed.ok,
-        };
-      }
+    if (request.name === "context_read" || request.name === "context_add") {
+      result = await this.roomContextTool(request.name, request.input ?? {});
     } else {
       this.publishActivity(
         activityForTool(request.name),
@@ -536,6 +535,93 @@ export class AgentHost implements vscode.Disposable {
     if (socket.readyState === socket.OPEN) {
       socket.send(JSON.stringify({ id: request.id, ...result }));
     }
+  }
+
+  /**
+   * The room's two context tools, however a provider reaches them.
+   *
+   * One implementation for the MCP bridge, the OpenAI function-calling path and
+   * the CLI directive block, so a proposal is validated, bounded and attributed
+   * the same way regardless of which provider made it.
+   */
+  private async roomContextTool(
+    name: string,
+    input: Record<string, unknown>
+  ): Promise<RunnerToolResult> {
+    if (name === "context_read") {
+      this.publishActivity("reading", "Reading the room's shared context");
+      return { content: this.sharedContext(true), isError: false };
+    }
+    if (name !== "context_add") {
+      return { content: `Unknown room tool "${name}".`, isError: true };
+    }
+    const { kind, title, body, tags } = input;
+    if (
+      !validContextKind(kind) ||
+      typeof title !== "string" ||
+      (body !== undefined && typeof body !== "string") ||
+      (tags !== undefined && !Array.isArray(tags))
+    ) {
+      return { content: "Invalid context proposal.", isError: true };
+    }
+    this.publishActivity("thinking", "Proposing an addition to the room's shared context");
+    const proposed = await this.proposeContext(
+      kind,
+      title,
+      body ?? "",
+      Array.isArray(tags) && tags.every((tag) => typeof tag === "string")
+        ? (tags as string[])
+        : undefined
+    );
+    return {
+      content: proposed.ok
+        ? `Proposed shared context ${proposed.item?.id ?? ""}; a person can now accept it.`
+        : proposed.message ?? "The context proposal was refused.",
+      isError: !proposed.ok,
+    };
+  }
+
+  /**
+   * The room tools offered to a provider with a native tool channel.
+   *
+   * Only the OpenAI-compatible path takes them here: Claude Code is given the
+   * same two over MCP, and a local CLI has no channel to offer them on and uses
+   * the directive block instead.
+   */
+  private roomTools(): Pick<RunContext, "tools" | "callTool"> {
+    if (providerById(this.opts.providerId ?? "claude-code")?.kind !== "openai-compatible") {
+      return {};
+    }
+    return {
+      tools: ROOM_CONTEXT_TOOLS,
+      callTool: (name, input) => this.roomContextTool(name, input),
+    };
+  }
+
+  /**
+   * Turn a reply's directive blocks into proposals, and take them out of it.
+   *
+   * Always applied, whichever provider produced the text: a block that reaches
+   * the room verbatim is machine syntax posted under an agent's name, and one
+   * that reaches it from a provider which also has a tool channel is still a
+   * proposal a person must accept.
+   */
+  private async applyContextDirectives(raw: string): Promise<string> {
+    const { text, proposals } = extractContextProposals(raw);
+    for (const proposal of proposals) {
+      const result = await this.proposeContext(
+        proposal.kind,
+        proposal.title,
+        proposal.body,
+        proposal.tags
+      );
+      this.log(
+        result.ok
+          ? `proposed shared context ${result.item?.id ?? ""} from the reply`
+          : `context proposal refused: ${result.message ?? "no reason given"}`
+      );
+    }
+    return text;
   }
 
   private proposeContext(
@@ -684,7 +770,7 @@ export class AgentHost implements vscode.Disposable {
 
     try {
       const runner = await this.ensureRunner();
-      const text = await runner.run(
+      const raw = await runner.run(
         {
           system: this.systemPreamble(),
           // Sent every turn rather than in the system preamble, which is written
@@ -695,8 +781,10 @@ export class AgentHost implements vscode.Disposable {
           context: this.sharedContext(),
           recent: this.recent(),
           cwd: this.workingDirectory(),
+          ...this.roomTools(),
         },
-        (line) => this.log(line)
+        (line) => this.log(line),
+        (event) => this.handleRunnerEvent(event)
       );
 
       if (!this.hasExecutionAuthority(epoch)) return;
@@ -705,6 +793,8 @@ export class AgentHost implements vscode.Disposable {
       // and reporting only successful answers would understate every agent that
       // is having a bad day.
       this.reportUsage();
+      const text = await this.applyContextDirectives(raw);
+      if (!this.hasExecutionAuthority(epoch)) return;
 
       if (text) {
         this.publishActivity("responding", "Posting a reply to the room");
@@ -894,7 +984,7 @@ export class AgentHost implements vscode.Disposable {
     let failed = false;
     try {
       const runner = await this.ensureRunner();
-      const text = await runner.run(
+      const raw = await runner.run(
         {
           system: this.systemPreamble(),
           roster: describeMembers(this.roster),
@@ -902,11 +992,15 @@ export class AgentHost implements vscode.Disposable {
           context: this.sharedContext(),
           recent: this.recent(),
           cwd: this.workingDirectory(),
+          ...this.roomTools(),
         },
-        (line) => this.log(line)
+        (line) => this.log(line),
+        (event) => this.handleRunnerEvent(event)
       );
       if (!this.hasExecutionAuthority(epoch)) return;
       this.reportUsage();
+      const text = await this.applyContextDirectives(raw);
+      if (!this.hasExecutionAuthority(epoch)) return;
       if (text) {
         this.publishActivity("responding", "Posting the handoff result");
         this.relay?.send({ t: "say", text });
@@ -974,6 +1068,8 @@ export class AgentHost implements vscode.Disposable {
       }
       this.runner = new CliRunner({
         command: this.opts.command,
+        // Declared by the preset, and inert unless the stream matches it.
+        eventFormat: providerById(providerId)?.eventFormat,
         args: argsForAgentModel(
           providerId,
           argsForAgentPermission(
@@ -1098,6 +1194,11 @@ export class AgentHost implements vscode.Disposable {
       `Your reply is posted verbatim into the room, so write the message itself — no preamble, no sign-off.`,
       `Length should fit the question. Several people are reading, so do not pad.`,
     ];
+    // Providers with a tool channel already have context_add; this is how the
+    // ones without it get the same structured path rather than none.
+    if (providerById(this.opts.providerId ?? "claude-code")?.kind === "cli") {
+      lines.push("", describeContextDirective());
+    }
     if (this.opts.brief) {
       lines.push("", `Your particular role in this room: ${this.opts.brief}`);
     }
@@ -1167,11 +1268,52 @@ export class AgentHost implements vscode.Disposable {
     if (state === "thinking" || state === "idle" || state === "error") {
       // The shared protocol has no local-provider-error state. Stop leaving the
       // room on "thinking" forever, while keeping account details private.
-      this.relay?.send({ t: "agentState", state: state === "error" ? "idle" : state });
-      this.relay?.send({
-        t: "agentActivity",
-        phase: state === "error" ? "idle" : state,
-      });
+      const phase = state === "error" ? "idle" : state;
+      this.relay?.send({ t: "agentState", state: phase });
+      if (phase === "idle") {
+        this.turnPhase = "thinking";
+        this.turnSummary = undefined;
+        this.publishActivity("idle");
+      } else {
+        this.turnPhase = "thinking";
+        this.turnSummary = boundSummary(summarisePhase("thinking"));
+        this.publishActivity("thinking", this.turnSummary);
+      }
+    }
+  }
+
+  /**
+   * What one runner event means for the room.
+   *
+   * The summary is never assembled here: it arrives already derived from the
+   * fixed phrases in runnerEvents, because a provider stream carries hidden
+   * reasoning, terminal output and credentials, and none of that may be one
+   * string concatenation away from a room broadcast.
+   */
+  private handleRunnerEvent(event: RunnerEvent): void {
+    switch (event.type) {
+      case "phase":
+        this.turnPhase = event.phase;
+        this.turnSummary = boundSummary(summarisePhase(event.phase));
+        this.publishActivity(event.phase, this.turnSummary);
+        break;
+      case "tool":
+        this.turnSummary = event.safeSummary;
+        this.publishActivity(this.turnPhase, event.safeSummary);
+        break;
+      case "location":
+        this.publishActivity(
+          this.turnPhase,
+          this.turnSummary,
+          event.path,
+          event.line,
+          event.endLine
+        );
+        break;
+      case "draft":
+      case "complete":
+        // Drafts are Phase 3, and the final text is what run() resolves to.
+        break;
     }
   }
 
@@ -1179,15 +1321,51 @@ export class AgentHost implements vscode.Disposable {
     phase: "idle" | "thinking" | "reading" | "editing" | "running" | "responding" | "awaiting-approval",
     summary?: string,
     path?: string,
-    line?: number
+    line?: number,
+    endLine?: number
   ): void {
-    this.relay?.send({ t: "agentActivity", phase, summary, path, line });
+    this.presence.publish({ phase, summary, path, line, endLine });
   }
 
   private log(line: string): void {
     this.output.appendLine(line);
   }
 }
+
+/**
+ * `context_read` and `context_add`, described for a chat-completions API.
+ *
+ * The same two the MCP bridge exposes, with the same meaning: reading returns
+ * the room's shared memory, and adding creates a proposal that a person has to
+ * accept before it becomes room memory.
+ */
+const ROOM_CONTEXT_TOOLS: RunnerTool[] = [
+  {
+    name: "context_read",
+    description:
+      "Read the room's shared context: accepted memory plus unverified agent proposals.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "context_add",
+    description:
+      "Propose an addition to the room's shared context. It stays unverified until a person accepts it.",
+    parameters: {
+      type: "object",
+      properties: {
+        kind: {
+          type: "string",
+          enum: ["decision", "fact", "constraint", "question", "reference", "note"],
+        },
+        title: { type: "string" },
+        body: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      required: ["kind", "title"],
+      additionalProperties: false,
+    },
+  },
+];
 
 function validContextKind(value: unknown): value is ContextKind {
   return (

@@ -37,6 +37,7 @@ const { SoloRelay } = require("../dist/soloRelay.js");
 
 const FAKE_CLI = path.join(__dirname, "rosterReachesAgent.js");
 const FAILING_CLI = path.join(__dirname, "failingAgent.js");
+const EVENT_CLI = path.join(__dirname, "eventStreamAgent.js");
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const cleanup = [];
 
@@ -585,5 +586,165 @@ describe("an agent the relay refuses says so", () => {
         .some((m) => m.includes(label) && /invalid or missing room token/.test(m)),
       "and the person should be told which agent was refused, and why"
     );
+  });
+});
+
+
+describe("a provider's event stream reaches the room as presence", () => {
+  /**
+   * The whole Phase 2 path, end to end and with nothing stubbed: a real relay,
+   * a real AgentHost, a real subprocess emitting a real event stream, and a
+   * real member socket watching the roster it produces.
+   *
+   * The fake CLI is Codex-shaped because that is the preset which declares a
+   * parser. What matters here is not the vendor: it is that a stream carrying
+   * a credential in a command line and a password in captured output becomes
+   * "Running a shell command" and nothing else.
+   */
+  function eventAgent(r, { id, label, handle, displayName }) {
+    const host = new AgentHost({
+      id,
+      label,
+      primary: true,
+      url: r.url,
+      room: r.code,
+      member: { handle, displayName },
+      providerId: "codex",
+      command: process.execPath,
+      args: [EVENT_CLI, "{prompt}"],
+      approvals: { start: async () => ({ url: "", token: "" }) },
+      permissionServerPath: "unused",
+      workspaceServerPath: "unused",
+      onStateChange: () => {},
+    });
+    host.attach();
+    cleanup.push(() => host.dispose());
+    return host;
+  }
+
+  test("phases and a safe summary appear in the roster, and the stream's contents do not", async () => {
+    const r = await room("presence");
+    eventAgent(r, {
+      id: "mira:coder",
+      label: "Mira's coder",
+      handle: "mellery",
+      displayName: "Mira",
+    });
+    const mira = await member(r, "mellery", "Mira");
+    await wait(300);
+
+    const rosters = [];
+    mira.ws.on("message", (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.t === "roster") rosters.push(message);
+    });
+    // An exact path is only claimed where the room can map it, so this room
+    // needs a shared workspace before one is honest.
+    mira.ws.send(JSON.stringify({ t: "claimWorkspace", claim: true }));
+    await wait(200);
+
+    mira.say("Mira's coder, please patch the runner");
+    await wait(5000);
+
+    const presences = rosters
+      .flatMap((message) => message.roster.flatMap((entry) => entry.agents))
+      .filter((agent) => agent && agent.activity)
+      .map((agent) => agent.activity);
+    assert.ok(presences.length > 0, "the room should have seen this agent working");
+
+    const phases = [...new Set(presences.map((presence) => presence.phase))];
+    assert.ok(phases.includes("running"), `expected a running phase, saw ${phases.join(", ")}`);
+    assert.ok(phases.includes("editing"), `expected an editing phase, saw ${phases.join(", ")}`);
+    assert.ok(
+      presences.some((presence) => presence.summary === "Running a shell command"),
+      "the command is described, never quoted"
+    );
+    assert.ok(
+      presences.some(
+        (presence) => presence.path === "packages/extension/src/runners.ts"
+      ),
+      "the shared-workspace location is claimed once there is a host to map it"
+    );
+
+    const shared = JSON.stringify(presences);
+    for (const leak of ["sk-live-must-not-leak", "hunter2", "curl", "authorization"]) {
+      assert.equal(shared.includes(leak), false, `"${leak}" must not reach the room`);
+    }
+
+    // Every frame the room saw carries an ordering value, and they only ever
+    // go forwards.
+    const sequences = presences.map((presence) => presence.sequence).filter((n) => n !== undefined);
+    assert.ok(sequences.length > 0, "presence should be sequenced");
+    assert.deepEqual(sequences, [...sequences].sort((a, b) => a - b));
+  });
+
+  test("the reply comes from the event stream, not from the raw JSONL", async () => {
+    const r = await room("stream-reply");
+    eventAgent(r, {
+      id: "mira:coder",
+      label: "Mira's coder",
+      handle: "mellery",
+      displayName: "Mira",
+    });
+    const mira = await member(r, "mellery", "Mira");
+    await wait(300);
+
+    const said = [];
+    mira.ws.on("message", (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.t === "entry" && message.entry.kind === "agent") said.push(message.entry.text);
+    });
+
+    mira.say("Mira's coder, what did you do?");
+    await wait(4000);
+
+    assert.deepEqual(said, ["Patched the runner and the test."]);
+    assert.equal(said[0].includes("item.completed"), false, "machine framing is not a reply");
+  });
+
+  test("a directive block becomes a proposal and never reaches the room", async () => {
+    const r = await room("directives");
+    process.env.RIPIENO_EVENT_REPLY = [
+      "Recorded the decision for the room.",
+      "```ripieno-context",
+      JSON.stringify({
+        kind: "decision",
+        title: "The relay enforces presence limits",
+        body: "Coalescing, sequencing and expiry are enforced relay-side.",
+        tags: ["presence"],
+      }),
+      "```",
+    ].join("\n");
+    cleanup.push(() => {
+      delete process.env.RIPIENO_EVENT_REPLY;
+    });
+
+    eventAgent(r, {
+      id: "mira:coder",
+      label: "Mira's coder",
+      handle: "mellery",
+      displayName: "Mira",
+    });
+    const mira = await member(r, "mellery", "Mira");
+    await wait(300);
+
+    const said = [];
+    const contexts = [];
+    mira.ws.on("message", (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.t === "entry" && message.entry.kind === "agent") said.push(message.entry.text);
+      if (message.t === "context") contexts.push(message.context);
+    });
+
+    mira.say("Mira's coder, remember how presence works");
+    await wait(4000);
+
+    const items = contexts.at(-1) ?? [];
+    const proposal = items.find((item) => item.title === "The relay enforces presence limits");
+    assert.ok(proposal, `no proposal was created, saw ${JSON.stringify(items)}`);
+    assert.equal(proposal.status, "proposed", "an agent proposes; a person accepts");
+    assert.equal(proposal.authorAgentId, "mellery::mira:coder");
+    assert.deepEqual(said, ["Recorded the decision for the room."]);
+    assert.equal(said[0].includes("ripieno-context"), false, "the block is machine syntax");
   });
 });

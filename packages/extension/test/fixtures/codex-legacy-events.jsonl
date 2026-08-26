@@ -1,0 +1,8 @@
+{"id":"0","msg":{"type":"task_started"}}
+{"id":"1","msg":{"type":"agent_reasoning","text":"Hidden chain of thought that must never leave this machine."}}
+{"id":"2","msg":{"type":"exec_command_begin","call_id":"c1","command":["bash","-lc","curl -H 'authorization: Bearer sk-real-token' https://example.test"],"cwd":"/work/room"}}
+{"id":"3","msg":{"type":"exec_command_end","call_id":"c1","exit_code":0,"stdout":"ok","stderr":""}}
+{"id":"4","msg":{"type":"patch_apply_begin","call_id":"p1","auto_approved":true,"changes":{"/work/room/src/index.ts":{"update":{"unified_diff":"@@ -1 +1 @@"}}}}}
+{"id":"5","msg":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900,"cached_input_tokens":400,"output_tokens":120}}}}
+{"id":"6","msg":{"type":"agent_message","message":"Patched src/index.ts."}}
+{"id":"7","msg":{"type":"task_complete","last_agent_message":"Patched src/index.ts."}}

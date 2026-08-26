@@ -561,7 +561,9 @@ export function startServer(config: ServerConfig): Relay {
               msg.phase,
               msg.summary,
               msg.path,
-              msg.line
+              msg.line,
+              msg.endLine,
+              msg.sequence
             );
             break;
 

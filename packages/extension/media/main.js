@@ -461,7 +461,10 @@
       if (presence?.path) {
         const location = document.createElement("code");
         location.className = "agent-location";
-        location.textContent = `${presence.path}${presence.line ? `:${presence.line}` : ""}`;
+        const range = presence.line
+          ? `:${presence.line}${presence.endLine && presence.endLine > presence.line ? `-${presence.endLine}` : ""}`
+          : "";
+        location.textContent = `${presence.path}${range}`;
         inspector.appendChild(location);
       }
       if (presence?.updatedAt) {

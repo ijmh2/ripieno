@@ -1,0 +1,11 @@
+{
+  "response": "The build fails because packages/relay/src/room.ts calls setAgentActivity before the roster exists.",
+  "stats": {
+    "models": {
+      "gemini-2.5-pro": {
+        "api": { "totalRequests": 2, "totalErrors": 0 },
+        "tokens": { "prompt": 8412, "candidates": 220, "total": 8632 }
+      }
+    }
+  }
+}

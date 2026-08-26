@@ -61,6 +61,8 @@ import {
   MAX_HANDOFF_REQUESTS,
   MAX_HANDOFF_TASK_CHARS,
   MAX_HANDOFF_OUTCOME_CHARS,
+  MAX_PRESENCE_PATH_CHARS,
+  MAX_PRESENCE_SUMMARY_CHARS,
   WORKSPACE_HANDLE,
 } from "@ripieno/protocol";
 import { toRosterEntry } from "./roomCore.js";
@@ -97,6 +99,18 @@ interface AgentConnection extends Connection {
   /** Last reported activity. Absent until its host says — see AgentActivity. */
   state?: AgentActivity;
   activity?: AgentPresence;
+  /**
+   * Highest presence sequence this socket has had accepted.
+   *
+   * Per connection, so it dies with the connection: a reattaching agent starts
+   * again from nothing rather than inheriting a number it must now beat.
+   */
+  activitySequence?: number;
+  /** When presence for this agent was last put on the wire. */
+  activityPublishedAt?: number;
+  /** The newest presence held back by the rate limit, published on the flush. */
+  activityPending?: AgentPresence;
+  activityTimer?: NodeJS.Timeout;
 }
 
 /** Identifies an agent connection; humans are identified by handle alone. */
@@ -214,6 +228,22 @@ export class Room {
   private readonly handoffRequests = new Map<string, HandoffRequestReceipt>();
   private handoffRevision = 0;
   private handoffExpiryTimer: NodeJS.Timeout | undefined;
+  /** Runs only while some agent has live presence to expire. */
+  private presenceSweepTimer: NodeJS.Timeout | undefined;
+  /**
+   * Presence pacing, read on every use.
+   *
+   * Four frames a second per agent is fast enough to look live and slow enough
+   * that a chatty provider cannot turn one turn into thousands of roster
+   * broadcasts. Tests shorten these; nothing in production changes them.
+   */
+  static readonly presenceLimits = {
+    /** At most four published presence frames a second, per agent. */
+    minIntervalMs: 250,
+    /** Presence nobody has refreshed within this is no longer shown. */
+    ttlMs: 45_000,
+    sweepMs: 5_000,
+  };
   /** Outstanding remote tool requests, so a reply can find who asked. */
   private readonly remoteCalls = new Map<
     string,
@@ -521,6 +551,9 @@ export class Room {
       for (const [agentId, agent] of this.agents) {
         if (agent.member.handle !== handle) continue;
         this.agents.delete(agentId);
+        // Presence dies with authority: a revoked agent must not keep a queued
+        // frame that would republish it as live a quarter of a second later.
+        this.clearPresenceTimer(agent);
         agent.socket.close(4003, "room role revoked; agent execution cancelled");
       }
     }
@@ -530,16 +563,22 @@ export class Room {
   }
 
   private agentsOf(handle: string): AttachedAgent[] {
+    const now = Date.now();
     return [...this.agents.values()]
       .filter((a) => a.member.handle === handle)
-      .map((a) => ({
-        id: a.id,
-        owner: handle,
-        label: a.label,
-        capability: a.capability,
-        state: a.state,
-        activity: a.activity ? { ...a.activity } : undefined,
-      }));
+      .map((a) => {
+        const presence = this.livePresence(a, now);
+        return {
+          id: a.id,
+          owner: handle,
+          label: a.label,
+          // Stale presence is not reported as a state either: "we do not know"
+          // must not render as a confident phase from several minutes ago.
+          state: presence ? a.state : undefined,
+          capability: a.capability,
+          activity: presence ? { ...presence } : undefined,
+        };
+      });
   }
 
   /**
@@ -553,39 +592,158 @@ export class Room {
    */
   setAgentState(agentId: string, state: AgentActivity): void {
     const agent = this.isAgentAuthorized(agentId) ? this.agents.get(agentId) : undefined;
-    if (!agent || agent.state === state) return;
-    agent.state = state;
-    agent.activity = { phase: state, updatedAt: Date.now() };
-    this.broadcastRoster();
+    if (!agent || !validAgentActivity(state)) return;
+    // Coarse state is presence too, so it goes through the same rate limit,
+    // ordering and expiry rather than round the side of them.
+    this.setAgentActivity(agentId, state);
   }
 
-  /** Publish bounded, observable, non-durable agent presence. */
+  /**
+   * Publish bounded, observable, non-durable agent presence.
+   *
+   * Everything a host can say about itself is treated as untrusted: the phase
+   * is checked against the closed set, text is redacted and capped, an exact
+   * location is only claimed where the room can map it honestly, and the
+   * ordering value is accepted only when it advances. Identity is never read
+   * from the payload — the caller passes the id derived from the socket.
+   */
   setAgentActivity(
     agentId: string,
     phase: AgentActivity,
     rawSummary?: string,
     rawPath?: string,
-    rawLine?: number
+    rawLine?: number,
+    rawEndLine?: number,
+    rawSequence?: number
   ): void {
     const agent = this.isAgentAuthorized(agentId) ? this.agents.get(agentId) : undefined;
     if (!agent || !validAgentActivity(phase)) return;
-    const summary = boundedOptional(rawSummary, 240);
+    if (rawSequence !== undefined) {
+      // Ordering only. A host that mints a huge sequence hurts nobody but
+      // itself: coalescing is measured in time, so it cannot buy a faster rate,
+      // and the socket has already decided which agent this describes.
+      if (!Number.isSafeInteger(rawSequence) || rawSequence <= 0) return;
+      const highest = Math.max(agent.activitySequence ?? 0, agent.activityPending?.sequence ?? 0);
+      if (rawSequence <= highest) return;
+      agent.activitySequence = rawSequence;
+    }
+    const summary = boundedOptional(rawSummary, MAX_PRESENCE_SUMMARY_CHARS);
     // An exact cross-machine location is honest only in the single shared
     // workspace. Private copies may differ and are not advertised by default.
-    const path = this.host ? boundedOptional(rawPath, 500) : undefined;
-    const line = path && Number.isSafeInteger(rawLine) && rawLine! > 0 ? rawLine : undefined;
-    const previous = agent.activity;
-    if (
-      previous?.phase === phase &&
-      previous.summary === summary &&
-      previous.path === path &&
-      previous.line === line
-    ) {
+    const path = this.host ? boundedOptional(rawPath, MAX_PRESENCE_PATH_CHARS) : undefined;
+    const line = path && presenceLine(rawLine) ? rawLine : undefined;
+    const endLine =
+      line !== undefined && presenceLine(rawEndLine) && rawEndLine! >= line ? rawEndLine : undefined;
+    const now = Date.now();
+    const next: AgentPresence = {
+      phase,
+      summary,
+      path,
+      line,
+      endLine,
+      updatedAt: now,
+      sequence: rawSequence,
+    };
+
+    // A repeat of what the room already shows is a heartbeat: it keeps the
+    // presence from expiring without spending a roster broadcast on saying
+    // nothing new.
+    const latest = agent.activityPending ?? this.livePresence(agent, now);
+    if (latest && samePresence(latest, next)) {
+      latest.updatedAt = now;
+      latest.sequence = rawSequence ?? latest.sequence;
       return;
     }
-    agent.state = phase;
-    agent.activity = { phase, summary, path, line, updatedAt: Date.now() };
+
+    const since = now - (agent.activityPublishedAt ?? 0);
+    if (since < Room.presenceLimits.minIntervalMs) {
+      // Coalesce rather than queue: only the newest description of an agent is
+      // worth showing, and a burst must not become a burst of roster frames.
+      agent.activityPending = next;
+      if (!agent.activityTimer) {
+        agent.activityTimer = setTimeout(() => {
+          agent.activityTimer = undefined;
+          this.flushAgentActivity(agent);
+        }, Room.presenceLimits.minIntervalMs - since);
+        agent.activityTimer.unref?.();
+      }
+      return;
+    }
+    this.publishAgentActivity(agent, next);
+  }
+
+  /** Put one coalesced frame on the wire and restart the rate-limit window. */
+  private publishAgentActivity(agent: AgentConnection, presence: AgentPresence): void {
+    agent.activity = presence;
+    agent.state = presence.phase;
+    agent.activityPending = undefined;
+    agent.activityPublishedAt = Date.now();
+    this.startPresenceSweep();
     this.broadcastRoster();
+  }
+
+  private flushAgentActivity(agent: AgentConnection): void {
+    const pending = agent.activityPending;
+    // The connection may have been replaced or revoked while the frame waited.
+    if (!pending || this.agents.get(agent.id) !== agent) return;
+    this.publishAgentActivity(agent, pending);
+  }
+
+  /**
+   * Presence the room may still show.
+   *
+   * Presence is a claim about now, and a host that stops sending — because it
+   * crashed, slept or lost the network — has stopped making it. Left alone the
+   * inspector would show "Editing room.ts" forever, which is exactly the kind
+   * of stale confidence this surface exists not to have.
+   */
+  private livePresence(agent: AgentConnection, now = Date.now()): AgentPresence | undefined {
+    if (!agent.activity) return undefined;
+    return now - agent.activity.updatedAt <= Room.presenceLimits.ttlMs ? agent.activity : undefined;
+  }
+
+  private startPresenceSweep(): void {
+    if (this.presenceSweepTimer) return;
+    this.presenceSweepTimer = setInterval(
+      () => this.sweepStalePresence(),
+      Room.presenceLimits.sweepMs
+    );
+    this.presenceSweepTimer.unref?.();
+  }
+
+  /**
+   * Drop presence nobody has refreshed, and tell the room once.
+   *
+   * Read paths already hide stale presence; this exists so the hiding is
+   * actually delivered to open inspectors rather than waiting for the next
+   * unrelated roster change.
+   */
+  sweepStalePresence(): void {
+    const now = Date.now();
+    let changed = false;
+    let live = 0;
+    for (const agent of this.agents.values()) {
+      if (!agent.activity) continue;
+      if (now - agent.activity.updatedAt > Room.presenceLimits.ttlMs) {
+        agent.activity = undefined;
+        agent.state = undefined;
+        agent.activityPending = undefined;
+        this.clearPresenceTimer(agent);
+        changed = true;
+      } else {
+        live += 1;
+      }
+    }
+    if (live === 0 && this.presenceSweepTimer) {
+      clearInterval(this.presenceSweepTimer);
+      this.presenceSweepTimer = undefined;
+    }
+    if (changed) this.broadcastRoster();
+  }
+
+  private clearPresenceTimer(agent: AgentConnection): void {
+    if (agent.activityTimer) clearTimeout(agent.activityTimer);
+    agent.activityTimer = undefined;
   }
 
   /* ---------------------------------------------------------------- */
@@ -638,7 +796,11 @@ export class Room {
       }
       // Replacing by *agent id* — not by handle — is what lets one person run
       // several agents at once without them evicting each other.
-      this.agents.get(id)?.socket.close(4000, `another connection claimed the agent id ${id}`);
+      const replaced = this.agents.get(id);
+      if (replaced) {
+        this.clearPresenceTimer(replaced);
+        replaced.socket.close(4000, `another connection claimed the agent id ${id}`);
+      }
       this.agents.set(id, {
         member,
         socket,
@@ -1577,7 +1739,10 @@ export class Room {
     // Frames already queued behind this claim therefore fail the same guard as
     // any later reconnect attempt by the released source id.
     this.releasedAgents.add(handoff.sourceAgentId);
-    if (source) this.agents.delete(source.id);
+    if (source) {
+      this.clearPresenceTimer(source);
+      this.agents.delete(source.id);
+    }
     await this.onCriticalChanged?.();
     this.broadcastHandoffs();
     this.broadcastRoster();
@@ -2082,6 +2247,7 @@ export class Room {
       if (!conn) return;
       label = conn.label;
       this.agents.delete(key);
+      this.clearPresenceTimer(conn);
     } else {
       const live = this.connections.get(handle);
       if (!live) return;
@@ -2355,6 +2521,9 @@ export class Room {
   async dispose(): Promise<void> {
     if (this.handoffExpiryTimer) clearTimeout(this.handoffExpiryTimer);
     this.handoffExpiryTimer = undefined;
+    if (this.presenceSweepTimer) clearInterval(this.presenceSweepTimer);
+    this.presenceSweepTimer = undefined;
+    for (const agent of this.agents.values()) this.clearPresenceTimer(agent);
     await this.driver.close?.();
   }
 
@@ -2756,6 +2925,22 @@ function validAgentActivity(value: unknown): value is AgentActivity {
     value === "running" ||
     value === "responding" ||
     value === "awaiting-approval"
+  );
+}
+
+/** A 1-based line anchor, or nothing. Zero and fractions are not locations. */
+function presenceLine(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+/** Two presence frames the room would render identically. */
+function samePresence(a: AgentPresence, b: AgentPresence): boolean {
+  return (
+    a.phase === b.phase &&
+    a.summary === b.summary &&
+    a.path === b.path &&
+    a.line === b.line &&
+    a.endLine === b.endLine
   );
 }
 

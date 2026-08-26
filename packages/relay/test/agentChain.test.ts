@@ -188,6 +188,12 @@ describe("what an agent is doing reaches the room", () => {
     r.setAgentState("mira:coder", "thinking");
     assert.equal(watcher.sent.filter((m) => m.t === "roster").length, before);
     r.setAgentState("mira:coder", "idle");
+    // Coarse state is presence and takes the same rate limit: a change inside
+    // the window is coalesced and published on the flush, not dropped.
+    assert.equal(watcher.sent.filter((m) => m.t === "roster").length, before);
+    await new Promise((resolve) =>
+      setTimeout(resolve, Room.presenceLimits.minIntervalMs + 50)
+    );
     assert.equal(watcher.sent.filter((m) => m.t === "roster").length, before + 1);
   });
 

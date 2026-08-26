@@ -1,0 +1,10 @@
+data: {"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","content":"It "}}]}
+
+data: {"id":"c1","choices":[{"index":0,"delta":{"content":"builds."}}]}
+
+data: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"c1","choices":[],"usage":{"prompt_tokens":120,"completion_tokens":34}}
+
+data: [DONE]
+

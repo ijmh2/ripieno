@@ -36,6 +36,16 @@ test("shared context and agent inspectors are separate accessible room surfaces"
   assert.match(script, /type: "contextStatus"/);
   assert.match(roomViewHost, /Agent additions remain proposed/);
   assert.match(script, /agent\.activity/);
+  // A range, when there is one: agents patch regions rather than typing, so a
+  // single line would be a less honest claim than the one the relay sends.
+  assert.match(script, /presence\.endLine > presence\.line/);
+  // The phase is never carried by the coloured dot alone: the dot is decorative
+  // and the inspector's accessible name states what the agent is doing.
+  assert.match(script, /dot\.setAttribute\("aria-hidden", "true"\)/);
+  assert.match(
+    script,
+    /aria-label",\s*`\$\{agent\.label\}, owned by \$\{member\.displayName \|\| member\.handle\}, \$\{activityText\.textContent\}`/
+  );
   assert.match(roomViewHost, /Hidden reasoning and raw logs are never shared/);
   assert.match(styles, /\.surface-tabs\s*\{/);
   assert.match(styles, /\.context-card\.proposed/);

@@ -49,6 +49,79 @@ describe("local CLI failures", () => {
   });
 });
 
+describe("a declared parser, and only a declared one", () => {
+  const emit = (frames) =>
+    `process.stdout.write(${JSON.stringify(frames.map((f) => `${JSON.stringify(f)}\n`).join(""))})`;
+
+  test("a CLI whose configuration declares a format reports what it is doing", async () => {
+    const runner = new CliRunner({
+      command: process.execPath,
+      args: [
+        "-e",
+        emit([
+          { type: "thread.started", thread_id: "t1" },
+          {
+            type: "item.completed",
+            item: { id: "1", type: "command_execution", command: "psql -U admin -W hunter2", exit_code: 0 },
+          },
+          { type: "item.completed", item: { id: "2", type: "agent_message", text: "Migrated." } },
+        ]),
+        "{prompt}",
+      ],
+      label: "Mira's coder",
+      timeoutMs: 5_000,
+      eventFormat: "codex-jsonl",
+    });
+    const events = [];
+    const text = await runner.run(context, () => {}, (event) => events.push(event));
+
+    assert.equal(text, "Migrated.", "the reply comes from the stream, not the raw JSONL");
+    assert.equal(text.includes("item.completed"), false);
+    assert.deepEqual(
+      events.filter((e) => e.type === "tool").map((e) => e.safeSummary),
+      ["Running a shell command"]
+    );
+    assert.equal(JSON.stringify(events).includes("hunter2"), false);
+  });
+
+  test("a custom CLI keeps coarse thinking presence and its plain-text reply", async () => {
+    const runner = new CliRunner({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('Looks fine to me.')", "{prompt}"],
+      label: "Mira's coder",
+      timeoutMs: 5_000,
+    });
+    const events = [];
+    assert.equal(await runner.run(context, () => {}, (event) => events.push(event)), "Looks fine to me.");
+    assert.deepEqual(events, [{ type: "phase", phase: "thinking" }]);
+  });
+
+  test("a declared parser that does not recognise the output changes nothing", async () => {
+    // The presets declare Codex's format, but the shipped arguments do not turn
+    // its JSON mode on. That must be a no-op, not a broken agent.
+    const runner = new CliRunner({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('Plain prose, as before.')", "{prompt}"],
+      label: "Mira's coder",
+      timeoutMs: 5_000,
+      eventFormat: "codex-jsonl",
+    });
+    const events = [];
+    assert.equal(
+      await runner.run(context, () => {}, (event) => events.push(event)),
+      "Plain prose, as before."
+    );
+    assert.deepEqual(events, [{ type: "phase", phase: "thinking" }]);
+    assert.equal(runner.lastUsage(), undefined);
+  });
+});
+
+test("the built-in CLI presets declare their documented event format", () => {
+  assert.equal(PROVIDERS.find((provider) => provider.id === "codex").eventFormat, "codex-jsonl");
+  assert.equal(PROVIDERS.find((provider) => provider.id === "gemini").eventFormat, "gemini-cli");
+  assert.equal(PROVIDERS.find((provider) => provider.id === "cli-custom").eventFormat, undefined);
+});
+
 test("the recommended ChatGPT preset uses Codex non-interactively and sends room text on stdin", () => {
   const codex = PROVIDERS.find((provider) => provider.id === "codex");
   assert.equal(codex.label, "ChatGPT / Codex (local)");

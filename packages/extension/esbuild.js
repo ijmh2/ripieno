@@ -13,7 +13,7 @@ async function main() {
     // agentHost is emitted separately so the turn it builds can be tested
     // against a real relay and a real subprocess, rather than by opening two
     // editor windows and reading the output channel.
-    entryPoints: ["src/extension.ts", "src/permissionServer.ts", "src/workspaceFs.ts", "src/workspaceServer.ts", "src/addressing.ts", "src/soloRelay.ts", "src/invite.ts", "src/relaySecurity.ts", "src/agentHost.ts", "src/runners.ts", "src/approvalScope.ts", "src/approvalSummary.ts", "src/roomViewMessages.ts", "src/agentSetup.ts", "src/agentCommands.ts", "src/goalCommands.ts", "src/goalState.ts", "src/goalMutations.ts", "src/contextMutations.ts", "src/handoffCommands.ts", "src/handoffState.ts", "src/sessionScope.ts"],
+    entryPoints: ["src/extension.ts", "src/permissionServer.ts", "src/workspaceFs.ts", "src/workspaceServer.ts", "src/addressing.ts", "src/soloRelay.ts", "src/invite.ts", "src/relaySecurity.ts", "src/agentHost.ts", "src/runners.ts", "src/runnerEvents.ts", "src/providerEvents.ts", "src/presence.ts", "src/contextDirectives.ts", "src/approvalScope.ts", "src/approvalSummary.ts", "src/roomViewMessages.ts", "src/agentSetup.ts", "src/agentCommands.ts", "src/goalCommands.ts", "src/goalState.ts", "src/goalMutations.ts", "src/contextMutations.ts", "src/handoffCommands.ts", "src/handoffState.ts", "src/sessionScope.ts"],
     bundle: true,
     format: "cjs",
     platform: "node",

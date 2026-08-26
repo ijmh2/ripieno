@@ -15,6 +15,13 @@
 import { spawn, type ChildProcess } from "child_process";
 import type { TurnUsage } from "@ripieno/protocol";
 import { validateProviderBaseUrl } from "./relaySecurity";
+import type { RunnerEvent, RunnerEventSink } from "./runnerEvents";
+import {
+  OpenAiStreamAdapter,
+  createProviderAdapter,
+  type ProviderEventAdapter,
+  type ProviderEventFormat,
+} from "./providerEvents";
 
 /** What an agent can actually do, which the room shows rather than implies. */
 export type RunnerCapability = "workspace" | "conversation";
@@ -40,13 +47,45 @@ export interface RunContext {
   recent: string;
   /** Where a workspace-capable runner should work. */
   cwd?: string;
+  /**
+   * Structured room tools this provider may call, when it has a tool channel.
+   *
+   * Claude Code reaches `context_add` through MCP and a local CLI through the
+   * directive block in its reply; an OpenAI-compatible endpoint has native
+   * function calling, so it is offered the same two tools directly rather than
+   * being the one provider that can only read shared memory.
+   */
+  tools?: RunnerTool[];
+  /** Executes one of `tools`. Absent when the host offers none. */
+  callTool?: (name: string, input: Record<string, unknown>) => Promise<RunnerToolResult>;
+}
+
+/** One room tool, described the way a chat-completions API expects. */
+export interface RunnerTool {
+  name: string;
+  description: string;
+  /** JSON Schema for the arguments. */
+  parameters: Record<string, unknown>;
+}
+
+export interface RunnerToolResult {
+  content: string;
+  isError: boolean;
 }
 
 export interface ModelRunner {
   readonly capability: RunnerCapability;
   /** A short name for the model, shown beside the agent. */
   readonly description: string;
-  run(ctx: RunContext, log: (line: string) => void): Promise<string>;
+  /**
+   * Run one turn.
+   *
+   * Still resolves to the final text, because that is what the room posts and
+   * what every existing caller expects. `onEvent` is additive: it reports what
+   * the turn is observably doing while it happens, and a caller that does not
+   * pass it gets exactly the behaviour it had before.
+   */
+  run(ctx: RunContext, log: (line: string) => void, onEvent?: RunnerEventSink): Promise<string>;
   cancel(): void;
   /**
    * What the last turn cost, if this provider says.
@@ -57,6 +96,14 @@ export interface ModelRunner {
    */
   lastUsage?(): TurnUsage | undefined;
 }
+
+/**
+ * How much unstructured stdout a runner keeps for its fallback path.
+ *
+ * Only ever read when a provider's structured stream was not recognised at
+ * all, so this is a bound on a rescue, not on ordinary operation.
+ */
+const MAX_FALLBACK_CHARS = 200_000;
 
 /* ------------------------------------------------------------------ */
 /* Claude Code — local, with workspace access                          */
@@ -105,7 +152,7 @@ export class ClaudeCodeRunner implements ModelRunner {
     return this.usage;
   }
 
-  run(ctx: RunContext, log: (line: string) => void): Promise<string> {
+  run(ctx: RunContext, log: (line: string) => void, onEvent?: RunnerEventSink): Promise<string> {
     // The roster leads both paths. On a resumed session it is the only place the
     // model can learn that somebody has joined since; on a fresh one the system
     // text is about to go stale for the same reason, so it is stated here too
@@ -117,8 +164,14 @@ export class ClaudeCodeRunner implements ModelRunner {
     const args = [
       "-p",
       prompt,
+      // Streaming frames rather than one final object. The last frame is the
+      // same `result` payload the single-object format returns — same session
+      // id, same reply, same usage — so nothing is given up, and everything
+      // before it is what the room can honestly show while the turn runs.
       "--output-format",
-      "json",
+      "stream-json",
+      // Claude refuses stream-json under --print without this.
+      "--verbose",
       "--mcp-config",
       this.opts.mcpConfig,
       "--strict-mcp-config",
@@ -133,13 +186,29 @@ export class ClaudeCodeRunner implements ModelRunner {
     if (this.sessionId) args.push("--resume", this.sessionId);
 
     log(this.sessionId ? "thinking (resumed session)" : "thinking (new session)");
+    onEvent?.({ type: "phase", phase: "thinking" });
 
     return new Promise<string>((resolve, reject) => {
       const child = spawn("claude", args, { cwd: ctx.cwd, stdio: ["ignore", "pipe", "pipe"] });
       this.child = child;
+      const adapter = createProviderAdapter("claude-stream-json", ctx.cwd);
+      let completed: Extract<RunnerEvent, { type: "complete" }> | undefined;
+      const consume = (events: RunnerEvent[]): void => {
+        for (const event of events) {
+          if (event.type === "complete") completed = event;
+          onEvent?.(event);
+        }
+      };
 
-      let out = "";
-      child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
+      // Retained only until the stream identifies itself, so an unparsed run
+      // still has something to fall back on without holding every frame of a
+      // long turn in memory.
+      let fallback = "";
+      child.stdout?.on("data", (d: Buffer) => {
+        const chunk = d.toString();
+        if (!adapter.recognised && fallback.length < MAX_FALLBACK_CHARS) fallback += chunk;
+        consume(adapter.push(chunk));
+      });
       child.stderr?.on("data", (d: Buffer) => log(d.toString().trimEnd()));
 
       child.on("error", (err) => {
@@ -149,37 +218,22 @@ export class ClaudeCodeRunner implements ModelRunner {
 
       child.on("close", (code) => {
         this.child = undefined;
-        let text = out.trim();
-        try {
-          const parsed = JSON.parse(text) as {
-            session_id?: string;
-            result?: string;
-            total_cost_usd?: number;
-            num_turns?: number;
-            duration_ms?: number;
-            usage?: {
-              input_tokens?: number;
-              output_tokens?: number;
-              cache_read_input_tokens?: number;
-            };
-          };
-          if (parsed.session_id && parsed.session_id !== this.sessionId) {
-            this.sessionId = parsed.session_id;
-            this.opts.onSession?.(parsed.session_id);
-          }
-          // Already in the payload we were parsing, and previously discarded.
-          this.usage = {
-            costUsd: parsed.total_cost_usd,
-            modelTurns: parsed.num_turns,
-            durationMs: parsed.duration_ms,
-            inputTokens: parsed.usage?.input_tokens,
-            outputTokens: parsed.usage?.output_tokens,
-            cacheReadTokens: parsed.usage?.cache_read_input_tokens,
-          };
-          text = String(parsed.result ?? "").trim();
-        } catch {
-          // Not JSON — fall back to raw output rather than losing the reply.
+        consume(adapter.end());
+        if (adapter.sessionId && adapter.sessionId !== this.sessionId) {
+          this.sessionId = adapter.sessionId;
+          this.opts.onSession?.(adapter.sessionId);
+        }
+        let text: string;
+        if (completed) {
+          text = completed.text;
+          this.usage = completed.usage;
+        } else if (adapter.recognised) {
+          // The stream was ours but never finished — a kill, a crash, a
+          // cancelled turn. Half a stream is not a reply.
+          text = "";
           this.usage = undefined;
+        } else {
+          text = this.parseSingleObject(fallback.trim());
         }
         if (code !== 0 && !text) {
           reject(new Error(`claude exited ${code}`));
@@ -188,6 +242,47 @@ export class ClaudeCodeRunner implements ModelRunner {
         resolve(text);
       });
     });
+  }
+
+  /**
+   * The pre-streaming `--output-format json` payload.
+   *
+   * Kept as the fallback for a build of Claude Code that does not produce the
+   * streaming frames: a member whose CLI is older should get their reply, not
+   * an empty room message and a confusing error.
+   */
+  private parseSingleObject(raw: string): string {
+    try {
+      const parsed = JSON.parse(raw) as {
+        session_id?: string;
+        result?: string;
+        total_cost_usd?: number;
+        num_turns?: number;
+        duration_ms?: number;
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_read_input_tokens?: number;
+        };
+      };
+      if (parsed.session_id && parsed.session_id !== this.sessionId) {
+        this.sessionId = parsed.session_id;
+        this.opts.onSession?.(parsed.session_id);
+      }
+      this.usage = {
+        costUsd: parsed.total_cost_usd,
+        modelTurns: parsed.num_turns,
+        durationMs: parsed.duration_ms,
+        inputTokens: parsed.usage?.input_tokens,
+        outputTokens: parsed.usage?.output_tokens,
+        cacheReadTokens: parsed.usage?.cache_read_input_tokens,
+      };
+      return String(parsed.result ?? "").trim();
+    } catch {
+      // Not JSON — fall back to raw output rather than losing the reply.
+      this.usage = undefined;
+      return raw;
+    }
   }
 }
 
@@ -203,10 +298,22 @@ export interface OpenAiCompatOptions {
   label: string;
 }
 
+/** One message in the trailing window sent to a chat-completions endpoint. */
 interface ChatMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  /** Assistant turns that called tools carry them back verbatim. */
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
+  /** Tool results are correlated by the id the model chose. */
+  tool_call_id?: string;
 }
+
+/** How many times one turn may call tools before it must answer. */
+const MAX_TOOL_ROUNDS = 3;
 
 /**
  * Covers Grok, Kimi, DeepSeek, Mistral, Together, Groq and a local Ollama in one
@@ -215,6 +322,12 @@ interface ChatMessage {
  * These agents can read the room and contribute, but cannot touch anyone's
  * files. That is a real difference from a Claude Code agent and the room says so
  * rather than letting people assume otherwise.
+ *
+ * The request streams. Not to stream a draft into the room — that is Phase 3 —
+ * but because a finished answer is the one moment at which live activity is no
+ * longer useful, and because tool calls arrive on the same channel: this is the
+ * one built-in provider with a native function-calling path, so it is how a
+ * hosted model gets `context_add` rather than only being able to read.
  */
 export class OpenAiCompatRunner implements ModelRunner {
   readonly capability = "conversation" as const;
@@ -222,6 +335,14 @@ export class OpenAiCompatRunner implements ModelRunner {
   /** The conversation so far. A stateless HTTP API has no session to resume. */
   private readonly history: ChatMessage[] = [];
   private controller: AbortController | undefined;
+  /**
+   * Whether this endpoint has refused a streamed request.
+   *
+   * "OpenAI-compatible" is a family resemblance rather than a specification.
+   * One endpoint that rejects `stream` should cost one wasted request, not one
+   * per turn forever.
+   */
+  private streamingUnsupported = false;
 
   constructor(private readonly opts: OpenAiCompatOptions) {}
 
@@ -238,7 +359,11 @@ export class OpenAiCompatRunner implements ModelRunner {
     return this.usage;
   }
 
-  async run(ctx: RunContext, log: (line: string) => void): Promise<string> {
+  async run(
+    ctx: RunContext,
+    log: (line: string) => void,
+    onEvent?: RunnerEventSink
+  ): Promise<string> {
     const shared = ctx.context ? `${ctx.context}\n\n` : "";
     // The roster leads whichever message this turn adds. Stating it once would
     // not survive here either: the request is windowed to a trailing slice, so a
@@ -254,59 +379,199 @@ export class OpenAiCompatRunner implements ModelRunner {
       this.history.push({ role: "user", content: `${ctx.roster}\n\n${shared}${ctx.unseen}` });
     }
 
-    // Keep the request bounded: the system prompt plus a trailing window. A room
-    // runs indefinitely, and these APIs charge for every token of history.
-    const windowed = [this.history[0], ...this.history.slice(-24)];
-
-    const controller = new AbortController();
-    this.controller = controller;
     const endpoint = validateProviderBaseUrl(this.opts.baseUrl);
     if (!endpoint.ok) {
-      this.controller = undefined;
       throw new Error(`${this.opts.label}: ${endpoint.reason}`);
     }
     log(`thinking (${this.opts.model} via ${endpoint.url})`);
+    onEvent?.({ type: "phase", phase: "thinking" });
 
+    const tools =
+      ctx.tools && ctx.tools.length > 0 && ctx.callTool
+        ? ctx.tools.map((tool) => ({
+            type: "function" as const,
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters,
+            },
+          }))
+        : undefined;
+
+    let text = "";
+    for (let round = 0; ; round += 1) {
+      const turn = await this.completion(endpoint.url, tools, onEvent);
+      this.usage = turn.usage;
+      const calls = turn.toolCalls;
+      if (calls.length === 0 || !ctx.callTool || round >= MAX_TOOL_ROUNDS) {
+        text = turn.text;
+        break;
+      }
+      // Keep the assistant's own call in the history: a tool result with no
+      // call before it is a malformed conversation to every one of these APIs.
+      this.history.push({
+        role: "assistant",
+        content: turn.text,
+        tool_calls: calls.map((call) => ({
+          id: call.id,
+          type: "function" as const,
+          function: { name: call.name, arguments: call.arguments },
+        })),
+      });
+      for (const call of calls) {
+        let input: Record<string, unknown> = {};
+        try {
+          const parsed: unknown = JSON.parse(call.arguments || "{}");
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            input = parsed as Record<string, unknown>;
+          }
+        } catch {
+          input = {};
+        }
+        const result = await ctx.callTool(call.name, input);
+        log(`tool ${call.name}: ${result.isError ? "refused" : "ok"}`);
+        this.history.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: result.content.slice(0, 4_000),
+        });
+      }
+    }
+
+    if (text) this.history.push({ role: "assistant", content: text });
+    onEvent?.({ type: "complete", text, usage: this.usage });
+    return text;
+  }
+
+  /**
+   * Keep the request bounded: the system prompt plus a trailing window.
+   *
+   * A room runs indefinitely, and these APIs charge for every token of history.
+   * A window that opened on a tool result would be rejected as malformed, so
+   * any orphaned results at the front are dropped with it.
+   */
+  private window(): ChatMessage[] {
+    const tail = this.history.slice(-24);
+    while (tail.length > 0 && tail[0].role === "tool") tail.shift();
+    return [this.history[0], ...tail];
+  }
+
+  private async completion(
+    url: string,
+    tools: unknown[] | undefined,
+    onEvent?: RunnerEventSink
+  ): Promise<{ text: string; toolCalls: ReturnType<OpenAiStreamAdapter["toolCalls"]>; usage?: TurnUsage }> {
+    const stream = !this.streamingUnsupported;
+    const body: Record<string, unknown> = {
+      model: this.opts.model,
+      messages: this.window(),
+      stream,
+    };
+    if (stream) body.stream_options = { include_usage: true };
+    if (tools) {
+      body.tools = tools;
+      body.tool_choice = "auto";
+    }
+
+    const controller = new AbortController();
+    this.controller = controller;
     let response: Response;
     try {
-      response = await fetch(`${endpoint.url}/chat/completions`, {
+      response = await fetch(`${url}/chat/completions`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${this.opts.apiKey}`,
         },
-        body: JSON.stringify({ model: this.opts.model, messages: windowed, stream: false }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
     } catch (err) {
+      this.controller = undefined;
       throw new Error(
         `${this.opts.label} unreachable: ${err instanceof Error ? err.message : String(err)}`
       );
-    } finally {
-      this.controller = undefined;
     }
 
     if (!response.ok) {
       // Include the body: these APIs put the useful part there, and a bare
       // status leaves the member guessing between a bad key and a bad model id.
       const detail = (await response.text().catch(() => "")).slice(0, 300);
+      this.controller = undefined;
+      if (stream && requestShapeRejected(response.status) && /stream/i.test(detail)) {
+        // This endpoint speaks the family's dialect but not this word of it.
+        this.streamingUnsupported = true;
+        return this.completion(url, tools, onEvent);
+      }
       throw new Error(`${this.opts.label} returned ${response.status}: ${detail}`);
     }
 
-    const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!stream || !contentType.includes("event-stream")) {
+      // An endpoint that ignored `stream` and answered in one piece is still a
+      // working endpoint; take the answer rather than failing on the framing.
+      const payload = (await response.json().catch(() => ({}))) as {
+        choices?: Array<{
+          message?: {
+            content?: string;
+            tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>;
+          };
+        }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      this.controller = undefined;
+      const message = payload.choices?.[0]?.message;
+      const toolCalls = (message?.tool_calls ?? [])
+        .filter((call) => typeof call.function?.name === "string")
+        .slice(0, 8)
+        .map((call) => ({
+          id: String(call.id ?? "").slice(0, 128),
+          name: String(call.function?.name ?? "").slice(0, 64),
+          arguments: String(call.function?.arguments ?? "").slice(0, 8_000),
+        }));
+      if (toolCalls.length > 0) onEvent?.({ type: "phase", phase: "thinking" });
+      return {
+        text: message?.content?.trim() ?? "",
+        toolCalls,
+        // No cost: an OpenAI-compatible endpoint reports tokens and leaves
+        // pricing to whoever is paying. Reporting tokens with no dollars is
+        // honest; making a figure up from a price list we would have to keep
+        // current is not.
+        usage: payload.usage
+          ? {
+              inputTokens: payload.usage.prompt_tokens,
+              outputTokens: payload.usage.completion_tokens,
+            }
+          : undefined,
+      };
+    }
+
+    const adapter = new OpenAiStreamAdapter();
+    try {
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      while (reader) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        for (const event of adapter.push(decoder.decode(value, { stream: true }))) {
+          onEvent?.(event);
+        }
+      }
+      for (const event of adapter.end()) onEvent?.(event);
+    } finally {
+      this.controller = undefined;
+    }
+    return {
+      text: adapter.content.trim(),
+      toolCalls: adapter.toolCalls(),
+      usage: adapter.usage,
     };
-    // No cost: an OpenAI-compatible endpoint reports tokens and leaves pricing
-    // to whoever is paying. Reporting tokens with no dollars is honest; making
-    // a figure up from a price list we would have to keep current is not.
-    this.usage = payload.usage
-      ? { inputTokens: payload.usage.prompt_tokens, outputTokens: payload.usage.completion_tokens }
-      : undefined;
-    const text = payload.choices?.[0]?.message?.content?.trim() ?? "";
-    if (text) this.history.push({ role: "assistant", content: text });
-    return text;
   }
+}
+
+/** Statuses that mean "this request was shaped wrong", not "you may not". */
+function requestShapeRejected(status: number): boolean {
+  return status === 400 || status === 404 || status === 415 || status === 422 || status === 501;
 }
 
 /* ------------------------------------------------------------------ */
@@ -325,6 +590,17 @@ export interface CliRunnerOptions {
   label: string;
   /** Abandon a turn that never returns, rather than wedging the agent. */
   timeoutMs: number;
+  /**
+   * The structured format this CLI's configuration says it emits, if any.
+   *
+   * Declared by the provider preset rather than guessed from the output: a
+   * custom CLI keeps coarse `thinking` presence, because inventing a parser for
+   * an unknown format would produce confident descriptions of work that may not
+   * be happening. Even a declared parser stays inert until it actually
+   * recognises the stream, so a CLI whose JSON mode is not switched on behaves
+   * exactly as it did before.
+   */
+  eventFormat?: ProviderEventFormat;
 }
 
 /**
@@ -346,6 +622,7 @@ export interface CliRunnerOptions {
 export class CliRunner implements ModelRunner {
   readonly capability = "workspace" as const;
   private child: ChildProcess | undefined;
+  private usage: TurnUsage | undefined;
 
   constructor(private readonly opts: CliRunnerOptions) {}
 
@@ -358,7 +635,17 @@ export class CliRunner implements ModelRunner {
     this.child = undefined;
   }
 
-  run(ctx: RunContext, log: (line: string) => void): Promise<string> {
+  /**
+   * Undefined unless this CLI's own event stream reported it.
+   *
+   * A subscription CLI usually says nothing about tokens and never about
+   * money, and "it does not report" is a meaning the room already has.
+   */
+  lastUsage(): TurnUsage | undefined {
+    return this.usage;
+  }
+
+  run(ctx: RunContext, log: (line: string) => void, onEvent?: RunnerEventSink): Promise<string> {
     // Every turn is a fresh process here, so the roster is never stale — but it
     // has to be included for the same reason, since nothing carries over.
     const shared = ctx.context ? `${ctx.context}\n\n` : "";
@@ -367,6 +654,17 @@ export class CliRunner implements ModelRunner {
     const args = this.opts.args.map((a) => a.replace("{prompt}", prompt));
 
     log(`thinking (${this.opts.command}${usesPlaceholder ? "" : ", prompt on stdin"})`);
+    onEvent?.({ type: "phase", phase: "thinking" });
+    const adapter: ProviderEventAdapter | undefined = this.opts.eventFormat
+      ? createProviderAdapter(this.opts.eventFormat, ctx.cwd)
+      : undefined;
+    let completed: Extract<RunnerEvent, { type: "complete" }> | undefined;
+    const consume = (events: RunnerEvent[]): void => {
+      for (const event of events) {
+        if (event.type === "complete") completed = event;
+        onEvent?.(event);
+      }
+    };
 
     return new Promise<string>((resolve, reject) => {
       const child = spawn(this.opts.command, args, {
@@ -387,7 +685,11 @@ export class CliRunner implements ModelRunner {
 
       let out = "";
       let err = "";
-      child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
+      child.stdout?.on("data", (d: Buffer) => {
+        const chunk = d.toString();
+        out += chunk;
+        if (adapter) consume(adapter.push(chunk));
+      });
       child.stderr?.on("data", (d: Buffer) => {
         const line = d.toString();
         err += line;
@@ -408,7 +710,13 @@ export class CliRunner implements ModelRunner {
       child.on("close", (code) => {
         clearTimeout(timer);
         this.child = undefined;
-        const text = out.trim();
+        if (adapter) consume(adapter.end());
+        this.usage = completed?.usage;
+        // A recognised stream owns the reply, whether or not it finished: its
+        // raw form is machine output, not something to post under an agent's
+        // name. An unrecognised one leaves the previous plain-text behaviour
+        // exactly as it was.
+        const text = adapter?.recognised ? completed?.text ?? "" : out.trim();
         if (code !== 0) {
           // CLIs commonly print billing/authentication errors to stdout. Treating
           // any stdout as a successful answer put messages such as "Credit
@@ -445,6 +753,14 @@ export interface ProviderPreset {
   /** cli only: the executable and its arguments, "{prompt}" substituted. */
   command?: string;
   args?: string[];
+  /**
+   * cli only: the structured output format this CLI is documented to emit.
+   *
+   * Its presence is the configuration declaring a parser. The parser stays
+   * inert until the stream actually looks like that format, so declaring one
+   * for a CLI that is not currently invoked in its JSON mode changes nothing.
+   */
+  eventFormat?: ProviderEventFormat;
   hint: string;
 }
 
@@ -542,6 +858,11 @@ export const PROVIDERS: ProviderPreset[] = [
     // Stdin keeps room text out of the process list and avoids command-line
     // length limits. `exec` is Codex's non-interactive path.
     args: ["exec", "--color", "never", "--skip-git-repo-check", "-"],
+    // Declared, not switched on: the arguments above are unchanged, so this
+    // does nothing until a member adds Codex's own JSON flag to them. Adding
+    // that flag here would change what every new Codex agent runs on the
+    // strength of a format this repository has not been able to verify.
+    eventFormat: "codex-jsonl",
     hint: "Recommended — your ChatGPT account through Codex CLI, with workspace access.",
   },
   {
@@ -556,6 +877,7 @@ export const PROVIDERS: ProviderPreset[] = [
     kind: "cli",
     command: "gemini",
     args: ["-p", "{prompt}"],
+    eventFormat: "gemini-cli",
     hint: "Your Google account, via the gemini CLI. File access. Check the flags suit your version.",
   },
   {

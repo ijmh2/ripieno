@@ -60,6 +60,17 @@ export type AgentActivity =
   | "responding"
   | "awaiting-approval";
 
+/**
+ * Bounds on one presence frame.
+ *
+ * Presence is ephemeral, but it is still shared state broadcast to everyone in
+ * the room, so every field it carries is explicitly capped — the relay enforces
+ * these, and a reporting host applies them early so it never sends what would
+ * only be cut.
+ */
+export const MAX_PRESENCE_SUMMARY_CHARS = 240;
+export const MAX_PRESENCE_PATH_CHARS = 500;
+
 /** A bounded, non-durable presence update shown in an agent inspector. */
 export interface AgentPresence {
   phase: AgentActivity;
@@ -69,7 +80,23 @@ export interface AgentPresence {
   path?: string;
   /** Optional 1-based line anchor. */
   line?: number;
+  /**
+   * Optional 1-based inclusive end of a range, never below `line`.
+   *
+   * Agents apply patches atomically rather than typing, so the honest claim is
+   * "this range is being worked on", not a fabricated keystroke cursor.
+   */
+  endLine?: number;
   updatedAt: number;
+  /**
+   * Monotonic per-agent ordering value minted by the reporting host.
+   *
+   * Presence arrives faster than it is worth broadcasting, so hosts coalesce
+   * and the relay rate-limits. Both drop frames, and a dropped frame must never
+   * let an older description of the agent overwrite a newer one. The relay
+   * accepts a value only when it advances; it never reads identity from it.
+   */
+  sequence?: number;
 }
 
 /**
@@ -578,13 +605,22 @@ export interface AgentStateMsg {
   state: AgentActivity;
 }
 
-/** Rich ephemeral presence. The relay supplies identity and timestamp. */
+/**
+ * Rich ephemeral presence. The relay supplies identity and timestamp.
+ *
+ * `sequence` orders one agent's own frames and nothing else: the socket still
+ * chooses which agent this is, and the relay's own rate limit is measured in
+ * time, so a forged sequence cannot attribute presence elsewhere or buy an
+ * agent a higher publication rate.
+ */
 export interface AgentActivityMsg {
   t: "agentActivity";
   phase: AgentActivity;
   summary?: string;
   path?: string;
   line?: number;
+  endLine?: number;
+  sequence?: number;
 }
 
 /** The room's running totals, per agent. */
