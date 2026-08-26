@@ -201,8 +201,12 @@ export class ClaudeStreamJsonAdapter extends JsonLineAdapter {
       // `--include-partial-messages` wraps Anthropic's documented Messages API
       // stream event. Only text_delta is user-visible response text. Thinking,
       // signatures, usage, diagnostics and tool JSON are deliberately ignored.
+      // Claude Code also forwards Task sub-agent stream frames with a parent
+      // tool-use id. Their narration is internal work, not the main agent's
+      // room-facing reply, so it must stop at this boundary too.
       this.recognised = true;
       const event = record(frame.event);
+      if (text(frame.parent_tool_use_id) || text(event?.parent_tool_use_id)) return [];
       const delta = record(event?.delta);
       const piece =
         text(event?.type) === "content_block_delta" && text(delta?.type) === "text_delta"

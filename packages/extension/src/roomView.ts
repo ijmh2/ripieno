@@ -9,6 +9,7 @@ import * as vscode from "vscode";
 import type {
   ActionEntry,
   AgentDraft,
+  AgentUsage,
   ContextAuditEntry,
   ContextItem,
   ContextKind,
@@ -32,10 +33,12 @@ import {
   type OnboardingAgentState,
   type OnboardingDecision,
 } from "./agentSetup";
+import {
+  buildRoomPanelSnapshot,
+  type LocalAgentPanelDetail,
+} from "./roomPanelState";
 
-export interface LocalAgentOnboarding {
-  id: string;
-  label: string;
+export interface LocalAgentOnboarding extends LocalAgentPanelDetail {
   state: OnboardingAgentState;
 }
 
@@ -59,6 +62,7 @@ interface RoomState {
   handoffRevision: number;
   /** Configured on this machine, including agents not attached to the room. */
   localAgents: LocalAgentOnboarding[];
+  usage: AgentUsage[];
   /** entryId -> relay-attributed preview, cleared once the final entry lands. */
   liveDeltas: Map<string, LiveDelta>;
   status: RoomStatus;
@@ -96,6 +100,7 @@ function emptyState(connection: ConnectionState): RoomState {
     handoffAudit: [],
     handoffRevision: 0,
     localAgents: [],
+    usage: [],
     liveDeltas: new Map(),
     status: "idle",
     connection,
@@ -170,6 +175,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   static readonly viewId = "ripieno.room";
 
   private view: vscode.WebviewView | undefined;
+  private roomPanel: vscode.WebviewPanel | undefined;
   private state: RoomState = emptyState("offline");
   /** Approval cards awaiting an answer from the webview. */
   private readonly pendingApprovals = new Map<
@@ -252,6 +258,44 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  /** Open (or reveal) the editor-sized Room overview and exact-agent tabs. */
+  openRoomPanel(): void {
+    if (this.roomPanel) {
+      this.roomPanel.reveal(this.roomPanel.viewColumn, true);
+      this.postRoomPanelSnapshot();
+      return;
+    }
+
+    const panel = vscode.window.createWebviewPanel(
+      "ripieno.roomPanel",
+      this.state.room ? `Ripieno · ${this.state.room}` : "Ripieno Room",
+      vscode.ViewColumn.Active,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: false,
+        localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "media")],
+      }
+    );
+    this.roomPanel = panel;
+    panel.webview.html = this.renderRoomPanelHtml(panel.webview);
+    panel.webview.onDidReceiveMessage((value: unknown) => {
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        Object.keys(value).length === 1 &&
+        (value as { type?: unknown }).type === "panelReady"
+      ) {
+        this.postRoomPanelSnapshot();
+      }
+    });
+    panel.onDidChangeViewState(() => {
+      if (panel.visible) this.postRoomPanelSnapshot();
+    });
+    panel.onDidDispose(() => {
+      if (this.roomPanel === panel) this.roomPanel = undefined;
+    });
+  }
+
   /* -------------------------------------------------------------- */
   /* Called by extension.ts as ServerMsg / connection events arrive  */
   /* -------------------------------------------------------------- */
@@ -272,7 +316,8 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     handoffs: HandoffOffer[] = [],
     handoffAudit: HandoffAuditEntry[] = [],
     handoffRevision = 0,
-    drafts: AgentDraft[] = []
+    drafts: AgentDraft[] = [],
+    usage: AgentUsage[] = []
   ): void {
     this.state = {
       room,
@@ -288,6 +333,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       handoffAudit,
       handoffRevision,
       localAgents: this.state.localAgents,
+      usage,
       you,
       roster,
       transcript: [...transcript],
@@ -297,6 +343,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       connection: this.state.connection,
     };
     this.postSnapshot();
+    this.postRoomPanelSnapshot();
   }
 
   setHandoffState(
@@ -315,12 +362,14 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       handoffAudit: this.state.handoffAudit,
       handoffRevision: next.handoffRevision,
     });
+    this.postRoomPanelSnapshot();
   }
 
   /** Work done by an agent, shown apart from the conversation. */
   addAction(entry: ActionEntry): void {
     this.state.actions.push(entry);
     this.post({ type: "action", entry });
+    this.postRoomPanelSnapshot();
   }
 
   setGoalState(goals: Goal[], goalAudit: GoalAuditEntry[], roomRevision: number): void {
@@ -337,6 +386,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       goalAudit: this.state.goalAudit,
       roomRevision: next.roomRevision,
     });
+    this.postRoomPanelSnapshot();
   }
 
   setContextState(
@@ -354,6 +404,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       contextAudit: this.state.contextAudit,
       contextRevision,
     });
+    this.postRoomPanelSnapshot();
   }
 
   setRoster(roster: RosterEntry[]): void {
@@ -361,17 +412,25 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     const youHandle = this.state.you?.handle;
     this.state.you = youHandle ? roster.find((member) => member.handle === youHandle) : undefined;
     this.post({ type: "roster", roster, you: this.state.you, onboarding: this.onboarding() });
+    this.postRoomPanelSnapshot();
   }
 
   setLocalAgents(localAgents: LocalAgentOnboarding[]): void {
     this.state.localAgents = localAgents.map((agent) => ({ ...agent }));
     this.post({ type: "onboarding", onboarding: this.onboarding() });
+    this.postRoomPanelSnapshot();
+  }
+
+  setUsage(usage: AgentUsage[]): void {
+    this.state.usage = usage.map((entry) => ({ ...entry }));
+    this.postRoomPanelSnapshot();
   }
 
   addEntry(entry: TranscriptEntry): void {
     this.state.transcript.push(entry);
     this.state.liveDeltas.delete(entry.id);
     this.post({ type: "entry", entry });
+    this.postRoomPanelSnapshot();
   }
 
   addDelta(
@@ -407,11 +466,13 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     this.state.status = status;
     this.state.waitingOn = waitingOn;
     this.post({ type: "status", status, waitingOn });
+    this.postRoomPanelSnapshot();
   }
 
   setConnection(connection: ConnectionState): void {
     this.state.connection = connection;
     this.post({ type: "connection", state: connection });
+    this.postRoomPanelSnapshot();
   }
 
   /**
@@ -461,6 +522,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     const localAgents = this.state.localAgents;
     this.state = { ...emptyState("offline"), localAgents };
     this.postSnapshot();
+    this.postRoomPanelSnapshot();
   }
 
   private resolvePendingApprovals(): void {
@@ -499,6 +561,32 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       connection: this.state.connection,
       approvals: [...this.pendingApprovals.values()].map(({ request }) => request),
     });
+  }
+
+  private postRoomPanelSnapshot(): void {
+    const panel = this.roomPanel;
+    if (!panel) return;
+    panel.title = this.state.room ? `Ripieno · ${this.state.room}` : "Ripieno Room";
+    void panel.webview.postMessage(
+      buildRoomPanelSnapshot({
+        room: this.state.room,
+        mode: this.state.mode,
+        you: this.state.you,
+        roster: this.state.roster,
+        transcriptCount: this.state.transcript.length,
+        actions: this.state.actions,
+        goals: this.state.goals,
+        contextCount: this.state.context.filter(
+          (item) => item.status !== "archived" && item.status !== "superseded"
+        ).length,
+        handoffs: this.state.handoffs,
+        usage: this.state.usage,
+        localAgents: this.state.localAgents,
+        status: this.state.status,
+        waitingOn: this.state.waitingOn,
+        connection: this.state.connection,
+      })
+    );
   }
 
   private onboarding(): OnboardingDecision {
@@ -619,6 +707,76 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   </header>
   <div id="agentInspectors" class="agent-inspectors" role="list" aria-label="Agents in this room"></div>
 </section>
+<script nonce="${csp}" src="${scriptUri}"></script>
+</body>
+</html>`;
+  }
+
+  private renderRoomPanelHtml(webview: vscode.Webview): string {
+    const csp = nonce();
+    const styleUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, "media", "roomPanel.css")
+    );
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, "media", "roomPanel.js")
+    );
+    const cspHeader = [
+      "default-src 'none'",
+      `style-src ${webview.cspSource}`,
+      `script-src 'nonce-${csp}'`,
+      "font-src 'none'",
+    ].join("; ");
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="${cspHeader}" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="stylesheet" href="${styleUri}" />
+<title>Ripieno Room</title>
+</head>
+<body>
+<main class="room-workbench">
+  <header class="workbench-header">
+    <div>
+      <span class="eyebrow">Room workspace</span>
+      <h1 id="panelRoomName">Not connected</h1>
+      <p id="panelRoomMeta" class="room-meta">Open a room to inspect its agents.</p>
+    </div>
+    <div id="panelConnection" class="connection offline" role="status" aria-live="polite">offline</div>
+  </header>
+
+  <section class="overview" aria-labelledby="overviewTitle">
+    <div class="section-heading">
+      <div>
+        <span class="eyebrow">Shared, relay-authoritative</span>
+        <h2 id="overviewTitle">Room overview</h2>
+      </div>
+      <span id="overviewUpdated" class="updated"></span>
+    </div>
+    <div id="overviewMetrics" class="overview-metrics"></div>
+    <div id="roomPulse" class="room-pulse" role="list" aria-label="Agent status overview"></div>
+  </section>
+
+  <section class="agents-workbench" aria-labelledby="agentsTitle">
+    <div class="section-heading agents-heading">
+      <div>
+        <span class="eyebrow">Exact agent identities</span>
+        <h2 id="agentsTitle">Agents</h2>
+      </div>
+      <div id="statusFilters" class="status-filters" role="group" aria-label="Filter agents by status">
+        <button type="button" data-filter="active" aria-pressed="true">Active</button>
+        <button type="button" data-filter="idle" aria-pressed="true">Idle</button>
+        <button type="button" data-filter="unknown" aria-pressed="true">Not reported</button>
+      </div>
+    </div>
+    <div id="agentTabRail" class="agent-tab-rail" role="tablist" aria-label="Room agents"></div>
+    <div id="filterEmpty" class="empty-state" hidden>No agents match the selected status filters.</div>
+    <article id="agentDetail" class="agent-detail" role="tabpanel" tabindex="0"></article>
+  </section>
+</main>
+<div id="panelAnnouncements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 <script nonce="${csp}" src="${scriptUri}"></script>
 </body>
 </html>`;

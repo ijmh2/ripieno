@@ -157,6 +157,8 @@ describe("Claude Code stream JSON", () => {
     const frames = [
       { type: "stream_event", event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "private plan" } } },
       { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "It " } } },
+      { type: "stream_event", parent_tool_use_id: "toolu_task", event: { type: "content_block_delta", delta: { type: "text_delta", text: "sub-agent scratch work" } } },
+      { type: "stream_event", event: { type: "content_block_delta", parent_tool_use_id: "toolu_nested_task", delta: { type: "text_delta", text: "nested scratch work" } } },
       { type: "stream_event", event: { type: "content_block_delta", delta: { type: "input_json_delta", partial_json: '{"token":"secret"}' } } },
       { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "builds." } } },
     ].map((frame) => `${JSON.stringify(frame)}\n`).join("");
@@ -168,6 +170,7 @@ describe("Claude Code stream JSON", () => {
     const shared = JSON.stringify(events);
     assert.equal(shared.includes("private plan"), false);
     assert.equal(shared.includes("secret"), false);
+    assert.equal(shared.includes("scratch work"), false);
   });
 
   test("MCP tool names are classified by their leaf", () => {

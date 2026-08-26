@@ -95,7 +95,9 @@ event contract.
 
 - Claude documented `text_delta` and OpenAI-compatible assistant-content deltas
   are the only provider channels that emit drafts. Hidden reasoning, tool JSON,
-  terminal output and diagnostics never do.
+  terminal output and diagnostics never do. Claude Task sub-agent frames with
+  a `parent_tool_use_id` are internal work and are rejected even when they
+  contain text deltas.
 - An agent frame contains only a delta and monotonic sequence. The relay derives
   exact agent/owner/label from the authenticated socket and mints one active
   preview id; payloads cannot choose either identity or transcript id.
@@ -103,6 +105,9 @@ event contract.
   128,000 across active room previews, plus 20 input frames/second per agent and
   80/second per room. Broadcasts are coalesced to 100 ms and split at whole
   UTF-8 code points so coalescing never creates an oversized output frame.
+- Per-agent frame, rate and byte violations withdraw that agent's incomplete
+  preview. Aggregate room rate or byte saturation sheds only the excess
+  fragment and preserves an existing preview id for final reconciliation.
 - Drafts expire after 45 seconds and are never persisted. A snapshot of text
   already published is included for a client joining while a draft is live;
   an unpublished coalescing tail arrives once as a later delta.
@@ -115,15 +120,25 @@ event contract.
   visibly provisional. Older agents that only send `say`, and older clients
   that understand the original two-field `agentDelta`, continue to work.
 
-### Phase 4 — full Room editor panel
+### Phase 4 — full Room editor panel (implemented)
 
-Keep the sidebar tabs for quick awareness and add a full editor-sized Room panel:
-
-- Room overview plus a scrollable agent tab rail.
-- One detailed tab per agent, labelled with its owner.
-- Current task, goal/handoff, working set, recent actions, usage and permissions.
-- Follow-agent mode and status filters.
-- Owner-only diagnostics stay local and are visually separated from shared data.
+- The compact Room, Context and Agents sidebar tabs remain the quick-awareness
+  surface. **Ripieno: Open Full Room Panel** opens a separate editor-sized view.
+- A relay-derived overview counts present people, exact attached agents, active
+  goals, open handoffs, durable Work and live shared context. A horizontally
+  scrollable, keyboard-operable tab rail labels every exact agent with its owner.
+- Each tab shows the safe observable task summary, shared phase/location,
+  relevant goals and handoffs, a working set built from the live location and
+  exact-agent Work targets, recent durable actions, provider-reported usage,
+  capability and permissions.
+- Active, idle and not-reported filters and exact-agent follow mode persist only
+  in that webview. Follow keeps the selected tab pinned and announces new safe
+  activity; opening files and editor decorations remain Phase 5.
+- The signed-in owner's local provider, model, project, permission and response
+  mode are matched only to their relay-namespaced exact agent id and rendered in
+  a visibly private section. Another owner's settings are not relayed or
+  inferred. Provider reasoning, diagnostics, logs, tool JSON, credentials and
+  ephemeral draft text are absent from the panel model.
 
 ### Phase 5 — shared-workspace presence
 

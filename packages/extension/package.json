@@ -72,6 +72,11 @@
         "icon": "$(play)"
       },
       {
+        "command": "ripieno.openRoomPanel",
+        "title": "Ripieno: Open Full Room Panel",
+        "icon": "$(open-preview)"
+      },
+      {
         "command": "ripieno.joinRoom",
         "title": "Ripieno: Join Room",
         "icon": "$(sign-in)"
@@ -200,6 +205,11 @@
           "command": "ripieno.mountWorkspace",
           "when": "view == ripieno.workspace",
           "group": "navigation"
+        },
+        {
+          "command": "ripieno.openRoomPanel",
+          "when": "view == ripieno.room",
+          "group": "navigation@0"
         },
         {
           "command": "ripieno.startSolo",

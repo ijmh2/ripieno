@@ -6,9 +6,11 @@ Written for the Phase 4 implementer. Read
 
 ## State when this was written
 
-Phase 3 is implemented by the commit containing this document on
-`codex/yc-multiplayer`; its parent is `511f4e5`. Do not infer that the commit
-has been pushed from this document.
+The initial Phase 3 implementation is commit `618118f` on
+`codex/yc-multiplayer`; its parent is `511f4e5`. A later high-effort review
+found two edge cases corrected in the Phase 4 working tree and recorded in
+[`phase-4-handoff.md`](./phase-4-handoff.md). Do not infer push status from this
+document.
 
 Targeted verification completed while implementing:
 
@@ -58,7 +60,9 @@ Provider adapters are the first boundary:
 
 - Claude emits drafts only from documented `stream_event` /
   `content_block_delta` / `text_delta` frames enabled with
-  `--include-partial-messages`.
+  `--include-partial-messages`. Frames carrying a Task sub-agent
+  `parent_tool_use_id` are rejected as internal work, even when their delta is
+  text-shaped.
 - OpenAI-compatible providers emit only `choices[0].delta.content`.
 - Thinking/signature deltas, diagnostics, tool arguments, terminal streams and
   provider error bodies never become drafts.
@@ -79,10 +83,12 @@ UTF-8 code points. The relay re-enforces all limits using `Buffer.byteLength`:
 | Inactivity expiry | 45 seconds |
 
 A sequence must be a positive safe integer advancing on the same connection.
-A rate or byte violation cancels an existing preview rather than leaving a
-plausible-looking bubble with silently missing text. Coalesced relay output is
-also split at whole UTF-8 code points so every broadcast frame stays within the
-same 4,096-byte cap.
+An agent exceeding its own frame, rate or byte limit loses its incomplete
+preview. Aggregate room rate or byte saturation instead sheds the excess
+fragment while preserving any existing preview id: no compliant agent is
+mislabelled as the violator, and its final `say` still replaces the provisional
+row. Coalesced relay output is also split at whole UTF-8 code points so every
+broadcast frame stays within the same 4,096-byte cap.
 
 ## Cancellation and reconciliation
 

@@ -176,23 +176,56 @@ describe("relay-owned ephemeral response drafts", () => {
       false,
       "the room cap refuses a second preview rather than exceeding its active byte budget"
     );
+    room.publishAgentDraft("swhitfield::reviewer", "a", 2);
+    const reviewerPreview = watcher.of("agentDelta").at(-1)?.entryId;
+    room.publishAgentDraft("swhitfield::reviewer", "bc", 3);
+    assert.equal(
+      watcher.of("agentDeltaCancel").some((message) => message.entryId === reviewerPreview),
+      false,
+      "aggregate byte pressure preserves an already-visible compliant preview"
+    );
+    await room.say("swhitfield", "review final", "agent", "swhitfield::reviewer");
+    assert.equal(
+      watcher.of("entry").filter((message) => message.entry.id === reviewerPreview).at(-1)?.entry.text,
+      "review final"
+    );
   });
 
-  test("agent and room frame rates cancel a preview instead of showing missing text", async () => {
+  test("an agent exceeding its own frame rate loses its incomplete preview", async () => {
     Room.draftLimits.maxAgentFramesPerSecond = 2;
     room.publishAgentDraft("mellery::coder", "one", 1);
     const id = watcher.of("agentDelta").at(-1)?.entryId;
     room.publishAgentDraft("mellery::coder", "two", 2);
     room.publishAgentDraft("mellery::coder", "three", 3);
     assert.equal(watcher.of("agentDeltaCancel").at(-1)?.entryId, id);
+  });
 
-    await wait(1_010);
-    Room.draftLimits.maxAgentFramesPerSecond = defaults.maxAgentFramesPerSecond;
-    Room.draftLimits.maxRoomFramesPerSecond = 1;
-    room.publishAgentDraft("mellery::coder", "fresh", 4);
+  test("room-wide saturation sheds a fragment without destroying a compliant preview", async () => {
+    const reviewer = new Socket();
+    await room.join(sam, new Socket());
+    await room.join(sam, reviewer, "agent", {
+      id: "swhitfield::reviewer",
+      label: "Sam's reviewer",
+      capability: "conversation",
+    });
+    Room.draftLimits.maxAgentFramesPerSecond = 3;
+    Room.draftLimits.maxRoomFramesPerSecond = 2;
+    room.publishAgentDraft("mellery::coder", "fresh", 1);
     const fresh = watcher.of("agentDelta").at(-1)?.entryId;
-    room.publishAgentDraft("mellery::coder", "overflow", 5);
-    assert.equal(watcher.of("agentDeltaCancel").at(-1)?.entryId, fresh);
+    room.publishAgentDraft("swhitfield::reviewer", "other", 1);
+    room.publishAgentDraft("mellery::coder", "shed", 2);
+
+    assert.equal(
+      watcher.of("agentDeltaCancel").some((message) => message.entryId === fresh),
+      false,
+      "aggregate room congestion is not attributed as this agent's violation"
+    );
+    await room.say("mellery", "fresh final", "agent", "mellery::coder");
+    assert.equal(
+      watcher.of("entry").filter((message) => message.entry.id === fresh).at(-1)?.entry.text,
+      "fresh final",
+      "the final response still replaces the original provisional row"
+    );
   });
 
   test("expiry, explicit cancel, detach and stale presence withdraw incomplete text", async () => {

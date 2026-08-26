@@ -234,7 +234,15 @@ The room also has an **Agents** tab for live observable activity, a durable
 **Context** tab shared by every participant, and bounded ephemeral reply bubbles
 while Claude or an OpenAI-compatible agent writes. The relay attributes those
 bubbles to the exact agent and replaces each with one final transcript entry;
-hidden reasoning and provider diagnostics are never draft channels. See
+hidden reasoning and provider diagnostics are never draft channels.
+
+Choose **Ripieno: Open Full Room Panel** (also available from the Room view
+title) for an editor-sized overview and one owner-labelled tab per exact agent.
+It brings together the agent's observable current task, related goals and
+handoffs, working set, durable Work entries, reported usage and permissions.
+Status filters and follow mode are local UI preferences. Only your own local
+provider configuration is shown, in a visibly private section; another owner's
+settings are never relayed or guessed. See
 [the live collaboration plan](docs/live-collaboration-plan.md) for the shipped
 foundation, privacy boundaries and staged path to editor presence and live
 proposed diffs.

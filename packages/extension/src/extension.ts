@@ -327,6 +327,7 @@ export function activate(context: vscode.ExtensionContext): void {
       dragAndDropController: roomsTree,
     }),
     vscode.commands.registerCommand("ripieno.startSolo", () => startSolo()),
+    vscode.commands.registerCommand("ripieno.openRoomPanel", () => roomView.openRoomPanel()),
     vscode.commands.registerCommand("ripieno.joinRoom", () => joinRoom()),
     vscode.commands.registerCommand("ripieno.copyInvite", () => copyInvite()),
     vscode.commands.registerCommand("ripieno.setRole", (node?: unknown) => setRole(node)),
@@ -378,7 +379,16 @@ export function activate(context: vscode.ExtensionContext): void {
     const local = myAgentsForTree();
     roomsTree.setMyAgents(local);
     roomView.setLocalAgents(
-      local.map((agent) => ({ id: agent.id, label: agent.label, state: agent.state }))
+      local.map((agent) => ({
+        id: agent.id,
+        label: agent.label,
+        state: agent.state,
+        provider: agent.provider,
+        model: agent.model,
+        folder: agent.folder,
+        permissions: agent.permissions,
+        responseMode: agent.primary ? "automatic" : "mentions only",
+      }))
     );
   }
 
@@ -2520,7 +2530,8 @@ export function activate(context: vscode.ExtensionContext): void {
           handoffs,
           handoffAudit,
           handoffRevision,
-          msg.drafts ?? []
+          msg.drafts ?? [],
+          msg.usage ?? []
         );
         roomsTree.setRoom(msg.room, msg.mode, msg.you.handle);
         roomsTree.setRoster(msg.roster, msg.workspaceHost);
@@ -2578,6 +2589,7 @@ export function activate(context: vscode.ExtensionContext): void {
         break;
       case "usage":
         roomsTree.setUsage(msg.agents);
+        roomView.setUsage(msg.agents);
         break;
       case "action":
         roomView.addAction(msg.entry);

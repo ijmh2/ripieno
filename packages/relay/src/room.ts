@@ -828,17 +828,26 @@ export class Room {
       return;
     }
     const now = Date.now();
-    if (!this.spendDraftRate(agent, now)) {
+    const rate = this.spendDraftRate(agent, now);
+    if (rate === "agent") {
       if (agent.draft) this.cancelAgentDraft(agent);
+      return;
+    }
+    if (rate === "room") {
+      // The room cap is aggregate congestion, not proof that this agent
+      // misbehaved. Shed this fragment but keep any existing preview id so the
+      // exact agent's final say still replaces its provisional row.
       return;
     }
 
     let draft = agent.draft;
-    if (
-      (draft?.bytes ?? 0) + bytes > Room.draftLimits.maxAgentBytes ||
-      this.activeDraftBytes + bytes > Room.draftLimits.maxRoomBytes
-    ) {
+    if ((draft?.bytes ?? 0) + bytes > Room.draftLimits.maxAgentBytes) {
       if (draft) this.cancelAgentDraft(agent);
+      return;
+    }
+    if (this.activeDraftBytes + bytes > Room.draftLimits.maxRoomBytes) {
+      // As with the aggregate frame rate, room-wide pressure is not this
+      // exact agent's violation. Keep its preview identity for final say.
       return;
     }
     if (!draft) {
@@ -881,7 +890,7 @@ export class Room {
     if (agent?.draft) this.cancelAgentDraft(agent);
   }
 
-  private spendDraftRate(agent: AgentConnection, now: number): boolean {
+  private spendDraftRate(agent: AgentConnection, now: number): "ok" | "agent" | "room" {
     if (!agent.draftRateStartedAt || now - agent.draftRateStartedAt >= 1_000) {
       agent.draftRateStartedAt = now;
       agent.draftRateFrames = 0;
@@ -892,10 +901,9 @@ export class Room {
     }
     agent.draftRateFrames = (agent.draftRateFrames ?? 0) + 1;
     this.draftRoomRateFrames += 1;
-    return (
-      agent.draftRateFrames <= Room.draftLimits.maxAgentFramesPerSecond &&
-      this.draftRoomRateFrames <= Room.draftLimits.maxRoomFramesPerSecond
-    );
+    if (agent.draftRateFrames > Room.draftLimits.maxAgentFramesPerSecond) return "agent";
+    if (this.draftRoomRateFrames > Room.draftLimits.maxRoomFramesPerSecond) return "room";
+    return "ok";
   }
 
   private flushAgentDraft(agent: AgentConnection, draft: LiveAgentDraft): void {
