@@ -30,6 +30,7 @@ import type {
   HandoffOffer,
   HandoffResultMsg,
   Member,
+  PresenceLocationScope,
   RoomStatus,
   RoomMode,
   RosterEntry,
@@ -658,7 +659,8 @@ export class Room {
     rawPath?: string,
     rawLine?: number,
     rawEndLine?: number,
-    rawSequence?: number
+    rawSequence?: number,
+    rawLocationScope?: PresenceLocationScope
   ): void {
     const agent = this.isAgentAuthorized(agentId) ? this.agents.get(agentId) : undefined;
     if (!agent || !validAgentActivity(phase)) return;
@@ -672,9 +674,17 @@ export class Room {
       agent.activitySequence = rawSequence;
     }
     const summary = boundedOptional(rawSummary, MAX_PRESENCE_SUMMARY_CHARS);
-    // An exact cross-machine location is honest only in the single shared
-    // workspace. Private copies may differ and are not advertised by default.
-    const path = this.host ? boundedOptional(rawPath, MAX_PRESENCE_PATH_CHARS) : undefined;
+    // A path without a coordinate-system claim is deliberately coarse. Shared
+    // paths are valid only while the room has one workspace host; private paths
+    // are an explicit owner-side opt-in and remain marked so other clients do
+    // not pretend their independent copies line up.
+    const locationScope =
+      rawLocationScope === "private" || (rawLocationScope === "shared" && this.host)
+        ? rawLocationScope
+        : undefined;
+    const path = locationScope
+      ? boundedPresencePath(rawPath)
+      : undefined;
     const line = path && presenceLine(rawLine) ? rawLine : undefined;
     const endLine =
       line !== undefined && presenceLine(rawEndLine) && rawEndLine! >= line ? rawEndLine : undefined;
@@ -683,6 +693,7 @@ export class Room {
       phase,
       summary,
       path,
+      locationScope: path ? locationScope : undefined,
       line,
       endLine,
       updatedAt: now,
@@ -2532,6 +2543,7 @@ export class Room {
       // release the claim rather than leaving agents addressing a dead machine.
       if (this.host === handle) {
         this.host = undefined;
+        this.clearSharedPresenceLocations();
         this.system("The room's workspace host left; agents pointed at the room have nowhere to act.");
       }
     }
@@ -2575,6 +2587,7 @@ export class Room {
    * pointed at the room.
    */
   claimWorkspace(handle: string, claim: boolean): void {
+    const previousHost = this.host;
     if (claim) {
       if (!this.connections.has(handle)) return;
       if (!this.canAct(handle)) {
@@ -2601,7 +2614,21 @@ export class Room {
       this.host = undefined;
       this.system("The room no longer has a shared workspace.");
     }
+    if (this.host !== previousHost) this.clearSharedPresenceLocations();
     this.broadcastRoster();
+  }
+
+  /** A changed shared coordinate system invalidates every exact shared path. */
+  private clearSharedPresenceLocations(): void {
+    const clear = (presence: AgentPresence | undefined): AgentPresence | undefined => {
+      if (presence?.locationScope !== "shared") return presence;
+      const { path: _path, line: _line, endLine: _endLine, locationScope: _scope, ...coarse } = presence;
+      return coarse;
+    };
+    for (const agent of this.agents.values()) {
+      agent.activity = clear(agent.activity);
+      agent.activityPending = clear(agent.activityPending);
+    }
   }
 
   /**
@@ -3184,6 +3211,7 @@ function samePresence(a: AgentPresence, b: AgentPresence): boolean {
     a.phase === b.phase &&
     a.summary === b.summary &&
     a.path === b.path &&
+    a.locationScope === b.locationScope &&
     a.line === b.line &&
     a.endLine === b.endLine
   );
@@ -3193,6 +3221,16 @@ function boundedOptional(value: unknown, max: number): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = redactHandoffText(value).trim();
   return trimmed ? trimmed.slice(0, max) : undefined;
+}
+
+function boundedPresencePath(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const raw = value.trim();
+  if (!raw || raw === "." || /[\u0000-\u001f\u007f]/.test(raw)) return undefined;
+  if (/^(?:[\\/]|[A-Za-z]:[\\/])/.test(raw) || raw.split(/[\\/]/).includes("..")) {
+    return undefined;
+  }
+  return boundedOptional(raw, MAX_PRESENCE_PATH_CHARS);
 }
 
 function validHandoffRequestId(value: unknown): value is string {

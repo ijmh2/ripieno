@@ -7,6 +7,9 @@
   const roomNameEl = document.getElementById("panelRoomName");
   const roomMetaEl = document.getElementById("panelRoomMeta");
   const connectionEl = document.getElementById("panelConnection");
+  const workspaceStateEl = document.getElementById("workspaceState");
+  const workspaceStateLabelEl = document.getElementById("workspaceStateLabel");
+  const workspaceStateDetailEl = document.getElementById("workspaceStateDetail");
   const overviewMetricsEl = document.getElementById("overviewMetrics");
   const overviewUpdatedEl = document.getElementById("overviewUpdated");
   const roomPulseEl = document.getElementById("roomPulse");
@@ -73,6 +76,9 @@
       : snapshot.connection;
     connectionEl.textContent = connectionLabel;
     connectionEl.className = `connection ${snapshot.connection} ${snapshot.status}`;
+    workspaceStateEl.className = `workspace-state ${snapshot.workspace.state}`;
+    workspaceStateLabelEl.textContent = snapshot.workspace.label;
+    workspaceStateDetailEl.textContent = snapshot.workspace.detail;
     overviewUpdatedEl.textContent = `Updated ${formatTime(Date.now())}`;
 
     overviewMetricsEl.replaceChildren(
@@ -261,7 +267,20 @@
       ? `${statusLabel(agent)} · updated ${formatTime(agent.activity.updatedAt)}`
       : `${statusLabel(agent)} · no rich activity timestamp reported`));
     if (agent.activity?.path) {
-      const location = element("code", "active-location");
+      const location = element(agent.locationOpenable ? "button" : "code", `active-location${agent.locationOpenable ? " location-link" : ""}`);
+      if (agent.locationOpenable) {
+        location.type = "button";
+        location.title = agent.activity.locationScope === "shared"
+          ? "Open this shared-workspace location"
+          : "Open this owner-local location";
+        location.addEventListener("click", () => {
+          vscode.postMessage({ type: "openAgentLocation", agentId: agent.agentId });
+        });
+      } else {
+        location.title = agent.activity.locationScope === "private"
+          ? "This private-workspace location is visible but cannot be mapped on this machine"
+          : "No shared workspace is currently available";
+      }
       const range = agent.activity.line
         ? `:${agent.activity.line}${agent.activity.endLine > agent.activity.line ? `-${agent.activity.endLine}` : ""}`
         : "";

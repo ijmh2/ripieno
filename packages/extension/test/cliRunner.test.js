@@ -22,7 +22,27 @@ const context = {
   roster: "Room members: Ivan",
   unseen: "Ivan: hello",
   recent: "Ivan: hello",
+  // Every real turn has one. Without it these spawned the child in whatever
+  // directory the test runner happened to be in, which is the bug below.
+  cwd: __dirname,
 };
+
+describe("an agent with nowhere to work", () => {
+  test("a missing working directory refuses instead of inheriting one", async () => {
+    const runner = new CliRunner({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('should never run')", "{prompt}"],
+      label: "Ivan's agent",
+      timeoutMs: 5_000,
+    });
+    // `spawn` with cwd: undefined silently inherits the extension host's
+    // directory — `/` on macOS. The turn must not reach the process at all.
+    await assert.rejects(
+      () => runner.run({ ...context, cwd: undefined }, () => {}),
+      /no working directory/i
+    );
+  });
+});
 
 describe("local CLI failures", () => {
   test("non-zero stdout is an error, never an agent reply", async () => {

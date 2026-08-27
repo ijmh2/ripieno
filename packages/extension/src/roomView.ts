@@ -44,6 +44,9 @@ export interface LocalAgentOnboarding extends LocalAgentPanelDetail {
 
 interface RoomState {
   room?: string;
+  workspaceHost?: string;
+  /** Local display name only; never relayed to another member. */
+  localWorkspaceFolder?: string;
   /** Which driver runs this room. Shown so a room can never lie about it. */
   mode?: RoomMode;
   you?: RosterEntry;
@@ -203,7 +206,8 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       id: string;
       expectedVersion: number;
       targetAgentId?: string;
-    }) => void
+    }) => void,
+    private readonly onOpenAgentLocation: (agentId: string) => void
   ) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -286,6 +290,15 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
         (value as { type?: unknown }).type === "panelReady"
       ) {
         this.postRoomPanelSnapshot();
+      } else if (
+        typeof value === "object" &&
+        value !== null &&
+        Object.keys(value).length === 2 &&
+        (value as { type?: unknown }).type === "openAgentLocation" &&
+        typeof (value as { agentId?: unknown }).agentId === "string" &&
+        (value as { agentId: string }).agentId.length <= 300
+      ) {
+        this.onOpenAgentLocation((value as { agentId: string }).agentId);
       }
     });
     panel.onDidChangeViewState(() => {
@@ -317,10 +330,14 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     handoffAudit: HandoffAuditEntry[] = [],
     handoffRevision = 0,
     drafts: AgentDraft[] = [],
-    usage: AgentUsage[] = []
+    usage: AgentUsage[] = [],
+    workspaceHost?: string,
+    localWorkspaceFolder?: string
   ): void {
     this.state = {
       room,
+      workspaceHost,
+      localWorkspaceFolder,
       mode,
       actions,
       goals,
@@ -407,11 +424,19 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     this.postRoomPanelSnapshot();
   }
 
-  setRoster(roster: RosterEntry[]): void {
+  setRoster(roster: RosterEntry[], workspaceHost?: string): void {
     this.state.roster = roster;
+    this.state.workspaceHost = workspaceHost;
     const youHandle = this.state.you?.handle;
     this.state.you = youHandle ? roster.find((member) => member.handle === youHandle) : undefined;
     this.post({ type: "roster", roster, you: this.state.you, onboarding: this.onboarding() });
+    this.postRoomPanelSnapshot();
+  }
+
+  /** Update the persistence strip even when no roster field changed. */
+  setWorkspaceHost(workspaceHost?: string, localWorkspaceFolder?: string): void {
+    this.state.workspaceHost = workspaceHost;
+    this.state.localWorkspaceFolder = localWorkspaceFolder;
     this.postRoomPanelSnapshot();
   }
 
@@ -570,6 +595,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     void panel.webview.postMessage(
       buildRoomPanelSnapshot({
         room: this.state.room,
+        workspaceHost: this.state.workspaceHost,
         mode: this.state.mode,
         you: this.state.you,
         roster: this.state.roster,
@@ -582,6 +608,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
         handoffs: this.state.handoffs,
         usage: this.state.usage,
         localAgents: this.state.localAgents,
+        localWorkspaceFolder: this.state.localWorkspaceFolder,
         status: this.state.status,
         waitingOn: this.state.waitingOn,
         connection: this.state.connection,
@@ -746,6 +773,15 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     </div>
     <div id="panelConnection" class="connection offline" role="status" aria-live="polite">offline</div>
   </header>
+
+  <section id="workspaceState" class="workspace-state offline" role="status" aria-live="polite" aria-atomic="true">
+    <span class="workspace-state-mark" aria-hidden="true"></span>
+    <div>
+      <span class="eyebrow">Workspace persistence</span>
+      <strong id="workspaceStateLabel">Workspace offline</strong>
+      <p id="workspaceStateDetail">No member is hosting a folder.</p>
+    </div>
+  </section>
 
   <section class="overview" aria-labelledby="overviewTitle">
     <div class="section-heading">

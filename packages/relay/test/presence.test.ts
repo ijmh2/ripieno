@@ -11,7 +11,7 @@
 
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import type { AgentPresence, Member, RosterEntry, ServerMsg } from "@ripieno/protocol";
+import type { AgentActivity, AgentPresence, Member, RosterEntry, ServerMsg } from "@ripieno/protocol";
 import { Room, type SocketLike } from "../src/room.js";
 import type { RoomDriver } from "../src/driver.js";
 
@@ -51,6 +51,16 @@ describe("relay-enforced ephemeral presence", () => {
 
   const rosterFrames = (): number => watcher.sent.filter((message) => message.t === "roster").length;
 
+  const setSharedActivity = (
+    id: string,
+    phase: AgentActivity,
+    summary: string,
+    path: string,
+    line?: number,
+    endLine?: number,
+    sequence?: number
+  ): void => room.setAgentActivity(id, phase, summary, path, line, endLine, sequence, "shared");
+
   beforeEach(async () => {
     Object.assign(Room.presenceLimits, defaults);
     room = new Room("presence", new Driver());
@@ -73,7 +83,7 @@ describe("relay-enforced ephemeral presence", () => {
   test("a burst of updates is coalesced to the newest, at four frames a second", async () => {
     const before = rosterFrames();
     for (let i = 1; i <= 12; i += 1) {
-      room.setAgentActivity("mellery::coder", "reading", `Reading file ${i}`, `src/f${i}.ts`, i);
+      setSharedActivity("mellery::coder", "reading", `Reading file ${i}`, `src/f${i}.ts`, i);
     }
     // One published immediately, the other eleven collapsed into one pending
     // frame — not eleven roster broadcasts to everybody in the room.
@@ -107,20 +117,20 @@ describe("relay-enforced ephemeral presence", () => {
   });
 
   test("an out-of-order or replayed frame is discarded", async () => {
-    room.setAgentActivity("mellery::coder", "editing", "Editing a.ts", "a.ts", 3, 9, 5);
+    setSharedActivity("mellery::coder", "editing", "Editing a.ts", "a.ts", 3, 9, 5);
     await wait(Room.presenceLimits.minIntervalMs + 60);
     assert.equal(presenceOf()?.summary, "Editing a.ts");
     assert.equal(presenceOf()?.endLine, 9);
 
-    room.setAgentActivity("mellery::coder", "reading", "Stale frame", "b.ts", 1, undefined, 4);
+    setSharedActivity("mellery::coder", "reading", "Stale frame", "b.ts", 1, undefined, 4);
     await wait(Room.presenceLimits.minIntervalMs + 60);
     assert.equal(presenceOf()?.summary, "Editing a.ts", "an older sequence never overwrites");
 
-    room.setAgentActivity("mellery::coder", "reading", "Newer frame", "b.ts", 1, undefined, 5);
+    setSharedActivity("mellery::coder", "reading", "Newer frame", "b.ts", 1, undefined, 5);
     await wait(Room.presenceLimits.minIntervalMs + 60);
     assert.equal(presenceOf()?.summary, "Editing a.ts", "and neither does a replay of the same one");
 
-    room.setAgentActivity("mellery::coder", "reading", "Newer frame", "b.ts", 1, undefined, 6);
+    setSharedActivity("mellery::coder", "reading", "Newer frame", "b.ts", 1, undefined, 6);
     await wait(Room.presenceLimits.minIntervalMs + 60);
     assert.equal(presenceOf()?.summary, "Newer frame");
   });
@@ -178,7 +188,11 @@ describe("relay-enforced ephemeral presence", () => {
       "mellery::coder",
       "running",
       `Running with api_key=supersecretvalue ${"x".repeat(400)}`,
-      `${"deep/".repeat(200)}file.ts`
+      `${"deep/".repeat(200)}file.ts`,
+      undefined,
+      undefined,
+      undefined,
+      "shared"
     );
     await wait(Room.presenceLimits.minIntervalMs + 60);
     const presence = presenceOf();
@@ -194,14 +208,71 @@ describe("relay-enforced ephemeral presence", () => {
     assert.equal(presenceOf()?.line, undefined, "no path means no line");
     assert.equal(presenceOf()?.endLine, undefined);
 
-    room.setAgentActivity("mellery::coder", "editing", "Editing", "src/a.ts", 20, 10);
+    setSharedActivity("mellery::coder", "editing", "Editing", "src/a.ts", 20, 10);
     await wait(Room.presenceLimits.minIntervalMs + 60);
     assert.equal(presenceOf()?.line, 20);
     assert.equal(presenceOf()?.endLine, undefined, "an end before the start is not a range");
 
-    room.setAgentActivity("mellery::coder", "editing", "Editing", "src/a.ts", 20, 24);
+    setSharedActivity("mellery::coder", "editing", "Editing", "src/a.ts", 20, 24);
     await wait(Room.presenceLimits.minIntervalMs + 60);
     assert.equal(presenceOf()?.endLine, 24);
+  });
+
+  test("an unscoped path is withheld even while a workspace is hosted", () => {
+    room.setAgentActivity("mellery::coder", "reading", "Reading a file", "src/private.ts", 4);
+    assert.equal(presenceOf()?.summary, "Reading a file");
+    assert.equal(presenceOf()?.path, undefined);
+    assert.equal(presenceOf()?.locationScope, undefined);
+  });
+
+  test("a scoped path must still be a confined workspace-relative path", async () => {
+    setSharedActivity("mellery::coder", "reading", "Reading outside", "../secret.txt", 4);
+    assert.equal(presenceOf()?.path, undefined);
+    await wait(Room.presenceLimits.minIntervalMs + 60);
+    room.setAgentActivity(
+      "mellery::coder",
+      "reading",
+      "Reading an absolute file",
+      "/etc/passwd",
+      1,
+      undefined,
+      undefined,
+      "private"
+    );
+    await wait(Room.presenceLimits.minIntervalMs + 60);
+    assert.equal(presenceOf()?.path, undefined);
+  });
+
+  test("shared coordinates require a current host, while explicit private ones stay marked", async () => {
+    room.claimWorkspace("mellery", false);
+    setSharedActivity("mellery::coder", "editing", "Editing shared", "src/shared.ts", 5);
+    assert.equal(presenceOf()?.path, undefined);
+
+    await wait(Room.presenceLimits.minIntervalMs + 60);
+    room.setAgentActivity(
+      "mellery::coder",
+      "editing",
+      "Editing an opted-in private workspace",
+      "src/private.ts",
+      8,
+      12,
+      undefined,
+      "private"
+    );
+    await wait(Room.presenceLimits.minIntervalMs + 60);
+    assert.equal(presenceOf()?.path, "src/private.ts");
+    assert.equal(presenceOf()?.locationScope, "private");
+    assert.equal(presenceOf()?.endLine, 12);
+  });
+
+  test("releasing the workspace clears shared coordinates but preserves coarse activity", () => {
+    setSharedActivity("mellery::coder", "editing", "Editing shared", "src/shared.ts", 5, 7);
+    assert.equal(presenceOf()?.path, "src/shared.ts");
+    room.claimWorkspace("mellery", false);
+    assert.equal(presenceOf()?.phase, "editing");
+    assert.equal(presenceOf()?.summary, "Editing shared");
+    assert.equal(presenceOf()?.path, undefined);
+    assert.equal(presenceOf()?.locationScope, undefined);
   });
 
   test("detaching takes the presence and its queued frame with it", async () => {

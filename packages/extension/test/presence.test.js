@@ -34,7 +34,7 @@ describe("presence is reported at a rate the room can use", () => {
   test("a burst becomes one frame now and the newest one after the window", async () => {
     const { presence, sent } = stream();
     for (let i = 1; i <= 20; i += 1) {
-      presence.publish({ phase: "reading", summary: `Reading file ${i}`, path: `src/f${i}.ts` });
+      presence.publish({ phase: "reading", summary: `Reading file ${i}`, path: `src/f${i}.ts`, locationScope: "shared" });
     }
     assert.equal(sent.length, 1);
     assert.equal(sent[0].summary, "Reading file 1");
@@ -66,7 +66,7 @@ describe("presence is reported at a rate the room can use", () => {
 
   test("a heartbeat keeps a long unchanging turn from expiring", async () => {
     const { presence, sent } = stream({ minIntervalMs: 20, heartbeatMs: 60 });
-    presence.publish({ phase: "editing", summary: "Editing src/a.ts", path: "src/a.ts", line: 4 });
+    presence.publish({ phase: "editing", summary: "Editing src/a.ts", path: "src/a.ts", locationScope: "shared", line: 4 });
     await wait(200);
     assert.ok(sent.length >= 3, `expected repeats, got ${sent.length}`);
     for (const frame of sent) {
@@ -95,6 +95,7 @@ describe("presence is reported at a rate the room can use", () => {
       phase: "editing",
       summary: `Editing ${"x".repeat(500)}`,
       path: "y".repeat(900),
+      locationScope: "shared",
       line: 10,
       endLine: 4,
     });
@@ -109,7 +110,7 @@ describe("presence is reported at a rate the room can use", () => {
     assert.equal(sent.at(-1).endLine, undefined);
 
     await wait(120);
-    presence.publish({ phase: "editing", summary: "Editing", path: "src/a.ts", line: 10, endLine: 20 });
+    presence.publish({ phase: "editing", summary: "Editing", path: "src/a.ts", locationScope: "shared", line: 10, endLine: 20 });
     await wait(120);
     assert.equal(sent.at(-1).line, 10);
     assert.equal(sent.at(-1).endLine, 20);
@@ -118,12 +119,32 @@ describe("presence is reported at a rate the room can use", () => {
 
   test("a fractional or negative line is not a location", async () => {
     const { presence, sent } = stream();
-    presence.publish({ phase: "reading", summary: "Reading", path: "src/a.ts", line: -3 });
+    presence.publish({ phase: "reading", summary: "Reading", path: "src/a.ts", locationScope: "shared", line: -3 });
     assert.equal(sent[0].line, undefined);
     await wait(120);
-    presence.publish({ phase: "reading", summary: "Reading", path: "src/a.ts", line: 1.5 });
+    presence.publish({ phase: "reading", summary: "Reading", path: "src/a.ts", locationScope: "shared", line: 1.5 });
     await wait(120);
     assert.equal(sent.at(-1).line, undefined);
+    presence.dispose();
+  });
+
+  test("an exact path is withheld without an explicit coordinate scope", () => {
+    const { presence, sent } = stream();
+    presence.publish({ phase: "reading", summary: "Reading privately", path: "secret/file.ts", line: 9 });
+    assert.equal(sent[0].summary, "Reading privately");
+    assert.equal(sent[0].path, undefined);
+    assert.equal(sent[0].locationScope, undefined);
+    assert.equal(sent[0].line, undefined);
+    presence.dispose();
+  });
+
+  test("a scoped path still cannot escape or name an absolute workspace root", async () => {
+    const { presence, sent } = stream();
+    presence.publish({ phase: "reading", path: "../secret.txt", locationScope: "shared", line: 1 });
+    assert.equal(sent[0].path, undefined);
+    await wait(120);
+    presence.publish({ phase: "reading", path: "/etc/passwd", locationScope: "private", line: 1 });
+    assert.equal(sent.at(-1).path, undefined);
     presence.dispose();
   });
 });

@@ -1,8 +1,7 @@
 # An unset workspace root, described as though it were set
 
-Scheduled after Phase 5. Two sites still to fix; two are already fixed in the
-working tree and described here so the set is understood as one defect rather
-than four unrelated ones.
+Resolved with Phase 5. All four sites are fixed in the working tree and are
+described here as one defect rather than four unrelated ones.
 
 ## The defect
 
@@ -41,7 +40,7 @@ that cannot tell absence from presence will describe absence as a design.
 The follow-on cost is worse than the bug: a person debugging this reasonably
 concludes the feature is broken, and the agent will keep confirming that.
 
-## Still to fix
+## Fixed with the workspace-host flow
 
 ### 1. Hosting does not check that there is a folder to host
 
@@ -52,13 +51,10 @@ open it still shows the confirmation modal — which promises that "other member
 agents will be able to read, write and run commands in this folder" — sends
 `claimWorkspace`, and the relay announces a host.
 
-The claim is empty. The room now names someone as hosting a workspace that does
-not exist, and every other member's agent will be told there is a shared
-workspace to map locations against.
-
-Refuse instead, and say which action fixes it: open a folder in this window.
-Releasing must stay unconditional — a member whose folder closed still needs to
-be able to drop a stale claim.
+The command now creates a collision-safe visible room folder or lets the member
+choose an existing one, attaches it to the editor, and claims only afterwards.
+Removing the exact hosted folder releases the claim; explicit release remains
+unconditional.
 
 ### 2. The folder picker offers a folder that is not there
 
@@ -77,11 +73,11 @@ configured back into the same broken state it was opened to repair.
 This is the sharpest of the four, because it is the screen a person reaches
 *specifically* to fix the problem, and its default option silently doesn't.
 
-Either omit the row when there is no folder, leaving "Choose a folder…" as the
-only option, or render it disabled and say why. Do not offer a default that
-resolves to nothing.
+The absent case now contains only **Choose a folder…**, selected by default.
+There is no row whose successful value is `{}` unless a real local folder is
+open.
 
-## Already fixed, in the working tree
+## The other two fixes
 
 Uncommitted, and entangled with Phase 5 edits in the same files — see "State"
 below.
@@ -144,12 +140,8 @@ reports `undefined` rather than zero for a provider that does not say, because
 
 Workspace configuration is the one area that did not.
 
-## State when this was written
+## Verification status
 
-Sites 3 and 4 are uncommitted in the working tree, mixed into files carrying
-in-flight Phase 5 presence work, so they cannot be committed alone without
-sweeping that in. Commit them once Phase 5 lands.
-
-The suite stands at 661 tests, 3 failing. All three are Phase 5 presence tests
-mid-edit — `presence.test.js` is unmodified and constructs no runners, so none
-of them are related to anything described here.
+Focused workspace-host, panel-state and UI checks pass after the four-site fix.
+The full monorepo suite passes 683/683 and typecheck passes across all seven
+workspaces; see `phase-5-handoff.md` for the breakdown.

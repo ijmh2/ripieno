@@ -188,6 +188,10 @@ export class ClaudeCodeRunner implements ModelRunner {
     // whatever conversation last ran in this folder — possibly the human's own.
     if (this.sessionId) args.push("--resume", this.sessionId);
 
+    // Reject rather than throw: `run` is declared Promise<string> and a caller
+    // using .catch() would otherwise get a synchronous exception instead.
+    if (!ctx.cwd) return Promise.reject(missingWorkingDirectory());
+
     log(this.sessionId ? "thinking (resumed session)" : "thinking (new session)");
     onEvent?.({ type: "phase", phase: "thinking" });
 
@@ -655,6 +659,10 @@ export class CliRunner implements ModelRunner {
     const usesPlaceholder = this.opts.args.some((a) => a.includes("{prompt}"));
     const args = this.opts.args.map((a) => a.replace("{prompt}", prompt));
 
+    // Reject rather than throw: `run` is declared Promise<string> and a caller
+    // using .catch() would otherwise get a synchronous exception instead.
+    if (!ctx.cwd) return Promise.reject(missingWorkingDirectory());
+
     log(`thinking (${this.opts.command}${usesPlaceholder ? "" : ", prompt on stdin"})`);
     onEvent?.({ type: "phase", phase: "thinking" });
     const adapter: ProviderEventAdapter | undefined = this.opts.eventFormat
@@ -934,6 +942,25 @@ export function secretKeyFor(agentId: string): string {
 }
 
 /** Anything running locally can touch files; a hosted chat API cannot. */
+/**
+ * Refuse to start a workspace agent that has nowhere to work.
+ *
+ * `spawn` with `cwd: undefined` does not fail — the child quietly inherits the
+ * parent's directory, which for an extension host is `/`. macOS makes that
+ * read-only under SIP, so it surfaced as EROFS and an agent reporting that the
+ * product had no writable workspace; on Linux the same path is writable and the
+ * agent would have started editing the filesystem root instead. Neither is what
+ * anyone configured, so this stops before the process exists rather than
+ * translating the failure afterwards.
+ */
+export function missingWorkingDirectory(): Error {
+  return new Error(
+    "This agent has no working directory, so it cannot read, write or run commands. " +
+      "Set one by editing the agent and choosing its folder, or open a folder in the " +
+      "editor window running it."
+  );
+}
+
 export function isWorkspaceProvider(providerId: string): boolean {
   const kind = providerById(providerId)?.kind;
   return kind === "claude-code" || kind === "cli";

@@ -563,7 +563,8 @@ export function startServer(config: ServerConfig): Relay {
               msg.path,
               msg.line,
               msg.endLine,
-              msg.sequence
+              msg.sequence,
+              msg.locationScope
             );
             break;
 

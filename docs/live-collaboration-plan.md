@@ -133,25 +133,52 @@ event contract.
   capability and permissions.
 - Active, idle and not-reported filters and exact-agent follow mode persist only
   in that webview. Follow keeps the selected tab pinned and announces new safe
-  activity; opening files and editor decorations remain Phase 5.
+  activity; Phase 5 adds exact-location navigation and editor decorations.
 - The signed-in owner's local provider, model, project, permission and response
   mode are matched only to their relay-namespaced exact agent id and rendered in
   a visibly private section. Another owner's settings are not relayed or
   inferred. Provider reasoning, diagnostics, logs, tool JSON, credentials and
   ephemeral draft text are absent from the panel model.
 
-### Phase 5 — shared-workspace presence
+### Phase 5 — shared-workspace presence (implemented)
 
-- Publish exact file and line/range only for the single shared workspace, or
-  after explicit owner opt-in for a private workspace.
-- Render member-coloured VS Code decorations in open shared-workspace editors.
-- Clicking an inspector location opens the remote read-only document.
-- Clear decorations on idle, disconnect, stale heartbeat or file invalidation.
+- Every exact path carries an explicit `shared` or `private` coordinate scope.
+  Unscoped paths from older or custom clients degrade to coarse presence. The
+  relay accepts `shared` only while one workspace host exists and clears shared
+  coordinates whenever that host changes or leaves.
+- Native provider locations are shared only when the reporting agent's root is
+  exactly the folder this member hosts. Ripieno's exact, known bundled workspace
+  MCP tools are shared because they already address the room's single remote
+  tree. Paths must remain confined and workspace-relative at both sender and
+  relay boundaries.
+- Private workspace locations are withheld by default. The owner may enable
+  `ripieno.sharePrivateWorkspacePresence`; the path then remains visibly marked
+  private, and only that owner's editor maps it onto their local agent folder.
+- Open documents show the reporting member's colour across the honest 1-based,
+  inclusive active range. Presence with only a path remains navigable but does
+  not invent a line or a keystroke caret.
+- Clicking a mappable inspector location sends only the exact agent id to the
+  extension host. The host re-reads authoritative presence and either opens the
+  host's local file, the remote read-only `ripieno-workspace:` document, or the
+  opted-in owner's local private file.
+- Decorations and locally displayed exact coordinates clear on idle, detach,
+  stale relay heartbeat, local disconnect, workspace-host change and file
+  invalidation. A changed file stays suppressed until that exact agent reports
+  a newer observation.
+- A member cannot claim a workspace host lease without an open local filesystem
+  folder. An empty editor offers to create a collision-safe visible folder under
+  `Documents/Ripieno` or choose an existing one, attaches it, then claims. Closing
+  the exact hosted folder releases the lease.
+- The Room panel distinguishes **Saved locally**, **Live from @host** and
+  **Workspace offline**, and explicitly reports the absence of a durable
+  checkpoint. Checkpointed/GitHub-synced states must be earned by a later
+  persistence feature rather than inferred from a live host.
 
 Agents generally apply patches atomically rather than type character by
 character. The UI therefore shows a truthful active range or working set, not a
-fabricated keystroke cursor. In independent repository copies, paths may be
-shown but exact cross-machine line alignment is not claimed.
+fabricated keystroke cursor. Independent repository copies receive no exact
+path by default, because even a matching filename cannot establish line
+alignment across different commits.
 
 ### Phase 6 — live proposed diffs
 

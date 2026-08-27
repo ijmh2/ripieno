@@ -27,6 +27,7 @@ function input(overrides = {}) {
       phase: "editing",
       summary: "Tightening the Room panel",
       path: "packages/extension/src/roomView.ts",
+      locationScope: "shared",
       line: 80,
       endLine: 120,
       updatedAt: now,
@@ -45,6 +46,8 @@ function input(overrides = {}) {
   ];
   return {
     room: "kitchen",
+    workspaceHost: "mira",
+    localWorkspaceFolder: "ripieno",
     mode: "byo",
     you: roster[0],
     roster,
@@ -146,6 +149,7 @@ function input(overrides = {}) {
         folder: "ripieno",
         permissions: "Ask before changes",
         responseMode: "automatic",
+        sharesPrivateLocation: true,
       },
       {
         // Same local suffix as Sam's exact id must never match a remote owner.
@@ -169,6 +173,12 @@ test("panel derives exact-agent work, task, goals, handoffs and usage from autho
   assert.equal(panel.actionCount, 3);
   assert.equal(panel.activeGoals.length, 1);
   assert.equal(panel.pendingHandoffCount, 1);
+  assert.deepEqual(panel.workspace, {
+    state: "saved-local",
+    label: "Saved locally",
+    detail: "ripieno · no durable checkpoint yet",
+    hostHandle: "mira",
+  });
 
   const mira = panel.agents.find((agent) => agent.agentId === "mira::local:coder");
   assert.equal(mira.ownerName, "Mira");
@@ -179,6 +189,47 @@ test("panel derives exact-agent work, task, goals, handoffs and usage from autho
   assert.deepEqual(mira.activeGoals.map((goal) => goal.id), ["goal_active"]);
   assert.deepEqual(mira.handoffs.map((handoff) => handoff.id), ["handoff_one"]);
   assert.equal(mira.usage.provider, "claude-code");
+  assert.equal(mira.locationOpenable, true);
+});
+
+test("only mappable shared or owner-opted-in private locations are openable", () => {
+  const withoutHost = buildRoomPanelSnapshot(input({ workspaceHost: undefined }));
+  assert.equal(withoutHost.agents[0].locationOpenable, false);
+
+  const privateRoster = input().roster.map((member) => ({
+    ...member,
+    agents: member.agents.map((agent) =>
+      agent.owner === "mira"
+        ? { ...agent, activity: { ...agent.activity, locationScope: "private" } }
+        : agent
+    ),
+  }));
+  const privatePanel = buildRoomPanelSnapshot(input({ roster: privateRoster }));
+  assert.equal(privatePanel.agents.find((agent) => agent.ownerHandle === "mira").locationOpenable, true);
+});
+
+test("workspace persistence never implies a checkpoint that does not exist", () => {
+  assert.equal(
+    buildRoomPanelSnapshot(input({ workspaceHost: undefined })).workspace.label,
+    "Workspace offline"
+  );
+  assert.deepEqual(
+    buildRoomPanelSnapshot(input({ workspaceHost: "sam" })).workspace,
+    {
+      state: "live-remote",
+      label: "Live from @sam",
+      detail: "Available while the host is online · no durable checkpoint reported",
+      hostHandle: "sam",
+    }
+  );
+  assert.equal(
+    buildRoomPanelSnapshot(input({ connection: "offline" })).workspace.state,
+    "offline"
+  );
+  assert.match(
+    buildRoomPanelSnapshot(input({ localWorkspaceFolder: undefined })).workspace.detail,
+    /no open local folder/i
+  );
 });
 
 test("owner-local permissions attach only to the signed-in owner's exact namespaced agent", () => {

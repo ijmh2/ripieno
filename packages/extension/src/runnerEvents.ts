@@ -23,7 +23,14 @@ export type RunnerPhase = "thinking" | "reading" | "editing" | "running" | "resp
  */
 export type RunnerEvent =
   | { type: "phase"; phase: RunnerPhase }
-  | { type: "location"; path: string; line?: number; endLine?: number }
+  | {
+      type: "location";
+      path: string;
+      line?: number;
+      endLine?: number;
+      /** The bundled `workspace` MCP server addresses the room's one shared tree. */
+      locationScope?: "shared";
+    }
   | { type: "draft"; delta: string }
   | { type: "tool"; name: string; safeSummary: string }
   | { type: "complete"; text: string; usage?: TurnUsage };

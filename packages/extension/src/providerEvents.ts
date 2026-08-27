@@ -154,13 +154,24 @@ const ROOM_TOOL_KINDS: Record<string, ToolKind> = {
   context_read: "context-read",
   context_add: "context-add",
 };
+const SHARED_WORKSPACE_LOCATION_TOOLS = new Set([
+  "mcp__workspace__workspace_read_file",
+  "mcp__workspace__workspace_write_file",
+  "mcp__workspace__workspace_edit_file",
+]);
 
 export function toolKindFor(name: string): ToolKind {
   if (name.startsWith("mcp__")) {
     const leaf = name.split("__").pop() ?? "";
-    return ROOM_TOOL_KINDS[leaf] ?? "other";
+    const roomLeaf = leaf.startsWith("workspace_") ? leaf.slice("workspace_".length) : leaf;
+    return ROOM_TOOL_KINDS[roomLeaf] ?? "other";
   }
   return CLAUDE_TOOL_KINDS[name] ?? ROOM_TOOL_KINDS[name] ?? "other";
+}
+
+/** Only Ripieno's bundled MCP namespace is a shared-workspace coordinate. */
+function isSharedWorkspaceTool(name: string): boolean {
+  return SHARED_WORKSPACE_LOCATION_TOOLS.has(name);
 }
 
 function locationFrom(
@@ -244,6 +255,7 @@ export class ClaudeStreamJsonAdapter extends JsonLineAdapter {
               path: where.path,
               line: where.line,
               endLine: where.endLine,
+              ...(isSharedWorkspaceTool(name) ? { locationScope: "shared" as const } : {}),
             });
           }
         }
@@ -475,7 +487,13 @@ export class GeminiCliAdapter extends JsonLineAdapter {
           toolEvent(kind, name, where.path),
         ];
         if (where.path) {
-          events.push({ type: "location", path: where.path, line: where.line, endLine: where.endLine });
+          events.push({
+            type: "location",
+            path: where.path,
+            line: where.line,
+            endLine: where.endLine,
+            ...(name && isSharedWorkspaceTool(name) ? { locationScope: "shared" as const } : {}),
+          });
         }
         return events;
       }

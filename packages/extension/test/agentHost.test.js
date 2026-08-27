@@ -241,6 +241,8 @@ function agent(r, { id, label, handle, displayName, primary = true }) {
     approvals: { start: async () => ({ url: "", token: "" }) },
     permissionServerPath: "unused",
     workspaceServerPath: "unused",
+    // A real directory: a workspace agent now refuses to start without one.
+    cwd: __dirname,
     onStateChange: () => {},
   });
   host.attach();
@@ -335,6 +337,8 @@ describe("provider failures stay with the owner", () => {
       approvals: { start: async () => ({ url: "", token: "" }) },
       permissionServerPath: "unused",
       workspaceServerPath: "unused",
+      // A real directory: a workspace agent now refuses to start without one.
+      cwd: __dirname,
       onStateChange: (_id, state) => states.push(state),
     });
     host.attach();
@@ -671,6 +675,9 @@ describe("a provider's event stream reaches the room as presence", () => {
       approvals: { start: async () => ({ url: "", token: "" }) },
       permissionServerPath: "unused",
       workspaceServerPath: "unused",
+      // A real directory: a workspace agent now refuses to start without one.
+      cwd: __dirname,
+      presenceLocationScope: () => "shared",
       onStateChange: () => {},
     });
     host.attach();
@@ -715,6 +722,8 @@ describe("a provider's event stream reaches the room as presence", () => {
       approvals: { start: async () => ({ url: "", token: "" }) },
       permissionServerPath: "unused",
       workspaceServerPath: "unused",
+      // A real directory: a workspace agent now refuses to start without one.
+      cwd: __dirname,
       onStateChange: () => {},
     });
     host.attach();

@@ -85,6 +85,9 @@ export const MAX_AGENT_DRAFT_FRAMES_PER_SECOND = 20;
 export const MAX_ROOM_DRAFT_FRAMES_PER_SECOND = 80;
 export const AGENT_DRAFT_TTL_MS = 45_000;
 
+/** The coordinate system an exact presence path belongs to. */
+export type PresenceLocationScope = "shared" | "private";
+
 /** A bounded, non-durable presence update shown in an agent inspector. */
 export interface AgentPresence {
   phase: AgentActivity;
@@ -92,6 +95,8 @@ export interface AgentPresence {
   summary?: string;
   /** Workspace-relative path when sharing an exact location is appropriate. */
   path?: string;
+  /** Shared room workspace, or an owner-opted-in private workspace. */
+  locationScope?: PresenceLocationScope;
   /** Optional 1-based line anchor. */
   line?: number;
   /**
@@ -632,6 +637,8 @@ export interface AgentActivityMsg {
   phase: AgentActivity;
   summary?: string;
   path?: string;
+  /** Required for a path. Undefined clients retain coarse presence only. */
+  locationScope?: PresenceLocationScope;
   line?: number;
   endLine?: number;
   sequence?: number;

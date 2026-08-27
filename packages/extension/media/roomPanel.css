@@ -60,6 +60,31 @@ h3 { margin-bottom: 14px; font-size: 13px; }
 .connection.online { color: var(--vscode-testing-iconPassed); }
 .connection.offline { color: var(--vscode-descriptionForeground); }
 .connection.error { color: var(--vscode-errorForeground); }
+.workspace-state {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 10px;
+  align-items: center;
+  margin-top: 22px;
+  padding: 13px 15px;
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 9px;
+  background: var(--vscode-sideBar-background);
+}
+.workspace-state-mark {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--vscode-descriptionForeground);
+}
+.workspace-state.saved-local .workspace-state-mark { background: var(--vscode-testing-iconPassed); }
+.workspace-state.live-remote .workspace-state-mark { background: var(--vscode-charts-blue); }
+.workspace-state strong { display: block; margin-top: 3px; }
+.workspace-state p {
+  margin: 2px 0 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
 .overview,
 .agents-workbench {
   margin-top: 28px;
@@ -190,6 +215,25 @@ h3 { margin-bottom: 14px; font-size: 13px; }
 .current-task { font-size: 16px; line-height: 1.45; }
 .active-location,
 .work-target { overflow-wrap: anywhere; }
+.location-link {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  padding: 3px 5px;
+  border: 1px solid transparent;
+  color: var(--vscode-textLink-foreground);
+  background: transparent;
+  font-family: var(--vscode-editor-font-family);
+  font-size: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.location-link:hover { color: var(--vscode-textLink-activeForeground); }
+.location-link:focus-visible {
+  border-color: var(--vscode-focusBorder);
+  outline: none;
+}
 .detail-list { display: grid; gap: 8px; margin: 0; padding-left: 18px; }
 .detail-list + .detail-list { margin-top: 12px; }
 .handoff-item { display: flex; flex-direction: column; gap: 3px; }

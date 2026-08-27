@@ -17,6 +17,10 @@ test("full Room panel is discoverable and keeps the compact sidebar surfaces", (
   assert.match(roomView, /role="tablist" aria-label="Ripieno room surfaces"/);
   assert.match(roomView, /role="tablist" aria-label="Room agents"/);
   assert.match(roomView, /id="agentDetail"[^>]*role="tabpanel"/);
+  assert.match(roomView, /id="workspaceState"[^>]*role="status"/);
+  assert.match(script, /snapshot\.workspace\.state/);
+  assert.match(script, /snapshot\.workspace\.detail/);
+  assert.match(styles, /\.workspace-state\.saved-local/);
 });
 
 test("agent rail, status filters and follow mode are keyboard and screen-reader accessible", () => {
@@ -62,4 +66,13 @@ test("detail tabs show owner, task, goals, handoffs, working set, actions, usage
   assert.match(script, /Private to this editor/);
   assert.match(script, /Provider reasoning, diagnostics, raw logs, tool JSON and credentials are not included/);
   assert.doesNotMatch(script, /innerHTML/);
+});
+
+test("exact locations are opened by authoritative agent id, never by a webview-supplied path", () => {
+  assert.match(script, /type: "openAgentLocation", agentId: agent\.agentId/);
+  assert.match(script, /agent\.locationOpenable/);
+  assert.match(roomView, /type === "openAgentLocation"/);
+  assert.match(extension, /latestRoster\.find\(\(entry\) => entry\.agents\?\.some/);
+  assert.doesNotMatch(script, /openAgentLocation"[^\n]*path/);
+  assert.match(styles, /\.location-link/);
 });

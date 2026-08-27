@@ -13,12 +13,17 @@
 // expire while it is still true.
 
 import { MAX_PRESENCE_PATH_CHARS, MAX_PRESENCE_SUMMARY_CHARS } from "@ripieno/protocol";
-import type { AgentActivity, AgentActivityMsg } from "@ripieno/protocol";
+import type {
+  AgentActivity,
+  AgentActivityMsg,
+  PresenceLocationScope,
+} from "@ripieno/protocol";
 
 export interface PresenceUpdate {
   phase: AgentActivity;
   summary?: string;
   path?: string;
+  locationScope?: PresenceLocationScope;
   line?: number;
   endLine?: number;
 }
@@ -42,6 +47,7 @@ function same(a: PresenceUpdate | undefined, b: PresenceUpdate): boolean {
     a?.phase === b.phase &&
     a?.summary === b.summary &&
     a?.path === b.path &&
+    a?.locationScope === b.locationScope &&
     a?.line === b.line &&
     a?.endLine === b.endLine
   );
@@ -129,16 +135,32 @@ export class PresenceStream {
 /** Apply the wire's own caps before sending, rather than sending what is cut. */
 function bound(update: PresenceUpdate): PresenceUpdate {
   const summary = update.summary?.replace(/\s+/g, " ").trim().slice(0, MAX_PRESENCE_SUMMARY_CHARS);
-  const path = update.path?.trim().slice(0, MAX_PRESENCE_PATH_CHARS);
+  const path = safeRelativePath(update.path);
+  const locationScope =
+    update.locationScope === "shared" || update.locationScope === "private"
+      ? update.locationScope
+      : undefined;
   const line = positive(update.line);
   const endLine = line !== undefined ? positive(update.endLine) : undefined;
   return {
     phase: update.phase,
     summary: summary || undefined,
-    path: path || undefined,
-    line: path ? line : undefined,
-    endLine: path && endLine !== undefined && line !== undefined && endLine >= line ? endLine : undefined,
+    path: path && locationScope ? path : undefined,
+    locationScope: path && locationScope ? locationScope : undefined,
+    line: path && locationScope ? line : undefined,
+    endLine:
+      path && locationScope && endLine !== undefined && line !== undefined && endLine >= line
+        ? endLine
+        : undefined,
   };
+}
+
+function safeRelativePath(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === "." || /[\u0000-\u001f\u007f]/.test(trimmed)) return undefined;
+  if (/^(?:[\\/]|[A-Za-z]:[\\/])/.test(trimmed)) return undefined;
+  if (trimmed.split(/[\\/]/).includes("..")) return undefined;
+  return trimmed.slice(0, MAX_PRESENCE_PATH_CHARS);
 }
 
 function positive(value: number | undefined): number | undefined {

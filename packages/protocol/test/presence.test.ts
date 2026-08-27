@@ -9,6 +9,7 @@ test("a presence frame is typed, ordered and range-capable on the wire", () => {
     phase: "editing",
     summary: "Editing packages/relay/src/room.ts",
     path: "packages/relay/src/room.ts",
+    locationScope: "shared",
     line: 700,
     endLine: 742,
     sequence: 12,
@@ -16,6 +17,7 @@ test("a presence frame is typed, ordered and range-capable on the wire", () => {
   assert.equal(activity.t, "agentActivity");
   if (activity.t !== "agentActivity") return;
   assert.equal(activity.endLine, 742);
+  assert.equal(activity.locationScope, "shared");
   assert.equal(activity.sequence, 12);
 
   // Nothing on the frame names an agent: identity is the connection's, and a

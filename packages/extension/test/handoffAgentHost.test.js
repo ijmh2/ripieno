@@ -73,6 +73,8 @@ test("explicit acceptance runs the recipient-owned AgentHost and releases the so
     approvals: { start: async () => ({ url: "", token: "" }) },
     permissionServerPath: "unused",
     workspaceServerPath: "unused",
+    // A real directory: a workspace agent now refuses to start without one.
+    cwd: __dirname,
     onStateChange: () => {},
     handoffStore,
   };
@@ -257,6 +259,8 @@ test("a target provider failure is durably reported against the delivery", async
     approvals: { start: async () => ({ url: "", token: "" }) },
     permissionServerPath: "unused",
     workspaceServerPath: "unused",
+    // A real directory: a workspace agent now refuses to start without one.
+    cwd: __dirname,
     onStateChange: () => {},
     handoffStore: {
       get: async (id) => deliveries.get(id),
@@ -341,7 +345,7 @@ test("role-revocation eviction cancels a blocking runner and suppresses every la
     member: { handle: "sam", displayName: "Sam" }, id: "reviewer", label: "Sam's reviewer",
     providerId: "cli-custom", command: process.execPath, args: [FAKE_CLI, "{prompt}"],
     approvals: { start: async () => ({ url: "", token: "" }) },
-    permissionServerPath: "unused", workspaceServerPath: "unused", onStateChange: () => {},
+    permissionServerPath: "unused", workspaceServerPath: "unused", cwd: __dirname, onStateChange: () => {},
     handoffStore: {
       get: async (id) => journal.get(id),
       put: async (value) => journal.set(value.deliveryId, structuredClone(value)),
@@ -426,7 +430,7 @@ test("a restarted host never reruns a delivery already marked started", async ()
     member: { handle: "sam", displayName: "Sam" }, id: "reviewer", label: "Sam's reviewer",
     providerId: "cli-custom", command: process.execPath, args: [FAKE_CLI, "{prompt}"],
     approvals: { start: async () => ({ url: "", token: "" }) },
-    permissionServerPath: "unused", workspaceServerPath: "unused", onStateChange: () => {},
+    permissionServerPath: "unused", workspaceServerPath: "unused", cwd: __dirname, onStateChange: () => {},
     handoffStore: {
       get: async (id) => journal.get(id),
       put: async (value) => journal.set(value.deliveryId, structuredClone(value)),

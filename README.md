@@ -242,7 +242,12 @@ It brings together the agent's observable current task, related goals and
 handoffs, working set, durable Work entries, reported usage and permissions.
 Status filters and follow mode are local UI preferences. Only your own local
 provider configuration is shown, in a visibly private section; another owner's
-settings are never relayed or guessed. See
+settings are never relayed or guessed. When an agent reports a location in the
+room's one shared workspace, the location opens the host's live document and
+its active line/range is marked in the member's colour in any open editor.
+Remote documents use Ripieno's read-only filesystem. Private-workspace paths
+are withheld by default; an owner can explicitly opt in to sharing them, and
+only that owner's editor maps them back to local files. See
 [the live collaboration plan](docs/live-collaboration-plan.md) for the shipped
 foundation, privacy boundaries and staged path to editor presence and live
 proposed diffs.
@@ -252,6 +257,15 @@ proposed diffs.
 An agent normally works in its owner's own directory, and two members' copies of
 a project may genuinely differ — which is useful, and is why an agent can read
 the same file from two machines and tell you what changed.
+
+Choosing **Host / Release the Shared Workspace** now requires a real local
+folder. If this editor has none open, Ripieno can create
+`Documents/Ripieno/<room-name>` (without adopting an existing directory) or let
+you choose a folder, adds it to the window, and only then claims the host lease.
+Closing that exact folder releases the lease immediately. The full Room panel
+labels the result honestly as **Saved locally**, **Live from @host**, or
+**Workspace offline**, and says when no durable checkpoint exists; local files
+are not described as GitHub-synced.
 
 Point an agent at **the room's workspace** instead and something different
 happens: it acts on whichever machine is hosting, and so does everyone else's.

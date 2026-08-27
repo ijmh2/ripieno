@@ -20,6 +20,7 @@ import type {
   ContextResultMsg,
   HandoffContinuationContext,
   Member,
+  PresenceLocationScope,
   RosterEntry,
   ServerMsg,
   TranscriptEntry,
@@ -52,6 +53,7 @@ import { PresenceStream } from "./presence";
 import { DraftStream } from "./draftStream";
 import {
   boundSummary,
+  safePath,
   summarisePhase,
   type RunnerEvent,
   type RunnerPhase,
@@ -141,6 +143,8 @@ export interface AgentHostOptions extends AgentSpec {
   onSession?: (agentId: string, sessionId: string) => void;
   /** Other agents this member runs. Superseded at runtime by the live roster. */
   siblingLabels?: string[];
+  /** Owner policy mapping one provider location into an honest coordinate system. */
+  presenceLocationScope?: (hint?: "shared") => PresenceLocationScope | undefined;
 }
 
 export type LocalHandoffStatus =
@@ -541,7 +545,10 @@ export class AgentHost implements vscode.Disposable {
       this.publishActivity(
         activityForTool(name),
         activitySummary(name, input),
-        activityPath(name, input)
+        activityPath(name, input),
+        undefined,
+        undefined,
+        "shared"
       );
       result = await this.remoteTool(`ws_${request.id}`, name, input);
       if (this.busy) this.publishActivity("thinking", "Reviewing the workspace result");
@@ -1177,19 +1184,38 @@ export class AgentHost implements vscode.Disposable {
   }
 
   /** Where this agent works. Its own folder if given, else the editor's. */
+  /**
+   * Where this agent's own tools operate. Undefined means nobody said.
+   *
+   * Undefined is not a directory and must never be spawned with: a child given
+   * `cwd: undefined` inherits the extension host's, which is `/` on macOS. That
+   * is never what anyone configured, and it fails in the worst way — read-only
+   * under SIP here, silently writable at the filesystem root on Linux.
+   */
   private workingDirectory(): string | undefined {
     return this.opts.cwd ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   }
 
   private systemPreamble(): string {
-    const cwd = this.workingDirectory() ?? "this workspace";
+    const cwd = this.workingDirectory();
     const capabilityLines =
       this.capability === "workspace"
-        ? [
-            `You have file and shell access to ${cwd}, subject to this agent's local permissions. That`,
-            `directory is yours to work in. Other members may be working in different directories, so say`,
-            `which project you mean when it could be ambiguous.`,
-          ]
+        ? cwd
+          ? [
+              `You have file and shell access to ${cwd}, subject to this agent's local permissions. That`,
+              `directory is yours to work in. Other members may be working in different directories, so say`,
+              `which project you mean when it could be ambiguous.`,
+            ]
+          : [
+              // Naming the gap beats a friendly placeholder. "This workspace"
+              // read as a directory that existed, so an agent that found itself
+              // in `/` concluded the product had no workspace rather than that
+              // its own was unset, and told the room so.
+              `You have no working directory. This agent was started without one and no folder is open in`,
+              `its editor, so you cannot read, write or run commands anywhere. Do not guess a path and do`,
+              `not fall back to the process working directory. Say that this agent needs a folder set —`,
+              `its owner sets one by editing the agent, or by opening a folder in that editor window.`,
+            ]
         : [
             `You are a conversation-only agent in Ripieno. You do not have Ripieno file or shell tools.`,
             `Do not claim to inspect, edit, or run commands unless the provider independently supplies and`,
@@ -1298,12 +1324,14 @@ export class AgentHost implements vscode.Disposable {
         this.publishActivity(this.turnPhase, event.safeSummary);
         break;
       case "location":
+        const locationScope = this.opts.presenceLocationScope?.(event.locationScope);
         this.publishActivity(
           this.turnPhase,
           this.turnSummary,
-          event.path,
-          event.line,
-          event.endLine
+          locationScope ? event.path : undefined,
+          locationScope ? event.line : undefined,
+          locationScope ? event.endLine : undefined,
+          locationScope
         );
         break;
       case "draft":
@@ -1322,9 +1350,10 @@ export class AgentHost implements vscode.Disposable {
     summary?: string,
     path?: string,
     line?: number,
-    endLine?: number
+    endLine?: number,
+    locationScope?: PresenceLocationScope
   ): void {
-    this.presence.publish({ phase, summary, path, line, endLine });
+    this.presence.publish({ phase, summary, path, line, endLine, locationScope });
   }
 
   private log(line: string): void {
@@ -1391,8 +1420,7 @@ function activityForTool(
 
 function activityPath(name: string, input: Record<string, unknown>): string | undefined {
   if (name !== "read_file" && name !== "write_file" && name !== "edit_file") return undefined;
-  const path = input.path;
-  return typeof path === "string" && path.trim() ? path.trim().slice(0, 500) : undefined;
+  return safePath(input.path);
 }
 
 function activitySummary(name: string, input: Record<string, unknown>): string {

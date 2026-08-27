@@ -57,7 +57,7 @@ test("a reconnect snapshot dedupes ids and still feeds a question missed while o
     member: { handle: "sam", displayName: "Sam" }, id: "agent", label: "Sam's agent",
     providerId: "cli-custom", command: process.execPath, args: [FAKE_CLI, "{prompt}"],
     approvals: { start: async () => ({ url: "", token: "" }) },
-    permissionServerPath: "unused", workspaceServerPath: "unused", onStateChange: () => {},
+    permissionServerPath: "unused", workspaceServerPath: "unused", cwd: __dirname, onStateChange: () => {},
   });
   try {
     host.attach();

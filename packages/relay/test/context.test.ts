@@ -306,7 +306,10 @@ describe("relay-authoritative shared context", () => {
       "editing",
       "Editing packages/relay/src/room.ts",
       "packages/relay/src/room.ts",
-      700
+      700,
+      undefined,
+      undefined,
+      "shared"
     );
     const roster = miraSocket.sent.filter(
       (message): message is Extract<ServerMsg, { t: "roster" }> =>
@@ -316,6 +319,7 @@ describe("relay-authoritative shared context", () => {
     const agent = roster?.roster.find((member) => member.handle === "mellery")?.agents[0];
     assert.equal(agent?.activity?.phase, "editing");
     assert.equal(agent?.activity?.path, "packages/relay/src/room.ts");
+    assert.equal(agent?.activity?.locationScope, "shared");
     assert.equal(agent?.activity?.line, 700);
     assert.ok((agent?.activity?.updatedAt ?? 0) > 0);
     assert.equal(room.snapshot().members.some((member) => "activity" in member), false);

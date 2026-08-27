@@ -36,9 +36,27 @@ class Disposable {
   }
 }
 
+class Range {
+  constructor(startLine, startCharacter, endLine, endCharacter) {
+    this.start = { line: startLine, character: startCharacter };
+    this.end = { line: endLine, character: endCharacter };
+  }
+}
+
+class MarkdownString {
+  constructor(value) {
+    this.value = value;
+    this.isTrusted = false;
+  }
+}
+
 module.exports = {
   EventEmitter,
   Disposable,
+  Range,
+  MarkdownString,
+  OverviewRulerLane: { Right: 4 },
+  DecorationRangeBehavior: { ClosedClosed: 3 },
   FileSystemError,
   FileType: { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 },
   FileChangeType: { Changed: 1, Created: 2, Deleted: 3 },
@@ -56,6 +74,13 @@ module.exports = {
     // test that fails can show what the agent was actually told — and so a test
     // can assert that a refused agent said so somewhere a person would look.
     channels: [],
+    visibleTextEditors: [],
+    createTextEditorDecorationType() {
+      return { dispose() {} };
+    },
+    onDidChangeVisibleTextEditors() {
+      return { dispose() {} };
+    },
     createOutputChannel(name) {
       const channel = {
         name,

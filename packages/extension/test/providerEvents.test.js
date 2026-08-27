@@ -174,10 +174,55 @@ describe("Claude Code stream JSON", () => {
   });
 
   test("MCP tool names are classified by their leaf", () => {
-    assert.equal(toolKindFor("mcp__workspace__read_file"), "read");
-    assert.equal(toolKindFor("mcp__workspace__run_command"), "run");
+    assert.equal(toolKindFor("mcp__workspace__workspace_read_file"), "read");
+    assert.equal(toolKindFor("mcp__workspace__workspace_run_command"), "run");
     assert.equal(toolKindFor("mcp__workspace__context_add"), "context-add");
     assert.equal(toolKindFor("mcp__somebody__whatever"), "other");
+  });
+
+  test("only Ripieno's bundled workspace MCP marks a location as shared", () => {
+    const adapter = new ClaudeStreamJsonAdapter("/work/private-agent");
+    const events = adapter.push(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              name: "mcp__workspace__workspace_read_file",
+              input: { path: "src/shared.ts", offset: 4, limit: 2 },
+            },
+          ],
+        },
+      }) + "\n"
+    );
+    assert.deepEqual(events.find((event) => event.type === "location"), {
+      type: "location",
+      path: "src/shared.ts",
+      line: 4,
+      endLine: 5,
+      locationScope: "shared",
+    });
+
+    const spoofed = adapter.push(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              name: "mcp__workspace__invented_read_file",
+              input: { path: "src/not-shared.ts" },
+            },
+          ],
+        },
+      }) + "\n"
+    );
+    assert.equal(
+      spoofed.find((event) => event.type === "location")?.locationScope,
+      undefined,
+      "a provider-invented name cannot opt itself into shared coordinates"
+    );
   });
 });
 

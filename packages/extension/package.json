@@ -186,7 +186,7 @@
       },
       {
         "view": "ripieno.workspace",
-        "contents": "Nobody is hosting a shared workspace.\n\nThe host's folder is the one other members' agents can read, write and run commands in \u2014 always behind an approval on the host's own machine.\n\n[Host this workspace](command:ripieno.hostWorkspace)"
+        "contents": "Nobody is hosting a shared workspace.\n\nThe host's folder is the one other members' agents can read, write and run commands in \u2014 always behind an approval on the host's own machine. If no folder is open, Ripieno can create one.\n\n[Host or create a workspace](command:ripieno.hostWorkspace)"
       }
     ],
     "menus": {
@@ -350,6 +350,11 @@
           ],
           "default": "ask",
           "markdownDescription": "Fallback for older Claude agents without a per-agent permission choice. New agents are adjusted from the gear beside their row in Rooms & Agents. `ask` routes approvals to you; `bypassPermissions` is only appropriate in a room you trust."
+        },
+        "ripieno.sharePrivateWorkspacePresence": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Share exact file and line locations for your agents when they work outside the room's shared workspace. **Off by default:** enabling this exposes private workspace-relative paths to everyone in the room. Other members can see the location but cannot open or decorate it; only your editor maps it to your local files."
         },
         "ripieno.devIdentityOverride": {
           "type": "string",

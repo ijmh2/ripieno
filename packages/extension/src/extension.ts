@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import { spawn } from "child_process";
 import { randomUUID } from "node:crypto";
 import type {
+  AgentPresence,
+  AttachedAgent,
   ContextAuditEntry,
   ContextItem,
   Goal,
@@ -26,6 +28,7 @@ import {
 /** Where the room token lives, when it did not come from settings. */
 const LEGACY_ROOM_TOKEN_SECRET = "ripieno.roomToken";
 import * as os from "node:os";
+import * as path from "node:path";
 import { RelayClient, type ConnectionState } from "@ripieno/relay-client";
 import { ToolExecutor, registerProposedDocuments } from "./toolExecutor";
 import { RoomViewProvider } from "./roomView";
@@ -48,6 +51,14 @@ import {
 import { ApprovalBridge } from "./approvals";
 import { WorkspaceFileSystem, WORKSPACE_SCHEME, uriFor } from "./workspaceFs";
 import { WorkspaceTreeProvider, isHostDocument } from "./workspaceTree";
+import { PresenceDecorations, presenceRange } from "./presenceDecorations";
+import { presenceLocationScope, resolvePresencePath } from "./presenceLocationPolicy";
+import {
+  availableRoomWorkspacePath,
+  sameWorkspaceRoot,
+  workingFolderChoices,
+  type WorkingFolderChoice,
+} from "./workspaceHosting";
 import {
   CODEX_SETUP_URL,
   agentIdFromTreeNode,
@@ -88,6 +99,9 @@ export function activate(context: vscode.ExtensionContext): void {
   let relay: RelayClient | undefined;
   let currentRoom: string | undefined;
   let hostingWorkspace = false;
+  let workspaceHost: string | undefined;
+  /** The exact local folder covered by our current host claim, if any. */
+  let hostingWorkspaceRoot: string | undefined;
   let nextFsRequest = 0;
   let watcher: vscode.FileSystemWatcher | undefined;
   /** Paths changed since the last publish, coalesced — a build touches thousands. */
@@ -156,12 +170,17 @@ export function activate(context: vscode.ExtensionContext): void {
     // nothing. Naming the mode is the more useful thing to say.
     const isSolo = activeRelayUrl === solo.address;
     const others = latestRoster.filter((entry) => entry.handle !== me?.handle).length;
+    const workspaceState = !workspaceHost
+      ? "Workspace offline — nobody is hosting a folder."
+      : workspaceHost === me?.handle
+        ? `Workspace saved locally${hostedWorkspaceName() ? ` in ${hostedWorkspaceName()}` : ""}; no durable checkpoint yet.`
+        : `Workspace live from @${workspaceHost}; no durable checkpoint reported.`;
     statusItem.text = isSolo
       ? "$(comment-discussion) Ripieno: solo"
       : `$(comment-discussion) ${currentRoom}${others > 0 ? ` \u00b7 ${others + 1}` : ""}`;
     statusItem.tooltip = isSolo
-      ? `Solo room "${currentRoom}" \u2014 running in this window, nothing deployed.`
-      : `Ripieno room "${currentRoom}" \u2014 ${others + 1} present. Click to open.`;
+      ? `Solo room "${currentRoom}" \u2014 running in this window, nothing deployed. ${workspaceState}`
+      : `Ripieno room "${currentRoom}" \u2014 ${others + 1} present. ${workspaceState} Click to open.`;
     statusItem.show();
   }
 
@@ -280,7 +299,8 @@ export function activate(context: vscode.ExtensionContext): void {
         expectedVersion: request.expectedVersion,
         status: request.status,
       }),
-    (request) => sendHandoffDecision(request.action, request.id, request.expectedVersion, request.targetAgentId)
+    (request) => sendHandoffDecision(request.action, request.id, request.expectedVersion, request.targetAgentId),
+    (agentId) => void openAgentLocation(agentId)
   );
 
   // The host's workspace, as a real filesystem. Read-only: edits go through
@@ -288,6 +308,144 @@ export function activate(context: vscode.ExtensionContext): void {
   // approval prompts triggered by autosave.
   const workspaceFs = new WorkspaceFileSystem();
   const workspaceTree = new WorkspaceTreeProvider();
+  const presenceDecorations = new PresenceDecorations(locationUriFor);
+  context.subscriptions.push(presenceDecorations);
+
+  function sharePrivateWorkspacePresence(): boolean {
+    return vscode.workspace
+      .getConfiguration("ripieno")
+      .get<boolean>("sharePrivateWorkspacePresence", false);
+  }
+
+  function editorWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
+    return vscode.workspace.workspaceFolders?.find((candidate) => candidate.uri.scheme === "file");
+  }
+
+  function editorWorkspaceRoot(): string | undefined {
+    return editorWorkspaceFolder()?.uri.fsPath;
+  }
+
+  function hostedWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
+    if (!hostingWorkspaceRoot) return undefined;
+    return vscode.workspace.workspaceFolders?.find(
+      (candidate) =>
+        candidate.uri.scheme === "file" &&
+        sameWorkspaceRoot(candidate.uri.fsPath, hostingWorkspaceRoot!)
+    );
+  }
+
+  function hostedWorkspaceName(): string | undefined {
+    return workspaceHost === me?.handle ? hostedWorkspaceFolder()?.name : undefined;
+  }
+
+  function localSpecFor(memberHandle: string, exactAgentId: string): AgentSpecRecord | undefined {
+    if (memberHandle !== me?.handle) return undefined;
+    return [...specs.values()].find(
+      (spec) => exactAgentId === spec.id || exactAgentId === `${memberHandle}::${spec.id}`
+    );
+  }
+
+  /** Map an explicitly scoped relay coordinate onto this editor, or decline. */
+  function locationUriFor(
+    member: RosterEntry,
+    agent: AttachedAgent,
+    presence: AgentPresence
+  ): vscode.Uri | undefined {
+    if (!presence.path || !presenceDecorations.isCurrent(presence)) return undefined;
+    if (presence.locationScope === "shared") {
+      if (!workspaceHost) return undefined;
+      if (workspaceHost !== me?.handle) return uriFor(presence.path);
+      const root = hostingWorkspaceRoot;
+      const target = root ? resolvePresencePath(root, presence.path) : undefined;
+      return target ? vscode.Uri.file(target) : undefined;
+    }
+    if (presence.locationScope !== "private" || !sharePrivateWorkspacePresence()) return undefined;
+    const spec = localSpecFor(member.handle, agent.id);
+    const root = spec?.cwd ?? editorWorkspaceRoot();
+    const target = root ? resolvePresencePath(root, presence.path) : undefined;
+    return target ? vscode.Uri.file(target) : undefined;
+  }
+
+  async function openAgentLocation(agentId: string): Promise<void> {
+    const member = latestRoster.find((entry) => entry.agents?.some((agent) => agent.id === agentId));
+    const agent = member?.agents.find((candidate) => candidate.id === agentId);
+    const presence = agent?.activity;
+    const uri = member && agent && presence ? locationUriFor(member, agent, presence) : undefined;
+    if (!uri || !presence) {
+      void vscode.window.showInformationMessage(
+        "That agent location is no longer available in this workspace."
+      );
+      return;
+    }
+    try {
+      const document = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(document, { preview: true });
+      const range = presenceRange(presence.line, presence.endLine, document.lineCount);
+      if (range) {
+        const startLine = range.start.line;
+        const endLine = range.end.line;
+        const selection = new vscode.Selection(
+          startLine,
+          0,
+          endLine,
+          document.lineAt(endLine).text.length
+        );
+        editor.selection = selection;
+        editor.revealRange(selection, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(`Could not open that agent location: ${message}`);
+    }
+  }
+
+  /** Remove invalidated coordinates from UI snapshots without mutating relay state. */
+  function rosterForDisplay(roster: RosterEntry[]): RosterEntry[] {
+    return roster.map((member) => ({
+      ...member,
+      agents: member.agents.map((agent) => {
+        const activity = agent.activity;
+        if (!activity || presenceDecorations.isCurrent(activity)) return agent;
+        return {
+          ...agent,
+          activity: {
+            ...activity,
+            path: undefined,
+            locationScope: undefined,
+            line: undefined,
+            endLine: undefined,
+          },
+        };
+      }),
+    }));
+  }
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration("ripieno.sharePrivateWorkspacePresence")) return;
+      refreshAgentViews();
+      presenceDecorations.update(latestRoster);
+      roomView.setRoster(rosterForDisplay(latestRoster), workspaceHost);
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      if (!hostingWorkspace) {
+        roomView.setWorkspaceHost(workspaceHost, hostedWorkspaceName());
+        return;
+      }
+      if (hostedWorkspaceFolder()) {
+        roomView.setWorkspaceHost(workspaceHost, hostedWorkspaceName());
+        return;
+      }
+
+      // A lease over a folder that is no longer open is a host of nothing.
+      // Release immediately; another member may safely take over afterwards.
+      relay?.send({ t: "claimWorkspace", claim: false });
+      hostingWorkspace = false;
+      hostingWorkspaceRoot = undefined;
+      applyWorkspaceHost(undefined);
+      note("The shared workspace is offline because its hosted folder was closed.");
+    })
+  );
 
   const roomsTree = new RoomsTreeProvider({
     attachAgent: (id) => void attachAgent(id),
@@ -388,6 +546,7 @@ export function activate(context: vscode.ExtensionContext): void {
         folder: agent.folder,
         permissions: agent.permissions,
         responseMode: agent.primary ? "automatic" : "mentions only",
+        sharesPrivateLocation: sharePrivateWorkspacePresence(),
       }))
     );
   }
@@ -979,11 +1138,27 @@ export function activate(context: vscode.ExtensionContext): void {
    * so mounting it again would be confusing rather than useful.
    */
   function applyWorkspaceHost(host: string | undefined): void {
+    let effectiveHost = host;
+    if (host === me?.handle) {
+      hostingWorkspaceRoot ??= editorWorkspaceRoot();
+      if (!hostedWorkspaceFolder()) {
+        // This can only be a stale claim from an older client/session. Never
+        // preserve it merely because the relay repeated it back to us.
+        relay?.send({ t: "claimWorkspace", claim: false });
+        hostingWorkspace = false;
+        hostingWorkspaceRoot = undefined;
+        effectiveHost = undefined;
+      }
+    } else {
+      hostingWorkspaceRoot = undefined;
+    }
+
+    workspaceHost = effectiveHost;
     // Only the host watches: everyone else's disk is irrelevant to the room.
-    if (host && host === me?.handle) startWatching();
+    if (effectiveHost && effectiveHost === me?.handle) startWatching();
     else stopWatching();
 
-    const someoneElse = host && host !== me?.handle ? host : undefined;
+    const someoneElse = effectiveHost && effectiveHost !== me?.handle ? effectiveHost : undefined;
     workspaceTree.setHost(someoneElse);
     workspaceFs.setRemote(
       someoneElse
@@ -994,6 +1169,9 @@ export function activate(context: vscode.ExtensionContext): void {
         : undefined
     );
     void vscode.commands.executeCommand("setContext", "ripieno.hasSharedWorkspace", Boolean(someoneElse));
+    presenceDecorations.update(latestRoster);
+    roomView.setWorkspaceHost(effectiveHost, hostedWorkspaceName());
+    refreshStatusBar();
   }
 
   /**
@@ -1034,21 +1212,140 @@ export function activate(context: vscode.ExtensionContext): void {
     if (hostingWorkspace) {
       relay.send({ t: "claimWorkspace", claim: false });
       hostingWorkspace = false;
+      hostingWorkspaceRoot = undefined;
+      applyWorkspaceHost(undefined);
       return;
     }
-    const go = await vscode.window.showWarningMessage(
-      "Host this room's shared workspace?",
-      {
-        modal: true,
-        detail:
-          "Other members' agents will be able to read, write and run commands in this folder. " +
-          "Each action still asks your approval, and the room records which agent did what.",
-      },
-      "Host the workspace"
-    );
-    if (go !== "Host the workspace") return;
+
+    let folder = editorWorkspaceFolder();
+    if (!folder) {
+      const parent = path.join(os.homedir(), "Documents", "Ripieno");
+      const choice = await vscode.window.showWarningMessage(
+        "No folder is open. Create a workspace for this room?",
+        {
+          modal: true,
+          detail:
+            `Ripieno can create a visible folder under ${parent} and add it to this window. ` +
+            "Other members' agents will be able to read, write and run commands there, with your approvals.",
+        },
+        "Create and host",
+        "Choose existing folder"
+      );
+      if (!choice) return;
+
+      try {
+        const uri =
+          choice === "Create and host"
+            ? await createRoomWorkspace(currentRoom)
+            : await chooseExistingWorkspace();
+        if (!uri) return;
+        folder = await attachWorkspaceFolder(uri);
+        if (!folder) {
+          void vscode.window.showErrorMessage(
+            `Ripieno could not add ${uri.fsPath} to this editor, so it was not hosted.`
+          );
+          return;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`Could not prepare the room workspace: ${message}`);
+        return;
+      }
+    } else {
+      const go = await vscode.window.showWarningMessage(
+        `Host “${folder.name}” as this room's shared workspace?`,
+        {
+          modal: true,
+          detail:
+            `Folder: ${folder.uri.fsPath}\n\n` +
+            "Other members' agents will be able to read, write and run commands in this folder. " +
+            "Each action still asks your approval, and the room records which agent did what.",
+        },
+        "Host the workspace"
+      );
+      if (go !== "Host the workspace") return;
+    }
+
+    hostingWorkspaceRoot = folder.uri.fsPath;
     relay.send({ t: "claimWorkspace", claim: true });
     hostingWorkspace = true;
+  }
+
+  async function createRoomWorkspace(room: string): Promise<vscode.Uri> {
+    const parent = path.join(os.homedir(), "Documents", "Ripieno");
+    const target = await availableRoomWorkspacePath(parent, room, async (candidate) => {
+      try {
+        await vscode.workspace.fs.stat(vscode.Uri.file(candidate));
+        return true;
+      } catch (error) {
+        if (error instanceof vscode.FileSystemError && error.code === "FileNotFound") return false;
+        throw error;
+      }
+    });
+    const uri = vscode.Uri.file(target);
+    await vscode.workspace.fs.createDirectory(uri);
+    return uri;
+  }
+
+  async function chooseExistingWorkspace(): Promise<vscode.Uri | undefined> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFolders: true,
+      canSelectFiles: false,
+      canSelectMany: false,
+      openLabel: "Use and host this folder",
+      title: "Choose the room workspace",
+    });
+    const uri = picked?.[0];
+    if (uri && uri.scheme !== "file") {
+      void vscode.window.showErrorMessage(
+        "Ripieno can host only a local filesystem folder in this version."
+      );
+      return undefined;
+    }
+    return uri;
+  }
+
+  async function attachWorkspaceFolder(
+    uri: vscode.Uri
+  ): Promise<vscode.WorkspaceFolder | undefined> {
+    const alreadyOpen = vscode.workspace.workspaceFolders?.find(
+      (candidate) =>
+        candidate.uri.scheme === "file" && sameWorkspaceRoot(candidate.uri.fsPath, uri.fsPath)
+    );
+    if (alreadyOpen) return alreadyOpen;
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer: NodeJS.Timeout | undefined;
+      const changed = vscode.workspace.onDidChangeWorkspaceFolders(() => finishIfOpen());
+      const finish = (folder: vscode.WorkspaceFolder | undefined) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        changed.dispose();
+        resolve(folder);
+      };
+      const finishIfOpen = () => {
+        const folder = vscode.workspace.workspaceFolders?.find(
+          (candidate) =>
+            candidate.uri.scheme === "file" &&
+            sameWorkspaceRoot(candidate.uri.fsPath, uri.fsPath)
+        );
+        if (folder) finish(folder);
+      };
+
+      const accepted = vscode.workspace.updateWorkspaceFolders(
+        vscode.workspace.workspaceFolders?.length ?? 0,
+        0,
+        { uri, name: path.basename(uri.fsPath) }
+      );
+      if (!accepted) {
+        finish(undefined);
+        return;
+      }
+      queueMicrotask(finishIfOpen);
+      timer = setTimeout(() => finish(undefined), 3_000);
+    });
   }
 
   /**
@@ -1831,23 +2128,13 @@ export function activate(context: vscode.ExtensionContext): void {
   async function pickWorkingFolder(
     name: string
   ): Promise<{ cwd?: string } | undefined> {
-    const here = vscode.workspace.workspaceFolders?.[0];
-    const choice = await vscode.window.showQuickPick(
-      [
-        {
-          label: here ? `$(folder) ${here.name}` : "$(folder) This workspace",
-          description: "the folder open in this window",
-          picked: true,
-        },
-        {
-          label: "$(folder-opened) Choose a folder…",
-          description: "another project — create a new folder in the dialog if you need one",
-        },
-      ],
+    const here = editorWorkspaceFolder();
+    const choice = await vscode.window.showQuickPick<WorkingFolderChoice>(
+      workingFolderChoices(here?.name),
       { title: `Where should "${name}" work?`, ignoreFocusOut: true }
     );
     if (!choice) return undefined;
-    if (choice.label.startsWith("$(folder) ")) return {};
+    if (choice.action === "current") return {};
 
     const picked = await vscode.window.showOpenDialog({
       canSelectFolders: true,
@@ -2008,6 +2295,18 @@ export function activate(context: vscode.ExtensionContext): void {
       approvals,
       permissionServerPath,
       workspaceServerPath,
+      presenceLocationScope: (hint) => {
+        const editorRoot = editorWorkspaceRoot();
+        const sharedRoot = workspaceHost === me?.handle ? hostingWorkspaceRoot : editorRoot;
+        return presenceLocationScope({
+          hint,
+          hasSharedWorkspace: Boolean(workspaceHost),
+          ownsSharedWorkspace: workspaceHost === me?.handle,
+          agentRoot: spec.cwd ?? editorRoot,
+          editorRoot: sharedRoot,
+          sharePrivateLocation: sharePrivateWorkspacePresence(),
+        });
+      },
       token: roomToken(),
       onStateChange: (agentId, state) => onAgentState(agentId, state),
       onHandoffRelease: (agentId, handoffId) => {
@@ -2048,7 +2347,7 @@ export function activate(context: vscode.ExtensionContext): void {
    */
   function startWatching(): void {
     if (watcher) return;
-    const folder = vscode.workspace.workspaceFolders?.[0];
+    const folder = hostedWorkspaceFolder();
     if (!folder) return;
 
     watcher = vscode.workspace.createFileSystemWatcher(
@@ -2413,6 +2712,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // A new room means the old agents are watching the wrong conversation.
     detachAll();
     latestRoster = [];
+    applyWorkspaceHost(undefined);
     currentRoom = room;
     me = member;
     refreshStatusBar();
@@ -2476,6 +2776,7 @@ export function activate(context: vscode.ExtensionContext): void {
     handoffAudit = [];
     handoffRevision = 0;
     latestRoster = [];
+    applyWorkspaceHost(undefined);
     pendingGoalMutations.clear();
     pendingContextMutations.clear();
     setInRoomContext(false);
@@ -2496,6 +2797,28 @@ export function activate(context: vscode.ExtensionContext): void {
   function handleConnectionState(state: ConnectionState): void {
     roomView.setConnection(state);
     roomsTree.setConnected(state === "online");
+    if (state !== "online") {
+      // A disconnected client cannot know whether the host, file or agent is
+      // still current. Keep the coarse roster for orientation, but withdraw
+      // exact coordinates until a fresh joined/roster snapshot arrives.
+      presenceDecorations.update([]);
+      const withoutLocations = latestRoster.map((member) => ({
+        ...member,
+        agents: member.agents.map((agent) => ({
+          ...agent,
+          activity: agent.activity
+            ? {
+                ...agent.activity,
+                path: undefined,
+                locationScope: undefined,
+                line: undefined,
+                endLine: undefined,
+              }
+            : undefined,
+        })),
+      }));
+      roomView.setRoster(withoutLocations, workspaceHost);
+    }
   }
 
   function handleServerMsg(msg: ServerMsg): void {
@@ -2503,6 +2826,8 @@ export function activate(context: vscode.ExtensionContext): void {
       case "joined":
         setInRoomContext(true);
         latestRoster = msg.roster;
+        hostingWorkspace = msg.workspaceHost === msg.you.handle;
+        applyWorkspaceHost(msg.workspaceHost);
         refreshStatusBar();
         setCanAttachAgentsContext(msg.you.role === "owner" || msg.you.role === "member");
         goals = msg.goals ?? [];
@@ -2517,7 +2842,7 @@ export function activate(context: vscode.ExtensionContext): void {
         roomView.setJoined(
           msg.room,
           msg.you,
-          msg.roster,
+          rosterForDisplay(msg.roster),
           msg.transcript,
           msg.mode,
           msg.actions ?? [],
@@ -2531,12 +2856,12 @@ export function activate(context: vscode.ExtensionContext): void {
           handoffAudit,
           handoffRevision,
           msg.drafts ?? [],
-          msg.usage ?? []
+          msg.usage ?? [],
+          workspaceHost,
+          hostedWorkspaceName()
         );
         roomsTree.setRoom(msg.room, msg.mode, msg.you.handle);
-        roomsTree.setRoster(msg.roster, msg.workspaceHost);
-        hostingWorkspace = msg.workspaceHost === msg.you.handle;
-        applyWorkspaceHost(msg.workspaceHost);
+        roomsTree.setRoster(msg.roster, workspaceHost);
         // No second setRoster here: it takes the host as an argument, so calling
         // it without one immediately after assigns undefined and the tree shows
         // nobody hosting until the next roster broadcast.
@@ -2549,16 +2874,16 @@ export function activate(context: vscode.ExtensionContext): void {
         break;
       case "roster":
         latestRoster = msg.roster;
+        hostingWorkspace = msg.workspaceHost === me?.handle;
+        applyWorkspaceHost(msg.workspaceHost);
         {
           const role = msg.roster.find((entry) => entry.handle === me?.handle)?.role;
           setCanAttachAgentsContext(role === "owner" || role === "member");
         }
-        roomView.setRoster(msg.roster);
-        roomsTree.setRoster(msg.roster, msg.workspaceHost);
+        roomView.setRoster(rosterForDisplay(msg.roster), workspaceHost);
+        roomsTree.setRoster(msg.roster, workspaceHost);
         // The relay is the authority: it releases the claim when the host
         // leaves, so believing our own flag would leave the UI lying.
-        hostingWorkspace = msg.workspaceHost === me?.handle;
-        applyWorkspaceHost(msg.workspaceHost);
         break;
       case "entry":
         roomView.addEntry(msg.entry);
@@ -2584,7 +2909,11 @@ export function activate(context: vscode.ExtensionContext): void {
       case "workspaceInvalidated":
         // The host's disk changed by some route the room never saw — an agent's
         // own local write, or a human saving a file. Drop those paths.
-        for (const changed of msg.paths) workspaceFs.invalidatePath(changed);
+        for (const changed of msg.paths) {
+          workspaceFs.invalidatePath(changed);
+          presenceDecorations.invalidateSharedPath(changed);
+        }
+        roomView.setRoster(rosterForDisplay(latestRoster), workspaceHost);
         workspaceTree.refresh();
         break;
       case "usage":
@@ -2596,6 +2925,10 @@ export function activate(context: vscode.ExtensionContext): void {
         // The provenance stream doubles as cache invalidation: a write to a path
         // evicts exactly that path, so an open tab refreshes rather than lying.
         workspaceFs.noteAction(msg.entry);
+        if (msg.entry.verb === "wrote" || msg.entry.verb === "edited") {
+          presenceDecorations.invalidateSharedPath(msg.entry.target, msg.entry.ts);
+          roomView.setRoster(rosterForDisplay(latestRoster), workspaceHost);
+        }
         break;
       case "goals":
         if (msg.roomRevision < goalsRevision) break;
