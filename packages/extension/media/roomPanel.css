@@ -360,3 +360,19 @@ button:disabled { opacity: .55; cursor: default; }
 .context-action { cursor:pointer; color:var(--vscode-button-foreground); background:var(--vscode-button-background); border:0; padding:7px 10px; border-radius:4px; } .context-action:disabled { opacity:.5; cursor:default; }
 
 #brainList { max-height:540px; overflow:auto; padding:2px; }
+
+[hidden] { display: none !important; }
+.room-workbench { padding: 18px clamp(14px, 3vw, 32px) 32px; }
+h1 { font-size: 25px; }
+.workspace-nav { display: flex; gap: 6px; margin: 16px 0; border-bottom: 1px solid var(--vscode-widget-border); padding-bottom: 8px; }
+.workspace-nav button, .workspace-actions button, .setup-guide button { padding: 6px 10px; border: 1px solid var(--vscode-widget-border); border-radius: 5px; color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); cursor: pointer; }
+.workspace-nav button[aria-pressed="true"] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+.setup-guide { padding: 12px; border: 1px solid var(--vscode-widget-border); border-radius: 6px; }
+.setup-guide ol { display: flex; flex-wrap: wrap; gap: 8px 24px; padding-left: 20px; margin: 0 0 12px; }
+.setup-guide li.complete { color: var(--vscode-testing-iconPassed); }
+#setupActions, .workspace-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+#setupHint { margin: 10px 0 0; }
+.workspace-actions { margin-top: 8px; }
+.overview-metrics { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); }
+.metric { padding: 10px; }
+.brain-card { padding: 12px; }

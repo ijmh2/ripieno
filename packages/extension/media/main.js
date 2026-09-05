@@ -127,14 +127,14 @@
   /* Rendering                                                         */
   /* ---------------------------------------------------------------- */
 
-  let activeSurface = ["room", "context", "agents"].includes(vscode.getState()?.surface)
+  let activeSurface = ["room", "work", "context", "agents"].includes(vscode.getState()?.surface)
     ? vscode.getState().surface
     : "room";
 
   function showSurface(surface, focus = false) {
-    if (!["room", "context", "agents"].includes(surface)) return;
+    if (!["room", "work", "context", "agents"].includes(surface)) return;
     activeSurface = surface;
-    const panels = { room: roomPanelEl, context: contextPanelEl, agents: agentsPanelEl };
+    const panels = { work: document.getElementById("workPanel"), room: roomPanelEl, context: contextPanelEl, agents: agentsPanelEl };
     for (const button of surfaceTabsEl.querySelectorAll("[role=tab]")) {
       const selected = button.dataset.surface === surface;
       button.classList.toggle("active", selected);
@@ -146,16 +146,22 @@
     vscode.setState({ ...(vscode.getState() || {}), surface });
   }
 
+  for (const id of ["openWorkspace", "openWork", "openBrain"]) document.getElementById(id)?.addEventListener("click", () => vscode.postMessage({ type: "workspaceAction", action: id === "openWork" ? "openWork" : id === "openBrain" ? "openBrain" : "openWorkspace" }));
+
   surfaceTabsEl.addEventListener("click", (event) => {
     const button = event.target.closest("[data-surface]");
-    if (button) showSurface(button.dataset.surface);
+    if (button) {
+      showSurface(button.dataset.surface);
+      if (button.dataset.surface === "work") vscode.postMessage({ type: "workspaceAction", action: "openWork" });
+    }
   });
   surfaceTabsEl.addEventListener("keydown", (event) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    const order = ["room", "context", "agents"];
+    const order = ["room", "work", "context", "agents"];
     const delta = event.key === "ArrowRight" ? 1 : -1;
     const next = order[(order.indexOf(activeSurface) + delta + order.length) % order.length];
     showSurface(next, true);
+    if (next === "work") vscode.postMessage({ type: "workspaceAction", action: "openWork" });
     event.preventDefault();
   });
   showSurface(activeSurface);
@@ -207,6 +213,7 @@
 
   function renderOnboarding(next) {
     onboarding = next;
+    if (currentRoom) document.getElementById("resumeRoom").hidden = true;
     if (!next || !Array.isArray(next.steps) || next.steps.length !== 3) {
       onboardingEl.hidden = true;
       return;
@@ -237,6 +244,7 @@
     onboardingHelpEl.hidden = next.showAgentHelp !== true;
   }
 
+  document.getElementById("resumeRoom").addEventListener("click", () => vscode.postMessage({type:"workspaceAction", action:"resumeRoom"}));
   onboardingActionEl.addEventListener("click", () => {
     const action = onboarding?.action?.kind;
     if (
@@ -728,6 +736,11 @@
   window.addEventListener("message", (event) => {
     const msg = event.data;
     switch (msg.type) {
+      case "resumeRoom": {
+        const button = document.getElementById("resumeRoom"); button.hidden = !msg.room || Boolean(currentRoom); button.textContent = msg.room ? `Rejoin ${msg.room}` : ""; break;
+      }
+      case "showChat":
+        showSurface("room"); composerEl.focus(); break;
       case "snapshot":
         applySnapshot(msg);
         break;

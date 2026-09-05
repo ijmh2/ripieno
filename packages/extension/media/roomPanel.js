@@ -29,6 +29,7 @@
 
   const restored = vscode.getState() || {};
   let snapshot;
+  let page = ["work", "brain", "agents"].includes(restored.page) ? restored.page : "work";
   let selectedAgentId = typeof restored.selectedAgentId === "string" ? restored.selectedAgentId : undefined;
   let followedAgentId = typeof restored.followedAgentId === "string" ? restored.followedAgentId : undefined;
   const enabledFilters = new Set(
@@ -36,12 +37,56 @@
   );
   let lastFollowActivity;
 
+  function showPage(next) {
+    page = next;
+    for (const section of document.querySelectorAll("[data-section]")) section.hidden = section.dataset.section !== page;
+    for (const button of document.querySelectorAll("[data-page]")) button.setAttribute("aria-pressed", String(button.dataset.page === page));
+    persist();
+  }
+  document.getElementById("workspaceNav").addEventListener("click", event => {
+    const button = event.target.closest("button");
+    if (button?.dataset.page) showPage(button.dataset.page);
+    else if (button?.dataset.workspaceAction) vscode.postMessage({type:"workspaceAction", action:button.dataset.workspaceAction});
+  });
+  function workspaceButton(label, action) {
+    const button = element("button", "board-button", label); button.type = "button";
+    button.dataset.workspaceFocus = action;
+    button.addEventListener("click", () => vscode.postMessage({ type:"workspaceAction", action }));
+    return button;
+  }
+  function renderSetup() {
+    const focused = document.activeElement?.dataset?.workspaceFocus;
+    document.getElementById("extensionVersion").textContent = snapshot.extensionVersion ? `v${snapshot.extensionVersion}` : "";
+    const steps = document.getElementById("setupSteps"); steps.replaceChildren();
+    const ready = snapshot.onboarding?.complete && !snapshot.onboarding?.readOnly;
+    for (const [label, done] of [["Open folder", snapshot.hasLocalFolder || snapshot.workspace.hostHandle], ["Start or join room", snapshot.room], ["Connect agent", ready]]) {
+      const item = element("li", done ? "complete" : "", `${done ? "✓ " : ""}${label}`); steps.appendChild(item);
+    }
+    const actions = document.getElementById("setupActions"); actions.replaceChildren();
+    let hint = "";
+    if (!snapshot.hasLocalFolder && !snapshot.workspace.hostHandle) { actions.appendChild(workspaceButton("Open folder…", "openFolder")); hint = "Choose a project folder for your agent. You can also join a hosted room."; }
+    if (!snapshot.room && snapshot.resumeRoom) actions.appendChild(workspaceButton(`Rejoin ${snapshot.resumeRoom}`, "resumeRoom"));
+    if (!snapshot.room) actions.append(workspaceButton("Start a room", "startSolo"), workspaceButton("Join room…", "joinRoom"));
+    else if (snapshot.connection !== "online") hint = "The room is reconnecting. Work and agent actions become available when it is online.";
+    else if (snapshot.you?.role === "viewer") hint = "You are viewing this room. Ask its owner for member access to connect an agent or manage work.";
+    else if (snapshot.onboarding?.action) {
+      actions.appendChild(workspaceButton(snapshot.onboarding.action.label, snapshot.onboarding.action.kind));
+      hint = snapshot.onboarding.action.kind === "addAgent" ? "Choose your provider and complete its sign-in in Add agent. For Codex, sign in with codex login." : "Connect your configured agent. If sign-in has expired, complete the provider's login and try again.";
+    } else if (ready) { actions.appendChild(workspaceButton("Send a task in Chat", "chat")); hint = "Address your agent with @ in Chat. Saved tasks track ownership and progress; they do not start an agent."; }
+    document.getElementById("setupHint").textContent = hint;
+    const workspaceActions = document.getElementById("workspaceActions"); workspaceActions.replaceChildren();
+    if (snapshot.connection === "online" && snapshot.workspace.hostHandle) workspaceActions.appendChild(workspaceButton("Open shared folder in Explorer", "mountWorkspace"));
+    else if (snapshot.connection === "online" && ["owner", "member"].includes(snapshot.you?.role)) workspaceActions.appendChild(workspaceButton("Share a folder…", "hostWorkspace"));
+    document.getElementById("setupGuide").hidden = Boolean(ready && snapshot.transcriptCount > 0);
+    if (focused) [...document.querySelectorAll("[data-workspace-focus]")].find(button => button.dataset.workspaceFocus === focused)?.focus({preventScroll:true});
+  }
+
   function isStatusGroup(value) {
     return value === "active" || value === "idle" || value === "unknown";
   }
 
   function persist() {
-    vscode.setState({ selectedAgentId, followedAgentId, filters: [...enabledFilters] });
+    vscode.setState({ page, selectedAgentId, followedAgentId, filters: [...enabledFilters] });
   }
 
   function element(tag, className, text) {
@@ -96,9 +141,9 @@
       metric("People", snapshot.connection === "online" ? `${snapshot.presentMemberCount}/${snapshot.memberCount}` : snapshot.memberCount, snapshot.connection === "online" ? "currently present" : "last known roster"),
       metric("Agents", snapshot.agents.length, `${snapshot.agents.filter((agent) => agent.statusGroup === "active").length} active`),
       metric("Goals", snapshot.activeGoals.length, "active room goals"),
-      metric("Handoffs", snapshot.pendingHandoffCount, "open lifecycle items"),
-      metric("Work", snapshot.actionCount, "durable actions"),
-      metric("Context", snapshot.contextCount, "live shared items")
+      metric("Handoffs", snapshot.pendingHandoffCount, "open handoffs"),
+      metric("Work", snapshot.actionCount, "recorded actions"),
+      metric("Brain", snapshot.contextCount, "live shared items")
     );
 
     roomPulseEl.replaceChildren();
@@ -130,6 +175,7 @@
       inspect.addEventListener("click", () => {
         enabledFilters.add(agent.statusGroup);
         followedAgentId = undefined;
+        showPage("agents");
         selectedAgentId = agent.agentId;
         persist();
         renderFilters();
@@ -179,8 +225,8 @@
     document.getElementById("claimCount").textContent = snapshot.connection === "online" ? `${board.claims.length} active claim${board.claims.length === 1 ? "" : "s"}` : "Claims unavailable";
     const attention = [];
     if (board.overlapCount) attention.push(`${board.overlapCount} possible overlap${board.overlapCount === 1 ? "" : "s"}`);
-    if (board.pendingApprovalCount) attention.push(`${board.pendingApprovalCount} approval${board.pendingApprovalCount === 1 ? "" : "s"} waiting in the Room sidebar`);
-    if (snapshot.pendingHandoffCount) attention.push(`${snapshot.pendingHandoffCount} open handoff${snapshot.pendingHandoffCount === 1 ? "" : "s"} in the Room sidebar`);
+    if (board.pendingApprovalCount) attention.push(`${board.pendingApprovalCount} approval${board.pendingApprovalCount === 1 ? "" : "s"} waiting in Chat`);
+    if (snapshot.pendingHandoffCount) attention.push(`${snapshot.pendingHandoffCount} open handoff${snapshot.pendingHandoffCount === 1 ? "" : "s"} in Chat`);
     const attentionEl = document.getElementById("boardAttention");
     const attentionText = attention.join(" · ");
     if (attentionEl.textContent !== attentionText) attentionEl.textContent = attentionText;
@@ -349,6 +395,7 @@
   }
 
   function selectAgent(agentId, focus) {
+    showPage("agents");
     selectedAgentId = agentId;
     if (followedAgentId && followedAgentId !== agentId) followedAgentId = undefined;
     persist();
@@ -405,6 +452,7 @@
       renderAgentDetail(agent);
     });
     controls.append(state, follow);
+    if (agent.state === "waiting-approval") controls.appendChild(workspaceButton("Review approval in Chat", "chat"));
     header.append(identity, controls);
     detailEl.appendChild(header);
 
@@ -439,7 +487,7 @@
 
     if (agent.proposal) {
       const proposal = detailSection("Proposed change", "proposal-card");
-      const status = element("p", "proposal-status", "Temporary proposal · not applied");
+      const status = element("p", "proposal-status", "Proposed change · not applied");
       status.title = "Only an approved write followed by durable Work can confirm this change";
       proposal.append(status, element("code", "proposal-path", agent.proposal.path));
       const patch = element("pre", "proposal-patch", agent.proposal.patch);
@@ -464,7 +512,7 @@
       proposal.appendChild(element(
         "p",
         "detail-note",
-        "A streamed proposal never writes a file. Approved writes reconcile into durable Work below."
+        "Review this proposal before approving a write. Recorded actions below show what was applied."
       ));
       grid.appendChild(proposal);
     }
@@ -503,7 +551,7 @@
         element("time", "detail-meta", formatTime(action.ts))
       );
       return item;
-    }, "No durable Work entries for this agent."));
+    }, "No recorded actions for this agent."));
     grid.appendChild(actions);
 
     const usage = detailSection("Usage", "usage-card");
@@ -549,16 +597,43 @@
   const brainFilter = document.getElementById("brainFilter");
   brainSearch?.addEventListener("input", () => renderBrain());
   brainFilter?.addEventListener("change", () => renderBrain());
+  let brainKeyScope = "brain";
   function sharedAction(label, action, id, disabled = false) {
-    const button = element("button", "context-action", label); button.type = "button"; button.disabled = disabled; button.dataset.brainKey = `${action}:${id || "new"}`;
+    const button = element("button", "context-action", label); button.type = "button"; button.disabled = disabled; button.dataset.brainKey = `${brainKeyScope}:${action}:${id || "new"}`;
     button.addEventListener("click", () => vscode.postMessage({ type: "collaborationAction", action, ...(id ? { id } : {}) })); return button;
+  }
+  function renderWorkTasks(canAct) {
+    brainKeyScope = "work";
+    const actions = document.getElementById("workTaskActions"); actions.replaceChildren(sharedAction("New task", "task", undefined, !canAct), sharedAction("New plan", "plan", undefined, !canAct));
+    const list = document.getElementById("workTasks"); list.replaceChildren();
+    const records = (snapshot.context || []).filter(item => ["task", "plan"].includes(item.collaboration?.type) && !["archived", "superseded"].includes(item.status));
+    for (const item of records) {
+      const r = item.collaboration;
+      const card = element("article", "brain-card");
+      const progress = {todo:"To do", doing:"In progress", done:"Done"}[r.progress];
+      card.append(element("strong", "", item.title), element("p", "detail-meta", `${progress} · ${r.assigneeHandle ? `@${r.assigneeHandle}` : "Unassigned"}${r.type === "plan" ? ` · ${r.steps.filter(step => step.status === "done").length}/${r.steps.length} steps` : ""}`));
+      const editor = item.authorHandle === snapshot.you?.handle || snapshot.you?.role === "owner";
+      const buttons = element("div", "brain-card-actions");
+      if (r.type !== "plan") buttons.appendChild(sharedAction("Update progress…", "progress", item.id, !canAct || !(editor || r.assigneeHandle === snapshot.you?.handle)));
+      buttons.append(sharedAction("Assign owner…", "assign", item.id, !canAct || !editor), sharedAction(r.type === "plan" ? "Manage steps / reply…" : "Details / reply…", "edit", item.id, !canAct));
+      const claim = snapshot.board.claims.find(claim => claim.id === r.claimId);
+      const agent = snapshot.agents.find(agent => agent.agentId === claim?.agentId);
+      if (agent) {
+        const inspect = element("button", "context-action", `View ${agent.label}`); inspect.type = "button"; inspect.addEventListener("click", () => { enabledFilters.add(agent.statusGroup); selectAgent(agent.agentId, true); }); buttons.appendChild(inspect);
+      }
+      card.appendChild(buttons); list.appendChild(card);
+    }
+    if (!records.length) list.appendChild(element("p", "detail-note", "Create your first task, choose an owner, then discuss it with your agent in Chat."));
   }
   function renderBrain() {
     const list = document.getElementById("brainList"); if (!list) return;
     const focusedKey = document.activeElement?.dataset?.brainKey;
     const canAct = snapshot.collaborationSupported !== false && snapshot.connection === "online" && ["owner", "member"].includes(snapshot.you?.role);
+    brainKeyScope = "brain";
     const actions = document.getElementById("brainActions"); actions.replaceChildren();
-    for (const [label, action] of [["New plan", "plan"], ["New task", "task"], ["Remember", "memory"], ["Continue in Amoeba ↗", "export"]]) actions.appendChild(sharedAction(label, action, undefined, action === "export" ? !snapshot.room : !canAct));
+    for (const [label, action] of [["New plan", "plan"], ["New task", "task"], ["Remember", "memory"]]) actions.appendChild(sharedAction(label, action, undefined, !canAct));
+    renderWorkTasks(canAct);
+    brainKeyScope = "brain";
     list.replaceChildren(); const search = (brainSearch.value || "").toLowerCase(); const filter = brainFilter.value;
     const records = (snapshot.context || []).filter(item => {
       const retired = ["archived", "superseded"].includes(item.status);
@@ -600,7 +675,8 @@
     if (focusedKey) {
       const replacement = [...document.querySelectorAll("[data-brain-key]")].find(node => node.dataset.brainKey === focusedKey);
       if (replacement && !replacement.disabled) replacement.focus({preventScroll:true});
-      else brainSearch.focus({preventScroll:true});
+      else if (page === "brain") brainSearch.focus({preventScroll:true});
+      else if (page === "work") claimTask.focus({preventScroll:true});
     }
   }
 
@@ -615,6 +691,8 @@
       announcementsEl.textContent = `${followed.label} is ${statusLabel(followed)}: ${followed.currentTask}`;
     }
     snapshot = next;
+    renderSetup();
+    showPage(page);
     renderOverview();
     renderBoard();
     renderBrain();
@@ -624,6 +702,7 @@
 
   window.addEventListener("message", (event) => {
     const message = event.data;
+    if (message?.type === "navigateWorkspace" && ["work", "brain", "agents"].includes(message.page)) { showPage(message.page); return; }
     if (message?.type === "claimResult") {
       if (message.ok && pendingClaimAction === "create" && submittedTask === claimTask.value) { claimTask.value = ""; claimPaths.value = ""; claimGoal.value = ""; }
       pendingClaimAction = undefined;

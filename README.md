@@ -87,6 +87,22 @@ real relay, a real agent host and a real subprocess and asserts on the prompt th
 agent was handed (it immediately found that every CLI agent had been silently
 running Claude Code); another checks the extension manifest against itself.
 
+## Coordinate the work
+
+Ripieno includes a live team board, human-owned work claims, shared plans and
+assigned tasks. Brain keeps searchable, attributed memories and code discussions.
+Select shared code to create an anchored record; changed files are detected
+before navigating an old anchor. Handoff recovery makes interrupted transfers
+visible and keeps retries explicit.
+
+These features are included in the extension. A self-hosted shared relay must
+also be updated to support plans and claims. Task status and work claims express
+human coordination; they do not automatically launch agents or prove that a
+change has been reviewed.
+
+See the [extension guide](packages/extension/README.md) for everyday use and the
+[release guide](docs/releases.md) for building a versioned preview.
+
 ## Try it in one minute, alone
 
 Nothing to deploy, no account, no token.
@@ -100,9 +116,11 @@ your editor — VS Code, Insiders, Cursor, Windsurf, Antigravity, VSCodium or
 Positron, found on `PATH` or inside the application bundle, because the `code`
 command is not on `PATH` by default on macOS and most people never add it.
 
-Two steps are left and both are genuinely manual: reload the window, then
-**Ripieno: Join Room** and type any room code. Leave `ripieno.relayUrl` empty
-and the extension runs a relay on this machine.
+Reload the window, open a project folder, then run **Ripieno: Start a Room for
+Yourself**. Leave `ripieno.relayUrl` empty and the extension runs a relay on this
+machine. Open Ripieno in the Activity Bar for **Chat**, **Work**, **Brain** and
+**Agents**, or choose **Open workspace** for the full view. Existing rooms can
+be opened with **Ripieno: Join Room**.
 
 If no editor is found, setup prints the absolute path to the `.vsix` and the two
 clicks that install it by hand.

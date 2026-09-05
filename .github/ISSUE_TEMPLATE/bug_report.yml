@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: Ripieno version or commit
-      placeholder: 0.0.1 / dee945e
+      placeholder: 0.0.2 / commit hash
     validations:
       required: true
   - type: input

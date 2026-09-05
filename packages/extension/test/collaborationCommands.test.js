@@ -5,7 +5,7 @@ const Module=require("node:module");const resolve=Module._resolveFilename;
 Module._resolveFilename=function(request,...rest){return request==="vscode"?path.join(__dirname,"vscode-stub.js"):resolve.call(this,request,...rest);};
 const vscode=require("./vscode-stub.js");
 vscode.Selection=class{constructor(start,end){this.start=start;this.end=end;}};
-const {CollaborationCommands,digestCode,anchorMatches,continuationExport}=require("../dist/collaborationCommands.js");
+const {CollaborationCommands,digestCode,anchorMatches}=require("../dist/collaborationCommands.js");
 function snapshot(){return {online:true,room:"room",handle:"alice",host:"alice",root:"/shared",context:[],goals:[],claims:[],roster:[{handle:"alice",role:"owner"},{handle:"bob",role:"member"}],handoffs:[]};}
 function record(){return {id:"context_abc",title:"Review",body:"Rationale",tags:[],kind:"note",status:"accepted",authorHandle:"alice",version:1,collaboration:{type:"task",assigneeHandle:"bob",progress:"todo",steps:[]}};}
 function harness(s){let current=s;const sent=[];const warnings=[];vscode.window.showInformationMessage=async t=>{warnings.push(t);};vscode.window.showWarningMessage=async t=>{warnings.push(t);};return {commands:new CollaborationCommands(()=>current,m=>sent.push(m),p=>vscode.Uri.file(`/shared/${p}`)),sent,warnings,set:s=>current=s};}
@@ -25,10 +25,6 @@ test("assigned member can update progress without sending someone else's body",a
 });
 test("discussion creates a separate attributed reply rather than rewriting the parent",async()=>{
  const s=snapshot();s.handle="bob";s.context=[record()];const h=harness(s);vscode.window.showQuickPick=async()=>"Add discussion reply";vscode.window.showInputBox=async()=>"A reviewer comment";await h.commands.edit("context_abc");assert.equal(h.sent[0].t,"contextCreate");assert.equal(h.sent[0].collaboration.replyTo,"context_abc");assert.equal(h.sent[0].body,"A reviewer comment");assert.equal(h.sent[0].authorHandle,undefined);
-});
-test("export uses an allowlist and does not serialize local configuration or provider continuation",()=>{
- const s=snapshot();s.context=[{...record(),body:"Private /Users/alice/keys and sk-abcdefghijklmnop"}];s.providerSession="secret-session";s.privatePath="/Users/private/key";s.handoffs=[{id:"h",task:"Continue",status:"outcomeUnknown",sourceOwnerHandle:"alice",targetHandle:"bob",continuation:{privateToken:"private-token"},nonce:"nonce-secret"}];
- const out=continuationExport(s);assert.match(out,/outcomeUnknown/);assert.match(out,/Manual continuation/);assert.doesNotMatch(out,/secret-session|private-token|nonce-secret|\/Users\/|sk-abcdefghijklmnop|\/shared/);
 });
 
 test("selected shared editor code creates an anchored comment and converts to an assigned task",async()=>{

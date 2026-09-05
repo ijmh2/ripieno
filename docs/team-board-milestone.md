@@ -1,6 +1,6 @@
-# Ripieno: first Amoeba teaser milestone
+# Ripieno: team board and work claims
 
-Implemented in `/Users/ivan/Documents/Codex/ripieno-yc-multiplayer` on branch `codex/yc-multiplayer`. Changes remain local and uncommitted. The existing Phase 6 proposed-diff changes are retained in the build.
+Implemented as part of Ripieno and merged into `main` at `3a05165`. The build includes the existing proposed-diff review workflow. This document records the team-board milestone; current setup instructions are in the extension README.
 
 ## What is ready
 
@@ -32,4 +32,4 @@ Claims are advisory intentions, not file locks. File warnings compare exact path
 
 ## Next milestone
 
-Provider event verification is now implemented in the [provider activity milestone](provider-activity-milestone.md). Anchored code comments, richer shared plans/memory, durable handoff recovery, and migration into the Amoeba IDE remain future work. No extension was installed into your editor and nothing was pushed or deployed.
+Provider verification is described in the [provider activity milestone](provider-activity-milestone.md). Anchored code comments, shared plans, Brain memory and handoff recovery are implemented in the [shared-work milestone](shared-work-brain-milestone.md). The combined build was installed in Antigravity and merged into `main`.

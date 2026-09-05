@@ -2,9 +2,17 @@
 
 All notable changes to the Ripieno extension will be documented here.
 
-## Unreleased
+## 0.0.2 — Preview
 
-- No pending changes are documented yet.
+- Team board with attributed agent activity and human-owned work claims.
+- Shared plans with dependencies, assigned tasks and searchable Brain memory.
+- Code-anchored discussions and explicit handoff recovery.
+- More reliable Codex and Claude completion/error handling.
+- Chat, Work, Brain and Agents navigation with guided first-session setup.
+- Persistent rejoin action after reload and a visible installed build version.
+
+This preview is a standalone Ripieno extension. Existing room records remain
+compatible; shared relays need the matching update for plans and work claims.
 
 ## 0.0.1 — Preview
 

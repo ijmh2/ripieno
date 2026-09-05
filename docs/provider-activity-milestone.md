@@ -3,9 +3,9 @@
 Ripieno now enables Codex's structured activity output by default, on top of the
 live team board and work claims milestone.
 
-Changes are local in `/Users/ivan/Documents/Codex/ripieno-yc-multiplayer` on
-`codex/yc-multiplayer`, including the existing uncommitted proposal work.
-Nothing has been installed, pushed, or deployed.
+Merged into `main` at `3a05165`, including the existing proposed-diff review
+workflow. The combined extension was installed in Antigravity. This document
+records the provider milestone; current setup instructions are in the extension README.
 
 ## Try it
 

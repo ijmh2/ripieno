@@ -38,9 +38,6 @@ Older plain context remains readable as Brain memory.
   choose an owned attached agent and use the existing nonce/version guarded
   relay lifecycle. Retry explicitly warns that prior execution may have happened.
   Expired offers need a new offer; they are not silently retried.
-- **Continue in Amoeba** saves an explicit JSON continuation bundle, then offers
-  the verified public website. It is a manual export: no invented deep link,
-  claimed API import, provider-session transfer or automatic site publication.
 
 ## Authority and freshness
 
@@ -74,9 +71,6 @@ reference data, never promoted to higher-priority instructions.
   count toward that same bound.
 - Work claims are leases and task/plan progress is durable. Completion of a plan
   is not a claim that an agent ran, a file was written or a goal was completed.
-- Export contains shared content, including user-authored task descriptions. It
-  omits private provider configuration, raw transcripts and frozen provider
-  continuation data, and requires manual review/use in the destination.
 
 ## Verification
 
@@ -85,11 +79,11 @@ reference data, never promoted to higher-priority instructions.
 - Expanded focused suite: **32/32 passed**, including authenticated raw WebSocket
   mutation checks and actual `FileRoomStore` JSON persistence/replay.
 - Latest extension-only native/UI suite: **20/20 passed** after capability
-  handshake ordering and export redaction changes.
+  handshake ordering changes.
 - Full monorepo typecheck passed; latest extension typecheck and `git diff
   --check` passed after the final extension edits.
 - A separate compact terminal-receipt regression covers completed, failed and
   outcome-unknown receipt replay without a second claim or provider execution.
 
-The test counts above describe the runs at implementation handoff. The final
-review/package owner should record any later full-suite run with the package.
+The test counts above describe the runs at implementation handoff. The last full-suite rerun was stopped at the user's request so manual editor
+testing could begin. No later complete full-suite result is claimed.

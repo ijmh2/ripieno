@@ -122,6 +122,8 @@ function emptyState(connection: ConnectionState): RoomState {
 
 /** Messages the extension host pushes into the webview. */
 type ToWebview =
+  | { type: "showChat" }
+  | { type: "resumeRoom"; room?: string }
   | {
       type: "snapshot";
       room?: string;
@@ -220,7 +222,8 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     private readonly onOpenAgentLocation: (agentId: string) => void,
     private readonly onOpenAgentProposal: (agentId: string) => void,
     private readonly onClaimAction: (message: ClaimPanelMessage) => void = () => undefined,
-    private readonly onCollaborationAction: (action: string, id?: string) => void = () => undefined
+    private readonly onCollaborationAction: (action: string, id?: string) => void = () => undefined,
+    private readonly extensionVersion = ""
   ) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -232,12 +235,13 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.renderHtml(webviewView.webview);
 
     webviewView.webview.onDidReceiveMessage((raw: unknown) => {
-      if (this.handleCollaborationMessage(raw)) return;
+      if (this.handleWorkspaceMessage(raw) || this.handleCollaborationMessage(raw)) return;
       const msg = parseRoomViewMessage(raw);
       if (!msg) return;
 
       if (msg.type === "ready") {
         this.postSnapshot();
+        this.post({ type: "resumeRoom", room: this.resumeRoom });
       } else if (msg.type === "send") {
         this.onComposerSend(msg.text);
       } else if (msg.type === "contextCreate") {
@@ -278,13 +282,40 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
 
   setCollaborationSupported(supported: boolean): void { this.state.collaborationSupported = supported; this.postRoomPanelSnapshot(); }
 
+  private resumeRoom?: string;
+  private initialPanelPage?: "work" | "brain";
+  setResumeRoom(room?: string): void { this.resumeRoom = room; this.post({ type: "resumeRoom", room }); this.postRoomPanelSnapshot(); }
+
+  private handleWorkspaceMessage(value: unknown): boolean {
+    if (!value || typeof value !== "object") return false;
+    const v = value as Record<string, unknown>;
+    if (v.type !== "workspaceAction") return false;
+    if (Object.keys(v).length !== 2 || typeof v.action !== "string") return true;
+    const online = this.state.connection === "online";
+    const member = this.state.you?.role === "owner" || this.state.you?.role === "member";
+    if (v.action === "resumeRoom" && !this.state.room && this.resumeRoom) void vscode.commands.executeCommand("ripieno.resumeRoom");
+    else if (v.action === "openWorkspace") this.openRoomPanel();
+    else if (v.action === "openWork") this.openRoomPanel("work");
+    else if (v.action === "openBrain") this.openRoomPanel("brain");
+    else if (v.action === "chat") {
+      void vscode.commands.executeCommand("ripieno.room.focus").then(() => this.post({ type: "showChat" }));
+    } else if (v.action === "openFolder") void vscode.commands.executeCommand("vscode.openFolder");
+    else if (v.action === "hostWorkspace" && online && member && !this.state.workspaceHost) void vscode.commands.executeCommand("ripieno.hostWorkspace");
+    else if (v.action === "mountWorkspace" && online && this.state.workspaceHost) void vscode.commands.executeCommand("ripieno.mountWorkspace");
+    else if (["startSolo", "joinRoom", "addAgent", "attachAgent"].includes(v.action)) {
+      const command = onboardingCommandFor(v.action as Parameters<typeof onboardingCommandFor>[0], this.state);
+      if (command) void vscode.commands.executeCommand(command);
+    }
+    return true;
+  }
+
   private handleCollaborationMessage(value: unknown): boolean {
     if (!value || typeof value !== "object") return false;
     const v = value as Record<string, unknown>;
     if (v.type !== "collaborationAction") return false;
     if (Object.keys(v).some(k => !["type", "action", "id"].includes(k))) return true;
-    if (typeof v.action !== "string" || !["open", "edit", "comment", "task", "plan", "memory", "export"].includes(v.action)) return true;
-    if (v.action === "open" || v.action === "edit") {
+    if (typeof v.action !== "string" || !["open", "edit", "comment", "task", "plan", "memory", "progress", "assign"].includes(v.action)) return true;
+    if (v.action === "open" || v.action === "edit" || v.action === "progress" || v.action === "assign") {
       if (typeof v.id !== "string" || !this.state.context.some(c => c.id === v.id)) return true;
     } else if (v.id !== undefined) return true;
     this.onCollaborationAction(v.action, typeof v.id === "string" ? v.id : undefined);
@@ -292,12 +323,14 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Open (or reveal) the editor-sized Room overview and exact-agent tabs. */
-  openRoomPanel(): void {
+  openRoomPanel(page?: "work" | "brain"): void {
     if (this.roomPanel) {
-      this.roomPanel.reveal(this.roomPanel.viewColumn, true);
+      this.roomPanel.reveal(this.roomPanel.viewColumn, false);
       this.postRoomPanelSnapshot();
+      if (page) void this.roomPanel.webview.postMessage({ type: "navigateWorkspace", page });
       return;
     }
+    this.initialPanelPage = page;
 
     const panel = vscode.window.createWebviewPanel(
       "ripieno.roomPanel",
@@ -312,7 +345,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     this.roomPanel = panel;
     panel.webview.html = this.renderRoomPanelHtml(panel.webview);
     panel.webview.onDidReceiveMessage((value: unknown) => {
-      if (this.handleCollaborationMessage(value)) return;
+      if (this.handleWorkspaceMessage(value) || this.handleCollaborationMessage(value)) return;
       const handoffMessage = parseRoomViewMessage(value);
       if (handoffMessage?.type === "contextStatus") { this.onContextStatus(handoffMessage); return; }
       if (handoffMessage?.type === "handoffAction") { this.onHandoffAction(handoffMessage); return; }
@@ -325,6 +358,8 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
         (value as { type?: unknown }).type === "panelReady"
       ) {
         this.postRoomPanelSnapshot();
+        if (this.initialPanelPage) void panel.webview.postMessage({ type: "navigateWorkspace", page: this.initialPanelPage });
+        this.initialPanelPage = undefined;
       } else if (
         typeof value === "object" &&
         value !== null &&
@@ -672,7 +707,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     if (!panel) return;
     panel.title = this.state.room ? `Ripieno · ${this.state.room}` : "Ripieno Room";
     void panel.webview.postMessage(
-      buildRoomPanelSnapshot({
+      { ...buildRoomPanelSnapshot({
         workClaims: this.state.workClaims,
         claimsSupported: this.state.claimsSupported,
         pendingApprovalCount: this.pendingApprovals.size,
@@ -697,7 +732,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
         status: this.state.status,
         waitingOn: this.state.waitingOn,
         connection: this.state.connection,
-      })
+      }), onboarding: this.onboarding(), hasLocalFolder: Boolean(vscode.workspace.workspaceFolders?.some(f => f.uri.scheme === "file")), extensionVersion: this.extensionVersion, resumeRoom: this.resumeRoom }
     );
   }
 
@@ -746,16 +781,19 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   </div>
   <div id="statusPill" class="status-pill idle" role="status" aria-live="polite">idle</div>
   <div id="roster" class="roster" role="list" aria-label="People in this room"></div>
+  <button id="openWorkspace" class="onboarding-action" type="button">Open workspace ↗</button>
 </header>
 <nav id="surfaceTabs" class="surface-tabs" role="tablist" aria-label="Ripieno room surfaces">
-  <button id="roomTab" class="surface-tab active" type="button" role="tab" aria-selected="true" aria-controls="roomPanel" data-surface="room">Room</button>
-  <button id="contextTab" class="surface-tab" type="button" role="tab" aria-selected="false" aria-controls="contextPanel" data-surface="context">Context <span id="contextCount" class="tab-count"></span></button>
+  <button id="roomTab" class="surface-tab active" type="button" role="tab" aria-selected="true" aria-controls="roomPanel" data-surface="room">Chat</button>
+  <button id="workTab" class="surface-tab" type="button" role="tab" aria-selected="false" aria-controls="workPanel" data-surface="work">Work</button>
+  <button id="contextTab" class="surface-tab" type="button" role="tab" aria-selected="false" aria-controls="contextPanel" data-surface="context">Brain <span id="contextCount" class="tab-count"></span></button>
   <button id="agentsTab" class="surface-tab" type="button" role="tab" aria-selected="false" aria-controls="agentsPanel" data-surface="agents">Agents <span id="agentCount" class="tab-count"></span></button>
 </nav>
 <section id="roomPanel" class="surface-panel" role="tabpanel" aria-labelledby="roomTab">
 <section id="onboarding" class="onboarding" aria-labelledby="onboardingTitle">
   <h2 id="onboardingTitle" class="sr-only">Getting started</h2>
   <ol id="onboardingSteps" class="onboarding-steps" aria-label="Getting started progress"></ol>
+  <button id="resumeRoom" class="onboarding-action" type="button" hidden></button>
   <button id="onboardingAction" class="onboarding-action" type="button" hidden></button>
   <p id="onboardingHelp" class="onboarding-help" hidden>A ChatGPT web conversation cannot be imported. To use Codex, install the Codex CLI and run <code>codex login</code> to sign in with ChatGPT, or use an API key. API-key usage is billed separately through the OpenAI Platform.</p>
 </section>
@@ -785,10 +823,11 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   <button id="sendButton" class="send-button" type="button">Send</button>
 </div>
 </section>
+<section id="workPanel" class="surface-panel" role="tabpanel" aria-labelledby="workTab" hidden><header class="panel-intro"><strong>Tasks and shared work</strong><span>Plan work, choose an owner and track progress in the workspace.</span><button id="openWork" class="onboarding-action" type="button">Open Work ↗</button></header></section>
 <section id="contextPanel" class="surface-panel context-panel" role="tabpanel" aria-labelledby="contextTab" hidden>
   <header class="panel-intro">
-    <strong>Shared room context</strong>
-    <span>Durable, attributed memory. Agent additions remain proposed until a person accepts them.</span>
+    <strong>Brain</strong><button id="openBrain" class="context-action" type="button">Open Brain ↗</button>
+    <span>Decisions, notes and references shared with your room. Review agent suggestions before accepting them.</span>
   </header>
   <form id="contextForm" class="context-form">
     <div class="context-form-row">
@@ -814,8 +853,8 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
 </section>
 <section id="agentsPanel" class="surface-panel agents-panel" role="tabpanel" aria-labelledby="agentsTab" hidden>
   <header class="panel-intro">
-    <strong>Agent inspectors</strong>
-    <span>Live observable activity, ownership and capability. Hidden reasoning and raw logs are never shared.</span>
+    <strong>Agents</strong>
+    <span>See who owns each agent and what it is working on.</span>
   </header>
   <div id="agentInspectors" class="agent-inspectors" role="list" aria-label="Agents in this room"></div>
 </section>
@@ -852,26 +891,34 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
 <main class="room-workbench">
   <header class="workbench-header">
     <div>
-      <span class="eyebrow">Room workspace</span>
+      <span class="eyebrow">Ripieno workspace <span id="extensionVersion"></span></span>
       <h1 id="panelRoomName">Not connected</h1>
       <p id="panelRoomMeta" class="room-meta">Open a room to inspect its agents.</p>
     </div>
     <div id="panelConnection" class="connection offline" role="status" aria-live="polite">offline</div>
   </header>
 
+  <nav id="workspaceNav" class="workspace-nav" aria-label="Workspace sections">
+    <button type="button" data-workspace-action="chat">Chat ↗</button>
+    <button type="button" data-page="work" aria-pressed="true">Work</button>
+    <button type="button" data-page="brain" aria-pressed="false">Brain</button>
+    <button type="button" data-page="agents" aria-pressed="false">Agents</button>
+  </nav>
+  <section id="setupGuide" class="setup-guide" aria-label="Getting started"><ol id="setupSteps"></ol><div id="setupActions"></div><p id="setupHint" class="detail-note"></p></section>
   <section id="workspaceState" class="workspace-state offline" role="status" aria-live="polite" aria-atomic="true">
     <span class="workspace-state-mark" aria-hidden="true"></span>
     <div>
-      <span class="eyebrow">Workspace persistence</span>
+      <span class="eyebrow">Shared folder</span>
       <strong id="workspaceStateLabel">Workspace offline</strong>
       <p id="workspaceStateDetail">No member is hosting a folder.</p>
     </div>
   </section>
 
-  <section class="overview" aria-labelledby="overviewTitle">
+  <div id="workspaceActions" class="workspace-actions"></div>
+  <section data-section="work" class="overview" aria-labelledby="overviewTitle">
     <div class="section-heading">
       <div>
-        <span class="eyebrow">Shared, relay-authoritative</span>
+        <span class="eyebrow">People and agents</span>
         <h2 id="overviewTitle">Team board</h2>
       </div>
       <span id="overviewUpdated" class="updated"></span>
@@ -880,7 +927,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     <div id="roomPulse" class="room-pulse" role="list" aria-label="Agent status overview"></div>
   </section>
 
-  <section class="claims-section" aria-labelledby="claimsTitle">
+  <section data-section="work" class="claims-section" aria-labelledby="claimsTitle">
     <div class="section-heading">
       <div><span class="eyebrow">Coordinate before starting</span><h2 id="claimsTitle">Claim work</h2></div>
       <span id="claimCount" class="updated"></span>
@@ -902,21 +949,22 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       <button id="claimSubmit" type="submit">Claim work</button>
       <p id="claimFeedback" class="claim-feedback" role="status" aria-live="polite"></p>
     </form>
+    <div class="brain-heading"><h3>Saved tasks and plans</h3><div id="workTaskActions"></div></div><p class="detail-note">Track progress here. Send a task in Chat to ask an agent to work on it.</p><div id="workTasks" class="brain-list"></div>
     <div id="workClaims" class="work-claims" role="list" aria-label="Claimed work"></div>
   </section>
 
-  <section class="shared-brain" aria-labelledby="brainTitle">
-    <div class="brain-heading"><h2 id="brainTitle">Plans, tasks &amp; Brain</h2><div id="brainActions"></div></div>
+  <section data-section="brain" class="shared-brain" aria-labelledby="brainTitle">
+    <div class="brain-heading"><h2 id="brainTitle">Plans, tasks and memory</h2><div id="brainActions"></div></div>
     <p class="detail-note">Shared, attributed records. Code anchors open only while their host and file content still match.</p>
     <div class="brain-filters"><input id="brainSearch" type="search" placeholder="Search titles, details, tags or owners" aria-label="Search Brain" /><select id="brainFilter" aria-label="Record type"><option value="all">All records</option><option value="plan">Plans</option><option value="task">Tasks</option><option value="comment">Code comments</option><option value="memory">Brain memory</option><option value="proposed">Proposed context</option><option value="retired">Archived / superseded</option></select></div>
     <div id="brainList" class="brain-list"></div>
     <h3>Handoff recovery</h3><div id="handoffRecovery" class="brain-list"></div>
   </section>
 
-  <section class="agents-workbench" aria-labelledby="agentsTitle">
+  <section data-section="agents" class="agents-workbench" aria-labelledby="agentsTitle">
     <div class="section-heading agents-heading">
       <div>
-        <span class="eyebrow">Exact agent identities</span>
+        <span class="eyebrow">Activity and review</span>
         <h2 id="agentsTitle">Agents</h2>
       </div>
       <div id="statusFilters" class="status-filters" role="group" aria-label="Filter agents by status">

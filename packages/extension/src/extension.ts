@@ -297,7 +297,7 @@ export function activate(context: vscode.ExtensionContext): void {
   ).fsPath;
 
   const collaboration = new CollaborationCommands(
-    () => ({ online:claimsOnline, supported:collaborationSupported, connection:relay, room:currentRoom, handle:me?.handle, host:workspaceHost, root:hostingWorkspaceRoot, context:sharedContext, goals, claims:workClaims, roster:latestRoster, handoffs }),
+    () => ({ online:claimsOnline, supported:collaborationSupported, connection:relay, room:currentRoom, handle:me?.handle, host:workspaceHost, root:hostingWorkspaceRoot, context:sharedContext, goals, claims:workClaims, roster:latestRoster }),
     (message) => sendContextMutation(message),
     (relativePath) => sharedWorkspaceUriFor(relativePath)
   );
@@ -328,9 +328,11 @@ export function activate(context: vscode.ExtensionContext): void {
     (action, id) => {
       if (action === "open" && id) void collaboration.open(id);
       else if (action === "edit" && id) void collaboration.edit(id);
-      else if (action === "export") void collaboration.export();
+      else if (action === "progress" && id) void collaboration.edit(id, "Set progress");
+      else if (action === "assign" && id) void collaboration.edit(id, "Assign human owner");
       else if (action === "comment" || action === "task" || action === "plan" || action === "memory") void collaboration.create(action);
-    }
+    },
+    String(context.extension.packageJSON.version)
   );
 
   const claimHeartbeat = setInterval(() => {
@@ -573,8 +575,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("ripieno.addCodeComment", () => collaboration.create("comment")),
     vscode.commands.registerCommand("ripieno.addSharedMemory", () => collaboration.create("memory")),
     vscode.commands.registerCommand("ripieno.addSharedPlan", () => collaboration.create("plan")),
-    vscode.commands.registerCommand("ripieno.continueInAmoeba", () => collaboration.export()),
     vscode.commands.registerCommand("ripieno.startSolo", () => startSolo()),
+    vscode.commands.registerCommand("ripieno.resumeRoom", async () => { const saved = loadState(); if (!currentRoom && saved.room) await connect(saved.room); }),
     vscode.commands.registerCommand("ripieno.openRoomPanel", () => roomView.openRoomPanel()),
     vscode.commands.registerCommand("ripieno.joinRoom", () => joinRoom()),
     vscode.commands.registerCommand("ripieno.copyInvite", () => copyInvite()),
@@ -2567,6 +2569,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // rejoining the room is deferred to here, because only that is a question.
     const saved = loadState();
     refreshAgentViews();
+    roomView.setResumeRoom(saved.room);
     if (!saved.room) return;
 
     const choice = await vscode.window.showInformationMessage(
@@ -2831,6 +2834,7 @@ export function activate(context: vscode.ExtensionContext): void {
     me = member;
     refreshStatusBar();
     saveState({ room, relayUrl: activeRelayUrl });
+    roomView.setResumeRoom(room);
     refreshAgentViews();
 
     relay = new RelayClient({

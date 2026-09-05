@@ -270,7 +270,7 @@ describe("structured CLI turn outcomes", () => {
   });
 
   test("UTF-8 reply characters survive pipe boundaries", async () => {
-    const reply = "Amoeba 🦠 café";
+    const reply = "Ripieno 🎵 café";
     const raw = [{ type: "item.completed", item: { type: "agent_message", text: reply } }, { type: "turn.completed" }].map(JSON.stringify).join("\n");
     const runner = new CliRunner({
       command: process.execPath,

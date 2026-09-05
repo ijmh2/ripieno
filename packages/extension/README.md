@@ -9,15 +9,22 @@ or against a relay you operate; the project does not provide a hosted relay.
 
 ## Quick start
 
-1. Open a trusted, filesystem-backed workspace.
-2. Open **Ripieno** in the Activity Bar and choose **Join a room**. With no relay
-   configured, Ripieno starts a loopback-only solo relay automatically.
-3. Follow the three compact steps in Room. If a configured agent exists, attach
-   it; otherwise choose **Add agent…**. A detected provider appears first;
-   ChatGPT / Codex, Claude Code, Gemini CLI and OpenAI-compatible endpoints are
-   supported.
-4. Type in the Room view. Type `/` for local room commands such as `/model`,
-   `/agents`, `/attach` and `/detach`.
+1. Open a project folder in Antigravity, VS Code or a compatible editor.
+2. Open **Ripieno** in the Activity Bar and choose **Start a room for yourself**.
+   With no relay configured, Ripieno starts a local solo relay automatically.
+   Choose **Join a room** instead when you have a room invitation.
+3. Choose **Add agent…**, or attach an existing agent from **Rooms & Agents**.
+   Follow the provider setup prompts to install or sign in if needed.
+4. Give the agent a small first task in **Chat**. If it responds only when named,
+   mention it using `@`.
+5. Choose **Open workspace** to plan and inspect work. **Work** shows the team
+   board, claims and tasks; **Brain** holds shared memory and discussions;
+   **Agents** shows each agent's activity. The Command Palette entry
+   **Ripieno: Open Full Room Panel** remains available.
+
+For code-anchored comments and shared file tools, host your open project through
+**Ripieno: Host / Release the Shared Workspace**. Attaching an agent or assigning
+a task does not grant new file permissions or automatically run that task.
 
 Agents start with a generated name, an empty optional brief, provider-default
 model and the safest usable concrete boundary: Conversation only, Read project,
@@ -29,6 +36,29 @@ A ChatGPT web conversation cannot be imported. Install Codex CLI and run
 `codex login` to sign in with ChatGPT, or use an API key. API-key usage is billed
 separately through the OpenAI Platform. See
 [OpenAI's authentication guide](https://learn.chatgpt.com/docs/auth).
+
+## Install or update a Preview
+
+Run **Extensions: Install from VSIX…** and select the versioned Ripieno package.
+Then run **Developer: Reload Window**. The extension details page shows the
+installed version. Reopen Ripieno and start or join your room if disconnected.
+
+## Plans, tasks and Brain
+
+Create shared plans, assign people and update step progress in the workspace.
+Dependencies must finish before their dependent step can start. Work claims
+announce current intentions and warn about overlapping shared files; they are
+not file locks.
+
+Select code in the hosted project and choose **Add Shared Code Comment** or
+**Remember Selection in Brain** from the editor context menu. An anchor opens
+only while the host and file content still match. Changed code needs a fresh
+anchor; Ripieno does not guess which lines replaced it.
+
+Agent-proposed memories remain proposed until a person accepts them. Search
+shared records by title, body, tags or owner. Handoff recovery offers explicit
+recipient actions when work is interrupted; uncertain execution is never
+silently retried.
 
 ## Work with other people
 

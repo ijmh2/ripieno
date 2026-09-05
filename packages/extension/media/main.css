@@ -1448,3 +1448,6 @@ body {
 .vscode-high-contrast-light .chip {
   border-color: var(--vscode-contrastBorder, currentColor);
 }
+
+#openWorkspace { width: 100%; margin-top: 6px; }
+#workPanel .panel-intro { padding: 12px; }

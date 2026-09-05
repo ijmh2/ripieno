@@ -3,7 +3,7 @@
   "displayName": "Ripieno",
   "description": "A self-hosted shared workspace where several people and several AI agents work on one codebase, each attributable.",
   "author": "Ivan Hart (@ijmh2)",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "ijmh2",
   "license": "SEE LICENSE IN LICENSE",
   "preview": true,
@@ -55,7 +55,7 @@
         },
         {
           "id": "ripieno.room",
-          "name": "Room",
+          "name": "Chat",
           "type": "webview"
         },
         {
@@ -73,7 +73,7 @@
       },
       {
         "command": "ripieno.openRoomPanel",
-        "title": "Ripieno: Open Full Room Panel",
+        "title": "Ripieno: Open Workspace",
         "icon": "$(open-preview)"
       },
       {
@@ -154,11 +154,6 @@
       {
         "command": "ripieno.addSharedPlan",
         "title": "Create Shared Plan",
-        "category": "Ripieno"
-      },
-      {
-        "command": "ripieno.continueInAmoeba",
-        "title": "Continue in Amoeba (Export)",
         "category": "Ripieno"
       }
     ],

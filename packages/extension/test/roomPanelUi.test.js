@@ -79,10 +79,10 @@ test("exact locations are opened by authoritative agent id, never by a webview-s
 });
 
 test("temporary proposed diffs are accessible, read-only, and opened by exact agent id", () => {
-  assert.match(script, /Temporary proposal · not applied/);
+  assert.match(script, /Proposed change · not applied/);
   assert.match(script, /aria-label.*Temporary proposed diff/);
   assert.match(script, /type: "openAgentProposal", agentId: agent\.agentId/);
-  assert.match(script, /A streamed proposal never writes a file/);
+  assert.match(script, /Review this proposal before approving a write/);
   assert.doesNotMatch(script, /openAgentProposal"[^\n]*(?:path|patch)/);
   assert.doesNotMatch(script, /innerHTML/);
   assert.match(roomView, /type === "openAgentProposal"/);
