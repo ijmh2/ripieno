@@ -371,10 +371,19 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     return true;
   }
 
-  /** Open (or reveal) the editor-sized Room overview and exact-agent tabs. */
+  private hideDuplicateSidebar(): void {
+    // Only close the sidebar when our own chat view is visible. Leave Explorer
+    // and other extensions alone, and let users reopen Ripieno deliberately.
+    if (this.view?.visible) {
+      void vscode.commands.executeCommand("workbench.action.closeSidebar");
+    }
+  }
+
+  /** Open (or reveal) the editor-sized Room workspace. */
   openRoomPanel(page?: "work" | "brain"): void {
     if (this.roomPanel) {
       this.roomPanel.reveal(this.roomPanel.viewColumn, false);
+      this.hideDuplicateSidebar();
       this.postRoomPanelSnapshot();
       if (page) void this.roomPanel.webview.postMessage({ type: "navigateWorkspace", page });
       return;
@@ -392,6 +401,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       }
     );
     this.roomPanel = panel;
+    this.hideDuplicateSidebar();
     this.postSidebarMode();
     panel.webview.html = this.renderRoomPanelHtml(panel.webview);
     panel.webview.onDidReceiveMessage((value: unknown) => {

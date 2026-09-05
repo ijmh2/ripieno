@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.0.5
+
+- Close the Ripieno sidebar when opening or focusing the full workspace so the interface occupies one surface. Other active sidebars remain open.
+
 ## 0.0.4
 
 - Restore visible message bubbles, clearer author and time labels, and tighter conversation spacing.
