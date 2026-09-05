@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.0.4
+
+- Restore visible message bubbles, clearer author and time labels, and tighter conversation spacing.
+- Fold consecutive room activity notices into expandable groups.
+- Show a compact sidebar shortcut while the full workspace is visible, restoring sidebar chat when it closes.
+
 All notable changes to the Ripieno extension will be documented here.
 
 ## 0.0.3 — Preview

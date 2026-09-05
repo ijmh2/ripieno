@@ -41,15 +41,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .workspace-conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .workspace-conversation > .header, .workspace-conversation > .surface-tabs, .workspace-conversation #onboarding, .workspace-conversation #workPanel, .workspace-conversation #contextPanel, .workspace-conversation #agentsPanel { display: none !important; }
 .workspace-conversation #roomPanel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.workspace-conversation .transcript { gap: 24px; padding: 22px max(24px, calc((100% - 720px) / 2)) 30px; }
-.workspace-conversation .row { width: 100%; }
-.workspace-conversation .bubble { padding: 0; line-height: 1.65; font-size: 14px; }
-.workspace-conversation .row.agent .bubble { border: 0; background: transparent; }
-.workspace-conversation .row.human .bubble { border: 0; background: var(--vscode-editorWidget-background); padding: 12px 16px; border-radius: 15px; max-width: 90%; }
-.workspace-conversation .row.human.mine .bubble { border: 0; }
-.workspace-conversation .author-line { margin-bottom: 7px; }
-.workspace-conversation .author { font-size: 11px; font-weight: 550; }
-.workspace-conversation .row.system { opacity: .8; }
+/* Bubbles must stay distinct even when editor/widget theme colours match. */
+.workspace-conversation .transcript { gap: 12px; padding: 18px max(24px, calc((100% - 760px) / 2)) 24px; }
+.workspace-conversation .row { width: 100%; flex-shrink: 0; }
+.workspace-conversation .bubble { padding: 12px 16px; line-height: 1.55; font-size: 13px; border-radius: 14px; min-width: 0; }
+.workspace-conversation .row.agent .bubble { width: fit-content; max-width: 94%; background: var(--vscode-editorWidget-background, var(--vscode-editor-background)); border: 1px solid var(--vscode-panel-border, #7776); }
+.workspace-conversation .row.agent .bubble.owned { border-left: 3px solid hsl(var(--ripieno-hue) 65% 55%); }
+.workspace-conversation .row.human .bubble { max-width: 88%; background: hsl(var(--ripieno-hue) 65% 55% / .12); border: 1px solid hsl(var(--ripieno-hue) 65% 55% / .25); }
+.workspace-conversation .row.human.mine .bubble { background: hsl(var(--ripieno-hue) 65% 55% / .2); border: 1px solid hsl(var(--ripieno-hue) 65% 55% / .35); border-bottom-right-radius: 4px; }
+.workspace-conversation .row.agent.live-draft .bubble { border-style: dashed; }
+.workspace-conversation .author-line { margin-bottom: 5px; gap: 10px; }
+.workspace-conversation .author { font-size: 11px; font-weight: 600; }
+.workspace-conversation .timestamp { margin-left: 0; font-size: 10px; }
+.workspace-conversation .row.human.mine .author-line { justify-content: flex-start; }
 .workspace-conversation .system-text { font-size: 10px; }
 .workspace-conversation .composer-bar { width: min(720px, calc(100% - 48px)); margin: 12px auto 24px; padding: 12px; border: 1px solid var(--workspace-border); border-radius: 14px; background: var(--vscode-editorWidget-background); box-shadow: 0 3px 14px rgb(0 0 0 / 3%); align-items: flex-end; }
 .workspace-conversation .composer { border: 0; background: transparent; box-shadow: none; padding: 3px; font-size: 14px; line-height: 1.5; }

@@ -1451,3 +1451,13 @@ body {
 
 #openWorkspace { width: 100%; margin-top: 6px; }
 #workPanel .panel-intro { padding: 12px; }
+
+/* Keep the sidebar useful without duplicating an open editor workspace. */
+.workspace-open > :not(#workspaceNotice):not(script) { display: none !important; }
+.workspace-notice { padding: 16px; color: var(--vscode-descriptionForeground); line-height: 1.5; }
+.workspace-notice p { margin: 0 0 12px; }
+.workspace-notice button { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--vscode-panel-border); background: transparent; color: var(--vscode-foreground); cursor: pointer; }
+.room-activity { flex-shrink: 0; padding: 4px 0; color: var(--vscode-descriptionForeground); font-size: 11px; }
+.room-activity > summary { cursor: pointer; text-align: center; list-style-position: inside; padding: 4px 8px; }
+.room-activity[open] > summary { margin-bottom: 6px; }
+.room-activity .row.system { padding: 2px 0; }

@@ -155,7 +155,7 @@
     vscode.setState({ ...(vscode.getState() || {}), surface });
   }
 
-  for (const id of ["openWorkspace", "openWork", "openBrain"]) document.getElementById(id)?.addEventListener("click", () => vscode.postMessage({ type: "workspaceAction", action: id === "openWork" ? "openWork" : id === "openBrain" ? "openBrain" : "openWorkspace" }));
+  for (const id of ["openWorkspace", "openWork", "openBrain", "focusWorkspace"]) document.getElementById(id)?.addEventListener("click", () => vscode.postMessage({ type: "workspaceAction", action: id === "openWork" ? "openWork" : id === "openBrain" ? "openBrain" : "openWorkspace" }));
 
   surfaceTabsEl.addEventListener("click", (event) => {
     const button = event.target.closest("[data-surface]");
@@ -337,8 +337,22 @@
   }
 
   function renderFinalEntry(entry) {
+    if (rowEls.has(entry.id)) return;
     const row = buildRow(entry.kind, entry.authorHandle, entry.authorName, entry.text, entry.ts);
-    transcriptEl.appendChild(row.container);
+    if (entry.kind === "system") {
+      let group = transcriptEl.lastElementChild;
+      if (!group?.classList.contains("room-activity")) {
+        group = document.createElement("details");
+        group.className = "room-activity";
+        group.appendChild(document.createElement("summary"));
+        transcriptEl.appendChild(group);
+      }
+      group.appendChild(row.container);
+      const count = group.children.length - 1;
+      group.firstElementChild.textContent = `Room activity · ${count} ${count === 1 ? "update" : "updates"}`;
+    } else {
+      transcriptEl.appendChild(row.container);
+    }
     rowEls.set(entry.id, row);
   }
 
@@ -751,6 +765,12 @@
       case "showChat":
         if (embedded) window.dispatchEvent(new CustomEvent("ripieno:navigate", {detail:"chat"}));
         showSurface("room"); composerEl.focus(); break;
+      case "workspaceVisibility":
+        if (!embedded) {
+          document.body.classList.toggle("workspace-open", msg.visible === true);
+          document.getElementById("workspaceNotice").hidden = msg.visible !== true;
+        }
+        break;
       case "snapshot":
         applySnapshot(msg);
         break;

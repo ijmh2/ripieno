@@ -392,6 +392,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       }
     );
     this.roomPanel = panel;
+    this.postSidebarMode();
     panel.webview.html = this.renderRoomPanelHtml(panel.webview);
     panel.webview.onDidReceiveMessage((value: unknown) => {
       if (this.handleBrowserMessage(value) || this.handleWorkspaceMessage(value) || this.handleCollaborationMessage(value)) return;
@@ -429,6 +430,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       }
     });
     panel.onDidChangeViewState(() => {
+      this.postSidebarMode();
       if (panel.visible) { this.postSnapshot(); this.postRoomPanelSnapshot(); }
     });
     // Expiry stays honest even when no new network frame reaches the panel.
@@ -436,6 +438,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     panel.onDidDispose(() => {
       clearInterval(refresh);
       if (this.roomPanel === panel) this.roomPanel = undefined;
+      this.postSidebarMode();
       if (!this.view?.visible) this.resolvePendingApprovals();
     });
   }
@@ -726,7 +729,12 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     void this.roomPanel?.webview.postMessage(msg);
   }
 
+  private postSidebarMode(): void {
+    void this.view?.webview.postMessage({ type: "workspaceVisibility", visible: Boolean(this.roomPanel?.visible) });
+  }
+
   private postSnapshot(): void {
+    this.postSidebarMode();
     this.post({
       type: "snapshot",
       room: this.state.room,
@@ -825,6 +833,10 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
 <title>Ripieno</title>
 </head>
 <body>
+<section id="workspaceNotice" class="workspace-notice" hidden>
+  <p>Conversation and tools are open in your workspace.</p>
+  <button id="focusWorkspace" type="button">Focus workspace ↗</button>
+</section>
 ${this.renderRoomContent()}
 <script nonce="${csp}" src="${scriptUri}"></script>
 </body>
