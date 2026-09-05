@@ -120,9 +120,20 @@ function emptyState(connection: ConnectionState): RoomState {
   };
 }
 
+export interface BrowserPanelState {
+  sessionId?: string;
+  label?: string;
+  url?: string;
+  title?: string;
+  image?: string;
+  busy?: boolean;
+  error?: string;
+}
+
 /** Messages the extension host pushes into the webview. */
 type ToWebview =
   | { type: "showChat" }
+  | { type: "approvalResolved"; id: string }
   | { type: "resumeRoom"; room?: string }
   | {
       type: "snapshot";
@@ -235,35 +246,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.renderHtml(webviewView.webview);
 
     webviewView.webview.onDidReceiveMessage((raw: unknown) => {
-      if (this.handleWorkspaceMessage(raw) || this.handleCollaborationMessage(raw)) return;
-      const msg = parseRoomViewMessage(raw);
-      if (!msg) return;
-
-      if (msg.type === "ready") {
-        this.postSnapshot();
-        this.post({ type: "resumeRoom", room: this.resumeRoom });
-      } else if (msg.type === "send") {
-        this.onComposerSend(msg.text);
-      } else if (msg.type === "contextCreate") {
-        this.onContextCreate(msg);
-      } else if (msg.type === "contextStatus") {
-        this.onContextStatus(msg);
-      } else if (msg.type === "approvalVerdict") {
-        const pending = this.pendingApprovals.get(msg.id);
-        if (!pending) return;
-        pending.resolve(msg.choice);
-        this.pendingApprovals.delete(msg.id);
-      } else if (msg.type === "handoffAction") {
-        this.onHandoffAction({
-          action: msg.action,
-          id: msg.id,
-          expectedVersion: msg.expectedVersion,
-          targetAgentId: msg.targetAgentId,
-        });
-      } else if (msg.type === "onboardingAction") {
-        const command = onboardingCommandFor(msg.action, this.state);
-        if (command) void vscode.commands.executeCommand(command);
-      }
+      this.handleRoomMessage(raw);
     });
 
     webviewView.onDidChangeVisibility(() => {
@@ -275,12 +258,75 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     webviewView.onDidDispose(() => {
       if (this.view === webviewView) {
         this.view = undefined;
-        this.resolvePendingApprovals();
+        if (!this.roomPanel?.visible) this.resolvePendingApprovals();
       }
     });
   }
 
+  private handleRoomMessage(raw: unknown): void {
+    if (this.handleWorkspaceMessage(raw) || this.handleCollaborationMessage(raw)) return;
+    const msg = parseRoomViewMessage(raw);
+    if (!msg) return;
+
+    if (msg.type === "ready") {
+      this.postSnapshot();
+      this.post({ type: "resumeRoom", room: this.resumeRoom });
+    } else if (msg.type === "send") {
+      this.onComposerSend(msg.text);
+    } else if (msg.type === "contextCreate") {
+      this.onContextCreate(msg);
+    } else if (msg.type === "contextStatus") {
+      this.onContextStatus(msg);
+    } else if (msg.type === "approvalVerdict") {
+      const pending = this.pendingApprovals.get(msg.id);
+      if (!pending) return;
+      pending.resolve(msg.choice);
+      this.pendingApprovals.delete(msg.id);
+      this.post({ type: "approvalResolved", id: msg.id });
+    } else if (msg.type === "handoffAction") {
+      this.onHandoffAction({
+        action: msg.action,
+        id: msg.id,
+        expectedVersion: msg.expectedVersion,
+        targetAgentId: msg.targetAgentId,
+      });
+    } else if (msg.type === "onboardingAction") {
+      const command = onboardingCommandFor(msg.action, this.state);
+      if (command) void vscode.commands.executeCommand(command);
+    }
+  }
+
   setCollaborationSupported(supported: boolean): void { this.state.collaborationSupported = supported; this.postRoomPanelSnapshot(); }
+
+  private browserState: BrowserPanelState = {};
+  private browserHandler: (message: unknown) => void = () => undefined;
+  setBrowserState(state: BrowserPanelState): void {
+    this.browserState = state;
+    void this.roomPanel?.webview.postMessage({ type: "browserState", state });
+  }
+  setBrowserHandler(handler: (message: unknown) => void): void { this.browserHandler = handler; }
+
+  /** Browser control stays owner-local and bound to the displayed session. */
+  private handleBrowserMessage(value: unknown): boolean {
+    if (!value || typeof value !== "object") return false;
+    const v = value as Record<string, unknown>;
+    if (v.type !== "browserAction") return false;
+    if (typeof v.sessionId !== "string" || !v.sessionId || v.sessionId !== this.browserState.sessionId) return true;
+    const keys: Record<string, string[]> = {
+      refresh: [], close: [], navigate: ["url"], click: ["x", "y"], type: ["text"], scroll: ["deltaY"], press: ["key"],
+    };
+    if (typeof v.action !== "string" || !Object.hasOwn(keys, v.action)) return true;
+    const allowed = ["type", "sessionId", "action", ...keys[v.action]];
+    if (Object.keys(v).length !== allowed.length || Object.keys(v).some(key => !allowed.includes(key))) return true;
+    if (v.action === "navigate" && (typeof v.url !== "string" || !v.url.trim() || v.url.length > 4096)) return true;
+    if (v.action === "click" && (![v.x, v.y].every(n => typeof n === "number" && Number.isFinite(n)) || Number(v.x) < 0 || Number(v.x) >= 1280 || Number(v.y) < 0 || Number(v.y) >= 800)) return true;
+    if (v.action === "type" && (typeof v.text !== "string" || v.text.length === 0 || v.text.length > 4000)) return true;
+    if (v.action === "scroll" && (typeof v.deltaY !== "number" || !Number.isFinite(v.deltaY) || Math.abs(v.deltaY) > 1600)) return true;
+    if (v.action === "press" && (typeof v.key !== "string" || !["Enter", "Tab", "Escape", "Backspace", "ArrowDown", "ArrowUp"].includes(v.key))) return true;
+    if (this.browserState.busy && v.action !== "close") return true;
+    this.browserHandler({ ...v });
+    return true;
+  }
 
   private resumeRoom?: string;
   private initialPanelPage?: "work" | "brain";
@@ -297,8 +343,11 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     else if (v.action === "openWorkspace") this.openRoomPanel();
     else if (v.action === "openWork") this.openRoomPanel("work");
     else if (v.action === "openBrain") this.openRoomPanel("brain");
+    else if (v.action === "addAgent" && online && member) void vscode.commands.executeCommand("ripieno.addAgent");
+    else if (v.action === "copyInvite" && online) void vscode.commands.executeCommand("ripieno.copyInvite");
     else if (v.action === "chat") {
-      void vscode.commands.executeCommand("ripieno.room.focus").then(() => this.post({ type: "showChat" }));
+      if (this.roomPanel?.visible) this.post({ type: "showChat" });
+      else void vscode.commands.executeCommand("ripieno.room.focus").then(() => this.post({ type: "showChat" }));
     } else if (v.action === "openFolder") void vscode.commands.executeCommand("vscode.openFolder");
     else if (v.action === "hostWorkspace" && online && member && !this.state.workspaceHost) void vscode.commands.executeCommand("ripieno.hostWorkspace");
     else if (v.action === "mountWorkspace" && online && this.state.workspaceHost) void vscode.commands.executeCommand("ripieno.mountWorkspace");
@@ -345,10 +394,8 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     this.roomPanel = panel;
     panel.webview.html = this.renderRoomPanelHtml(panel.webview);
     panel.webview.onDidReceiveMessage((value: unknown) => {
-      if (this.handleWorkspaceMessage(value) || this.handleCollaborationMessage(value)) return;
-      const handoffMessage = parseRoomViewMessage(value);
-      if (handoffMessage?.type === "contextStatus") { this.onContextStatus(handoffMessage); return; }
-      if (handoffMessage?.type === "handoffAction") { this.onHandoffAction(handoffMessage); return; }
+      if (this.handleBrowserMessage(value) || this.handleWorkspaceMessage(value) || this.handleCollaborationMessage(value)) return;
+      if (parseRoomViewMessage(value)) { this.handleRoomMessage(value); return; }
       const claimMessage = parseClaimPanelMessage(value);
       if (claimMessage) { this.onClaimAction(claimMessage); return; }
       if (
@@ -360,6 +407,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
         this.postRoomPanelSnapshot();
         if (this.initialPanelPage) void panel.webview.postMessage({ type: "navigateWorkspace", page: this.initialPanelPage });
         this.initialPanelPage = undefined;
+        void panel.webview.postMessage({ type: "browserState", state: this.browserState });
       } else if (
         typeof value === "object" &&
         value !== null &&
@@ -381,13 +429,14 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       }
     });
     panel.onDidChangeViewState(() => {
-      if (panel.visible) this.postRoomPanelSnapshot();
+      if (panel.visible) { this.postSnapshot(); this.postRoomPanelSnapshot(); }
     });
     // Expiry stays honest even when no new network frame reaches the panel.
     const refresh = setInterval(() => { if (panel.visible) this.postRoomPanelSnapshot(); }, 5_000);
     panel.onDidDispose(() => {
       clearInterval(refresh);
       if (this.roomPanel === panel) this.roomPanel = undefined;
+      if (!this.view?.visible) this.resolvePendingApprovals();
     });
   }
 
@@ -626,15 +675,16 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     summary: string;
     rememberable: boolean;
   }): Promise<ApprovalChoice | undefined> {
-    const view = this.view;
-    if (!view?.visible) {
+    const visibleViews = [this.view, this.roomPanel].filter((view) => view?.visible);
+    if (visibleViews.length === 0) {
       return Promise.resolve(undefined);
     }
     const id = `ap_${this.nextApprovalId++}`;
     const pending: PendingApproval = { id, ...request };
     return new Promise<ApprovalChoice | undefined>((resolve) => {
       this.pendingApprovals.set(id, { request: pending, resolve });
-      void view.webview.postMessage({ type: "approval", ...pending }).then((delivered) => {
+      void Promise.all(visibleViews.map(view => view!.webview.postMessage({ type: "approval", ...pending }))).then((results) => {
+        const delivered = results.some(Boolean);
         const current = this.pendingApprovals.get(id);
         if (!delivered && current) {
           this.pendingApprovals.delete(id);
@@ -644,7 +694,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       // If the view is hidden or reloaded before an answer arrives, the card is
       // gone; give up so the modal can take over instead of stalling.
       const check = setInterval(() => {
-        if (!this.view?.visible && this.pendingApprovals.has(id)) {
+        if (!this.view?.visible && !this.roomPanel?.visible && this.pendingApprovals.has(id)) {
           clearInterval(check);
           this.pendingApprovals.delete(id);
           resolve(undefined);
@@ -673,6 +723,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
 
   private post(msg: ToWebview): void {
     void this.view?.webview.postMessage(msg);
+    void this.roomPanel?.webview.postMessage(msg);
   }
 
   private postSnapshot(): void {
@@ -774,7 +825,14 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
 <title>Ripieno</title>
 </head>
 <body>
-<header id="header" class="header">
+${this.renderRoomContent()}
+<script nonce="${csp}" src="${scriptUri}"></script>
+</body>
+</html>`;
+  }
+
+  private renderRoomContent(): string {
+    return `<header id="header" class="header">
   <div class="room-meta">
     <div id="roomLabel" class="room-label">Not connected</div>
     <span id="modeBadge" class="mode-badge" hidden></span>
@@ -858,9 +916,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   </header>
   <div id="agentInspectors" class="agent-inspectors" role="list" aria-label="Agents in this room"></div>
 </section>
-<script nonce="${csp}" src="${scriptUri}"></script>
-</body>
-</html>`;
+`;
   }
 
   private renderRoomPanelHtml(webview: vscode.Webview): string {
@@ -876,62 +932,61 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       `style-src ${webview.cspSource}`,
       `script-src 'nonce-${csp}'`,
       "font-src 'none'",
+      "img-src data:",
     ].join("; ");
 
+    const chatStyleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "main.css"));
+    const chatScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "main.js"));
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy" content="${cspHeader}" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="stylesheet" href="${chatStyleUri}" />
 <link rel="stylesheet" href="${styleUri}" />
-<title>Ripieno Room</title>
+<title>Ripieno</title>
 </head>
-<body>
+<body class="workspace-shell">
 <main class="room-workbench">
-  <header class="workbench-header">
-    <div>
-      <span class="eyebrow">Ripieno workspace <span id="extensionVersion"></span></span>
-      <h1 id="panelRoomName">Not connected</h1>
-      <p id="panelRoomMeta" class="room-meta">Open a room to inspect its agents.</p>
-    </div>
-    <div id="panelConnection" class="connection offline" role="status" aria-live="polite">offline</div>
-  </header>
-
-  <nav id="workspaceNav" class="workspace-nav" aria-label="Workspace sections">
-    <button type="button" data-workspace-action="chat">Chat ↗</button>
-    <button type="button" data-page="work" aria-pressed="true">Work</button>
-    <button type="button" data-page="brain" aria-pressed="false">Brain</button>
-    <button type="button" data-page="agents" aria-pressed="false">Agents</button>
-  </nav>
-  <section id="setupGuide" class="setup-guide" aria-label="Getting started"><ol id="setupSteps"></ol><div id="setupActions"></div><p id="setupHint" class="detail-note"></p></section>
-  <section id="workspaceState" class="workspace-state offline" role="status" aria-live="polite" aria-atomic="true">
-    <span class="workspace-state-mark" aria-hidden="true"></span>
-    <div>
-      <span class="eyebrow">Shared folder</span>
-      <strong id="workspaceStateLabel">Workspace offline</strong>
-      <p id="workspaceStateDetail">No member is hosting a folder.</p>
-    </div>
+  <aside class="workspace-rail" aria-label="Ripieno navigation">
+    <div class="workspace-brand">Ripieno <span id="extensionVersion"></span></div>
+    <nav id="workspaceNav" class="workspace-nav" aria-label="Workspace sections">
+      <button type="button" data-page="chat" aria-pressed="true">Chat</button>
+      <button type="button" data-page="work" aria-pressed="false">Tasks</button>
+      <button type="button" data-page="brain" aria-pressed="false">Brain</button>
+      <button type="button" data-page="agents" aria-pressed="false">Agents</button>
+      <button type="button" data-page="browser" aria-pressed="false">Browser</button>
+      <button type="button" data-page="review" aria-pressed="false">Review <span id="reviewCount"></span></button>
+    </nav>
+    <div class="rail-spacer"></div>
+    <details class="folder-disclosure"><summary>Shared folder</summary>
+      <section id="workspaceState" class="workspace-state offline" role="status" aria-live="polite" aria-atomic="true">
+        <strong id="workspaceStateLabel">No shared folder</strong>
+        <p id="workspaceStateDetail">Share a folder when you are ready to work together.</p>
+      </section>
+      <div id="workspaceActions" class="workspace-actions"></div>
+    </details>
+  </aside>
+  <section class="workspace-main" aria-label="Conversation">
+    <header class="workbench-header">
+      <div class="workspace-title"><h1 id="panelRoomName">Ripieno</h1><span id="panelRoomMeta"></span></div>
+      <div class="header-controls"><span id="panelConnection" class="connection offline" role="status" aria-live="polite">offline</span><button id="shareRoom" type="button" hidden>Share</button></div>
+    </header>
+    <section id="setupGuide" class="setup-guide" aria-labelledby="welcomeTitle">
+      <div class="welcome-copy"><span class="welcome-kicker">A shared place to think and build</span><h2 id="welcomeTitle">Welcome to Ripieno</h2><p id="setupHint"></p><div id="setupActions"></div></div>
+    </section>
+    <div id="connectionPrompt" class="connection-prompt" hidden></div>
+    <div id="workspaceConversation" class="workspace-conversation" hidden>${this.renderRoomContent()}</div>
   </section>
-
-  <div id="workspaceActions" class="workspace-actions"></div>
-  <section data-section="work" class="overview" aria-labelledby="overviewTitle">
-    <div class="section-heading">
-      <div>
-        <span class="eyebrow">People and agents</span>
-        <h2 id="overviewTitle">Team board</h2>
-      </div>
-      <span id="overviewUpdated" class="updated"></span>
-    </div>
-    <div id="overviewMetrics" class="overview-metrics"></div>
-    <div id="roomPulse" class="room-pulse" role="list" aria-label="Agent status overview"></div>
-  </section>
-
+  <aside id="workspaceInspector" class="workspace-inspector" aria-labelledby="inspectorTitle" hidden>
+    <header class="inspector-header"><h2 id="inspectorTitle">Tasks</h2><button id="closeInspector" type="button" aria-label="Close details">×</button></header>
+    <div class="inspector-content">
   <section data-section="work" class="claims-section" aria-labelledby="claimsTitle">
-    <div class="section-heading">
-      <div><span class="eyebrow">Coordinate before starting</span><h2 id="claimsTitle">Claim work</h2></div>
-      <span id="claimCount" class="updated"></span>
-    </div>
+    <h2 id="claimsTitle" class="sr-only">Tasks</h2>
+    <div class="brain-heading"><div id="workTaskActions"></div></div>
+    <div id="workTasks" class="brain-list"></div>
+    <details class="coordination-details"><summary>Coordinate shared files <span id="claimCount" class="updated"></span></summary>
     <p class="board-help">Claims belong to people. Shared-file overlap is a warning, not a lock or permission to edit. Claims end when their editor disconnects or stops renewing them.</p>
     <div id="boardAttention" class="board-attention" role="status" aria-live="polite"></div>
     <div id="overlapWarnings" class="overlap-warnings" role="list" aria-label="Possible overlapping work"></div>
@@ -949,23 +1004,24 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       <button id="claimSubmit" type="submit">Claim work</button>
       <p id="claimFeedback" class="claim-feedback" role="status" aria-live="polite"></p>
     </form>
-    <div class="brain-heading"><h3>Saved tasks and plans</h3><div id="workTaskActions"></div></div><p class="detail-note">Track progress here. Send a task in Chat to ask an agent to work on it.</p><div id="workTasks" class="brain-list"></div>
+
     <div id="workClaims" class="work-claims" role="list" aria-label="Claimed work"></div>
+    </details>
   </section>
 
   <section data-section="brain" class="shared-brain" aria-labelledby="brainTitle">
-    <div class="brain-heading"><h2 id="brainTitle">Plans, tasks and memory</h2><div id="brainActions"></div></div>
+    <div class="brain-heading"><h2 id="brainTitle" class="sr-only">Brain</h2><div id="brainActions"></div></div>
     <p class="detail-note">Shared, attributed records. Code anchors open only while their host and file content still match.</p>
     <div class="brain-filters"><input id="brainSearch" type="search" placeholder="Search titles, details, tags or owners" aria-label="Search Brain" /><select id="brainFilter" aria-label="Record type"><option value="all">All records</option><option value="plan">Plans</option><option value="task">Tasks</option><option value="comment">Code comments</option><option value="memory">Brain memory</option><option value="proposed">Proposed context</option><option value="retired">Archived / superseded</option></select></div>
     <div id="brainList" class="brain-list"></div>
-    <h3>Handoff recovery</h3><div id="handoffRecovery" class="brain-list"></div>
+    <details><summary>Handoff history and recovery</summary><div id="handoffRecovery" class="brain-list"></div></details>
   </section>
 
   <section data-section="agents" class="agents-workbench" aria-labelledby="agentsTitle">
     <div class="section-heading agents-heading">
       <div>
-        <span class="eyebrow">Activity and review</span>
-        <h2 id="agentsTitle">Agents</h2>
+
+        <h2 id="agentsTitle" class="sr-only">Agents</h2>
       </div>
       <div id="statusFilters" class="status-filters" role="group" aria-label="Filter agents by status">
         <button type="button" data-filter="active" aria-pressed="true">Active</button>
@@ -973,12 +1029,27 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
         <button type="button" data-filter="unknown" aria-pressed="true">Not reported</button>
       </div>
     </div>
+    <div id="agentSetupActions" class="workspace-actions"></div>
     <div id="agentTabRail" class="agent-tab-rail" role="tablist" aria-label="Room agents"></div>
     <div id="filterEmpty" class="empty-state" hidden>No agents match the selected status filters.</div>
     <article id="agentDetail" class="agent-detail" role="tabpanel" tabindex="0"></article>
   </section>
+      <section data-section="browser" aria-label="Agent browser">
+        <p id="browserStatus" class="browser-status" role="status">Ask an attached Codex or Claude agent to open a browser.</p>
+        <form id="browserNavigate" class="browser-controls" hidden><input id="browserAddress" aria-label="Browser address" type="url" maxlength="4096" placeholder="https://…" required /><button class="board-button" type="submit">Go</button><button id="browserRefresh" class="board-button" type="button" aria-label="Refresh browser observation">Refresh</button><button id="browserClose" class="board-button" type="button">Stop</button></form>
+        <img id="browserImage" class="browser-image" alt="Agent browser page" aria-disabled="true" hidden />
+        <div id="browserInput" hidden>
+          <div class="browser-tools"><button class="board-button" type="button" data-browser-scroll="-550">Scroll up</button><button class="board-button" type="button" data-browser-scroll="550">Scroll down</button><button class="board-button" type="button" data-browser-key="Tab">Tab</button><button class="board-button" type="button" data-browser-key="Enter">Enter</button><button class="board-button" type="button" data-browser-key="Escape">Escape</button></div>
+          <form id="browserType" class="browser-type"><input id="browserText" aria-label="Text to type into the focused browser field" maxlength="4000" placeholder="Type into the focused page field…" required /><button class="board-button" type="submit">Type</button></form>
+          <p class="detail-note">Click the page to focus a field. This browser belongs to this editor; Stop closes the session.</p>
+        </div>
+      </section>
+      <section data-section="review" aria-label="Review"><p class="detail-note">Review proposed changes from Agents. Permission requests appear above the conversation's composer.</p><div id="reviewContent"></div></section>
+    </div>
+  </aside>
 </main>
 <div id="panelAnnouncements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+<script nonce="${csp}" src="${chatScriptUri}"></script>
 <script nonce="${csp}" src="${scriptUri}"></script>
 </body>
 </html>`;

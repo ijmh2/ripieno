@@ -1,3 +1,5 @@
+import { BROWSER_TOOLS, codexBrowserArgs } from "./browserTools";
+import type { BrowserResult } from "./browserSession";
 // Runs a member's own agents inside a room (BYO mode).
 //
 // MCP is pull-based: an agent attached over MCP only acts when its human
@@ -136,6 +138,8 @@ export interface AgentHostOptions extends AgentSpec {
   githubToken?: string;
   permissionServerPath: string;
   workspaceServerPath: string;
+  onBrowserTool?: (name: string, input: Record<string, unknown>) => Promise<BrowserResult>;
+  onBrowserDispose?: () => void;
   onStateChange: (id: string, state: AgentState) => void;
   /** The relay accepted a handoff away from this agent; stop it without exporting provider state. */
   onHandoffRelease?: (agentId: string, handoffId: string) => void;
@@ -497,6 +501,7 @@ export class AgentHost implements vscode.Disposable {
     for (const client of this.workspaceBridge?.clients ?? []) client.terminate();
     this.workspaceBridge?.close();
     this.workspaceBridge = undefined;
+    this.opts.onBrowserDispose?.();
     this.workspaceUrl = undefined;
     this.runner?.cancel();
     this.runner = undefined;
@@ -557,8 +562,10 @@ export class AgentHost implements vscode.Disposable {
     const name = request.name;
     const input: Record<string, unknown> =
       typeof request.input === "object" && request.input !== null ? request.input : {};
-    let result: { content: string; isError: boolean };
-    if (name === "context_read" || name === "context_add") {
+    let result: BrowserResult;
+    if (name.startsWith("browser_")) {
+      result = await this.browserTool(name, input);
+    } else if (name === "context_read" || name === "context_add") {
       result = await this.roomContextTool(name, input);
     } else {
       this.publishActivity(
@@ -632,13 +639,20 @@ export class AgentHost implements vscode.Disposable {
    * same two over MCP, and a local CLI has no channel to offer them on and uses
    * the directive block instead.
    */
+  private async browserTool(name: string, input: Record<string, unknown>): Promise<BrowserResult> {
+    if (!this.opts.onBrowserTool || !BROWSER_TOOLS.some(tool => tool.name === name) || this.terminallyEvicted) return {content:"Browser access is unavailable for this agent.",isError:true};
+    this.publishActivity("reading", "Using its browser");
+    try { return await this.opts.onBrowserTool(name, input); }
+    catch(error) { return {content:error instanceof Error ? error.message : String(error),isError:true}; }
+  }
+
   private roomTools(): Pick<RunContext, "tools" | "callTool"> {
     if (providerById(this.opts.providerId ?? "claude-code")?.kind !== "openai-compatible") {
       return {};
     }
     return {
-      tools: ROOM_CONTEXT_TOOLS,
-      callTool: (name, input) => this.roomContextTool(name, input),
+      tools: [...ROOM_CONTEXT_TOOLS, ...(this.opts.onBrowserTool ? BROWSER_TOOLS : [])],
+      callTool: (name, input) => name.startsWith("browser_") ? this.browserTool(name, input) : this.roomContextTool(name, input),
     };
   }
 
@@ -1128,11 +1142,14 @@ export class AgentHost implements vscode.Disposable {
       if (!this.opts.command) {
         throw new Error(`${this.opts.label} has no command configured — re-add the agent.`);
       }
+      const browserArgs = providerId === "codex" && this.opts.onBrowserTool
+        ? codexBrowserArgs(process.execPath, this.opts.workspaceServerPath, await this.startWorkspaceBridge(), this.workspaceToken)
+        : [];
       this.runner = new CliRunner({
         command: this.opts.command,
         // Declared by the preset, and inert unless the stream matches it.
         eventFormat: providerById(providerId)?.eventFormat,
-        args: argsForAgentModel(
+        args: [...browserArgs, ...argsForAgentModel(
           providerId,
           argsForAgentPermission(
             providerId,
@@ -1140,7 +1157,7 @@ export class AgentHost implements vscode.Disposable {
             this.opts.permissions
           ),
           this.opts.model
-        ),
+        )],
         label: this.opts.label,
         timeoutMs: 300_000,
       });

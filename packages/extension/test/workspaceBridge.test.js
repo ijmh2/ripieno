@@ -61,7 +61,7 @@ async function callTool(env, name, args) {
   const result = await client.callTool({ name, arguments: args });
   const tools = (await client.listTools()).tools.map((t) => t.name);
   await client.close();
-  return { text: result.content[0].text, isError: result.isError === true, tools };
+  return { text: result.content[0].text, content: result.content, isError: result.isError === true, tools };
 }
 
 describe("workspace bridge", () => {
@@ -155,4 +155,18 @@ describe("workspace bridge", () => {
     assert.equal(result.isError, true);
     assert.match(result.text, /closed before answering/i);
   });
+});
+
+
+test("browser MCP tools forward page observations and image content through the authenticated bridge", async () => {
+  const host = fakeHost(() => ({content:"Observed page",isError:false,image:"iVBORw0KGgo="}));
+  await host.ready;
+  try {
+    const result = await callTool({RIPIENO_WORKSPACE_URL:host.url(),RIPIENO_WORKSPACE_TOKEN:TOKEN}, "browser_open", {url:"https://example.com"});
+    assert.equal(host.seen.at(-1).name,"browser_open");
+    assert.deepEqual(host.seen.at(-1).input,{url:"https://example.com"});
+    assert.equal(result.text,"Observed page");
+    assert.deepEqual(result.content[1],{type:"image",data:"iVBORw0KGgo=",mimeType:"image/png"});
+    for(const tool of ["browser_open","browser_snapshot","browser_click","browser_type","browser_scroll","browser_press","browser_close"])assert.ok(result.tools.includes(tool));
+  } finally {await host.close();}
 });

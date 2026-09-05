@@ -1,3 +1,4 @@
+import { BrowserSession, browserUrl, type BrowserResult } from "./browserSession";
 import { CollaborationCommands } from "./collaborationCommands";
 import * as vscode from "vscode";
 import { spawn } from "child_process";
@@ -296,6 +297,47 @@ export function activate(context: vscode.ExtensionContext): void {
     "workspaceServer.js"
   ).fsPath;
 
+  const browserSessions = new Map<string, BrowserSession>();
+  const browserDenied = new Set<string>();
+  const browserStarting = new Map<string, Promise<BrowserSession>>();
+  const closeBrowser = (id: string, revoke = false) => {
+    if (revoke) browserDenied.add(id);
+    browserSessions.get(id)?.dispose();
+    browserSessions.delete(id);
+  };
+  context.subscriptions.push({dispose:()=>{ for (const id of browserSessions.keys()) closeBrowser(id, true); }});
+
+  async function agentBrowserTool(id: string, label: string, authorized: () => boolean, name: string, input: Record<string,unknown>): Promise<BrowserResult> {
+    if (!authorized()) return {content:"Browser access ended when the agent left this room.",isError:true};
+    if (name === "browser_close") { closeBrowser(id); return {content:"Browser closed; temporary profile discarded.",isError:false}; }
+    if (browserDenied.has(id)) return {content:"The owner stopped or declined browser access. Reattach the agent to request a new session; do not keep retrying.",isError:true};
+    let session = browserSessions.get(id);
+    if (!session) {
+      if (name !== "browser_open") return {content:"Call browser_open with a URL first.",isError:true};
+      if ([...browserSessions.keys(), ...browserStarting.keys()].some(other=>other!==id)) return {content:"Another agent is using this editor's browser. Ask the owner to close it before opening yours.",isError:true};
+      browserUrl(input.url);
+      let starting = browserStarting.get(id);
+      if (!starting) {
+        starting = (async () => {
+          const choice = await vscode.window.showInformationMessage(`${label} wants to use a separate browser for this room. It can read pages, click links and enter or submit text. This session does not use your existing browser logins. You can stop it in Ripieno's Browser pane.`, {modal:true}, "Allow browser");
+          if (choice !== "Allow browser") { browserDenied.add(id); throw new Error("Browser access declined."); }
+          if (!authorized() || browserDenied.has(id)) throw new Error("Room changed before browser access was enabled.");
+          const created = new BrowserSession(label, state => roomView.setBrowserState(state));
+          browserSessions.set(id, created);
+          roomView.setBrowserState({sessionId:created.id,label,busy:true});
+          try { await created.start(); }
+          catch(error) { closeBrowser(id); throw error; }
+          if (!authorized() || browserDenied.has(id)) { closeBrowser(id); throw new Error("Browser access ended."); }
+          return created;
+        })();
+        browserStarting.set(id,starting);
+      }
+      try { session=await starting; } finally { if(browserStarting.get(id)===starting)browserStarting.delete(id); }
+    }
+    if (!authorized() || browserDenied.has(id)) return {content:"Browser access ended.",isError:true};
+    return session.run(name === "browser_open" ? "navigate" : name.replace(/^browser_/,""), input);
+  }
+
   const collaboration = new CollaborationCommands(
     () => ({ online:claimsOnline, supported:collaborationSupported, connection:relay, room:currentRoom, handle:me?.handle, host:workspaceHost, root:hostingWorkspaceRoot, context:sharedContext, goals, claims:workClaims, roster:latestRoster }),
     (message) => sendContextMutation(message),
@@ -334,6 +376,18 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     String(context.extension.packageJSON.version)
   );
+
+  roomView.setBrowserHandler((value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    const msg = value as Record<string,unknown>;
+    if (typeof msg.sessionId !== "string" || typeof msg.action !== "string") return;
+    const entry = [...browserSessions.entries()].find(([,session])=>session.id===msg.sessionId);
+    if (!entry) return;
+    const [id,session] = entry;
+    if (msg.action === "close") { closeBrowser(id, true); return; }
+    if (!claimsOnline || !agents.has(id) || !latestRoster.some(member=>member.handle===me?.handle && member.role!=="viewer")) return;
+    if (["refresh","navigate","click","type","scroll","press"].includes(msg.action)) void session.run(msg.action,msg);
+  });
 
   const claimHeartbeat = setInterval(() => {
     if (!claimsOnline || !relay || !currentRoom || locallyHeldClaims.size === 0) return;
@@ -2368,7 +2422,7 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     };
 
-    const host = new AgentHost({
+    const host: AgentHost = new AgentHost({
       url: hostUrl,
       room: hostRoom,
       member: me,
@@ -2400,6 +2454,9 @@ export function activate(context: vscode.ExtensionContext): void {
       approvals,
       permissionServerPath,
       workspaceServerPath,
+      onBrowserTool: (name, input) => agentBrowserTool(spec.id, labelFor(spec.label), () =>
+        claimsOnline && currentRoom === hostRoom && agents.get(spec.id) === host && latestRoster.some(member=>member.handle===me?.handle && member.role!=="viewer"), name, input),
+      onBrowserDispose: () => closeBrowser(spec.id, true),
       presenceLocationScope: (hint) => {
         const editorRoot = editorWorkspaceRoot();
         const sharedRoot = workspaceHost === me?.handle ? hostingWorkspaceRoot : editorRoot;
@@ -2428,6 +2485,7 @@ export function activate(context: vscode.ExtensionContext): void {
         });
       },
     });
+    browserDenied.delete(spec.id);
     agents.set(spec.id, host);
     host.attach();
     refreshAgentViews();
@@ -2925,6 +2983,7 @@ export function activate(context: vscode.ExtensionContext): void {
     roomView.setConnection(state);
     roomsTree.setConnected(state === "online");
     if (state !== "online") {
+      for (const id of new Set([...browserSessions.keys(), ...browserStarting.keys()])) closeBrowser(id, true);
       claimsOnline = false;
       roomView.claimResult(false, "Connection lost. Claims will be checked when the room reconnects.");
       // A disconnected client cannot know whether the host, file or agent is

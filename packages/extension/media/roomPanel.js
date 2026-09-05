@@ -3,16 +3,13 @@
 (function () {
   "use strict";
 
-  const vscode = acquireVsCodeApi();
+  const vscode = window.ripienoVsCode || (window.ripienoVsCode = acquireVsCodeApi());
   const roomNameEl = document.getElementById("panelRoomName");
   const roomMetaEl = document.getElementById("panelRoomMeta");
   const connectionEl = document.getElementById("panelConnection");
   const workspaceStateEl = document.getElementById("workspaceState");
   const workspaceStateLabelEl = document.getElementById("workspaceStateLabel");
   const workspaceStateDetailEl = document.getElementById("workspaceStateDetail");
-  const overviewMetricsEl = document.getElementById("overviewMetrics");
-  const overviewUpdatedEl = document.getElementById("overviewUpdated");
-  const roomPulseEl = document.getElementById("roomPulse");
   const filtersEl = document.getElementById("statusFilters");
   const railEl = document.getElementById("agentTabRail");
   const detailEl = document.getElementById("agentDetail");
@@ -29,7 +26,7 @@
 
   const restored = vscode.getState() || {};
   let snapshot;
-  let page = ["work", "brain", "agents"].includes(restored.page) ? restored.page : "work";
+  let page = restored.layoutVersion === 2 && ["chat", "work", "brain", "agents", "review", "browser"].includes(restored.page) ? restored.page : "chat";
   let selectedAgentId = typeof restored.selectedAgentId === "string" ? restored.selectedAgentId : undefined;
   let followedAgentId = typeof restored.followedAgentId === "string" ? restored.followedAgentId : undefined;
   const enabledFilters = new Set(
@@ -37,56 +34,129 @@
   );
   let lastFollowActivity;
 
-  function showPage(next) {
+  function showPage(next, focus = false) {
+    if (!["chat", "work", "brain", "agents", "review", "browser"].includes(next)) return;
     page = next;
+    const inspector = document.getElementById("workspaceInspector");
+    inspector.hidden = page === "chat" || !snapshot?.room;
+    document.body.classList.toggle("inspector-open", !inspector.hidden);
+    document.body.classList.toggle("browser-open", page === "browser" && !inspector.hidden);
     for (const section of document.querySelectorAll("[data-section]")) section.hidden = section.dataset.section !== page;
     for (const button of document.querySelectorAll("[data-page]")) button.setAttribute("aria-pressed", String(button.dataset.page === page));
+    document.getElementById("inspectorTitle").textContent = {work:"Tasks",brain:"Brain",agents:"Agents",review:"Review",browser:"Browser"}[page] || "Details";
+    if (focus && !inspector.hidden) document.getElementById("closeInspector").focus({preventScroll:true});
     persist();
   }
+  window.addEventListener("ripieno:navigate", event => showPage(event.detail));
   document.getElementById("workspaceNav").addEventListener("click", event => {
     const button = event.target.closest("button");
-    if (button?.dataset.page) showPage(button.dataset.page);
-    else if (button?.dataset.workspaceAction) vscode.postMessage({type:"workspaceAction", action:button.dataset.workspaceAction});
+    if (button?.dataset.page) showPage(button.dataset.page, true);
   });
+  document.getElementById("closeInspector").addEventListener("click", () => {
+    const previous = page; showPage("chat");
+    document.querySelector(`[data-page="${previous}"]`)?.focus();
+  });
+  document.getElementById("shareRoom").addEventListener("click", () => vscode.postMessage({type:"workspaceAction", action:"copyInvite"}));
   function workspaceButton(label, action) {
     const button = element("button", "board-button", label); button.type = "button";
     button.dataset.workspaceFocus = action;
-    button.addEventListener("click", () => vscode.postMessage({ type:"workspaceAction", action }));
+    button.addEventListener("click", () => {
+      if (action === "chat") { showPage("chat"); document.getElementById("composer").focus(); }
+      else vscode.postMessage({ type:"workspaceAction", action });
+    });
     return button;
   }
   function renderSetup() {
     const focused = document.activeElement?.dataset?.workspaceFocus;
     document.getElementById("extensionVersion").textContent = snapshot.extensionVersion ? `v${snapshot.extensionVersion}` : "";
-    const steps = document.getElementById("setupSteps"); steps.replaceChildren();
-    const ready = snapshot.onboarding?.complete && !snapshot.onboarding?.readOnly;
-    for (const [label, done] of [["Open folder", snapshot.hasLocalFolder || snapshot.workspace.hostHandle], ["Start or join room", snapshot.room], ["Connect agent", ready]]) {
-      const item = element("li", done ? "complete" : "", `${done ? "✓ " : ""}${label}`); steps.appendChild(item);
-    }
+    document.getElementById("workspaceConversation").hidden = !snapshot.room;
+    document.getElementById("setupGuide").hidden = Boolean(snapshot.room);
     const actions = document.getElementById("setupActions"); actions.replaceChildren();
-    let hint = "";
-    if (!snapshot.hasLocalFolder && !snapshot.workspace.hostHandle) { actions.appendChild(workspaceButton("Open folder…", "openFolder")); hint = "Choose a project folder for your agent. You can also join a hosted room."; }
-    if (!snapshot.room && snapshot.resumeRoom) actions.appendChild(workspaceButton(`Rejoin ${snapshot.resumeRoom}`, "resumeRoom"));
-    if (!snapshot.room) actions.append(workspaceButton("Start a room", "startSolo"), workspaceButton("Join room…", "joinRoom"));
-    else if (snapshot.connection !== "online") hint = "The room is reconnecting. Work and agent actions become available when it is online.";
-    else if (snapshot.you?.role === "viewer") hint = "You are viewing this room. Ask its owner for member access to connect an agent or manage work.";
-    else if (snapshot.onboarding?.action) {
-      actions.appendChild(workspaceButton(snapshot.onboarding.action.label, snapshot.onboarding.action.kind));
-      hint = snapshot.onboarding.action.kind === "addAgent" ? "Choose your provider and complete its sign-in in Add agent. For Codex, sign in with codex login." : "Connect your configured agent. If sign-in has expired, complete the provider's login and try again.";
-    } else if (ready) { actions.appendChild(workspaceButton("Send a task in Chat", "chat")); hint = "Address your agent with @ in Chat. Saved tasks track ownership and progress; they do not start an agent."; }
-    document.getElementById("setupHint").textContent = hint;
+    document.getElementById("welcomeTitle").textContent = snapshot.resumeRoom ? "Welcome back" : "What will you build?";
+    document.getElementById("setupHint").textContent = snapshot.resumeRoom ? `Return to your room, ${snapshot.resumeRoom}.` : "A conversation for you, your collaborators and your agents.";
+    if (!snapshot.room) {
+      const primary = workspaceButton(snapshot.resumeRoom ? `Resume ${snapshot.resumeRoom}` : "Start a room", snapshot.resumeRoom ? "resumeRoom" : "startSolo");
+      primary.classList.add("primary-action"); actions.appendChild(primary);
+      const alternatives = element("div", "welcome-alternatives");
+      if (snapshot.resumeRoom) alternatives.appendChild(workspaceButton("Start a new room", "startSolo"));
+      alternatives.appendChild(workspaceButton("Join a room", "joinRoom")); actions.appendChild(alternatives);
+    }
+    const prompt = document.getElementById("connectionPrompt"); prompt.replaceChildren(); prompt.hidden = true;
+    const agentActions = document.getElementById("agentSetupActions"); agentActions.replaceChildren();
+    const member = ["owner", "member"].includes(snapshot.you?.role);
+    if (snapshot.room && snapshot.connection !== "online") { prompt.hidden = false; prompt.appendChild(element("span", "", "Reconnecting to your room… Your conversation is still here.")); }
+    else if (snapshot.room && snapshot.you?.role === "viewer") { prompt.hidden = false; prompt.appendChild(element("span", "", "Viewing this room. Ask its owner for member access to contribute.")); }
+    else if (snapshot.room && snapshot.onboarding?.action) {
+      const action = snapshot.onboarding.action;
+      prompt.hidden = false;
+      prompt.append(element("span", "", action.kind === "addAgent" ? "Bring an agent into the conversation." : "Your agent is ready to connect."), workspaceButton(action.label, action.kind));
+      agentActions.appendChild(workspaceButton(action.label, action.kind));
+    }
+    if (member && snapshot.connection === "online" && !snapshot.onboarding?.action) agentActions.appendChild(workspaceButton("Add agent…", "addAgent"));
     const workspaceActions = document.getElementById("workspaceActions"); workspaceActions.replaceChildren();
-    if (snapshot.connection === "online" && snapshot.workspace.hostHandle) workspaceActions.appendChild(workspaceButton("Open shared folder in Explorer", "mountWorkspace"));
-    else if (snapshot.connection === "online" && ["owner", "member"].includes(snapshot.you?.role)) workspaceActions.appendChild(workspaceButton("Share a folder…", "hostWorkspace"));
-    document.getElementById("setupGuide").hidden = Boolean(ready && snapshot.transcriptCount > 0);
-    if (focused) [...document.querySelectorAll("[data-workspace-focus]")].find(button => button.dataset.workspaceFocus === focused)?.focus({preventScroll:true});
+    if (snapshot.connection === "online" && snapshot.workspace.hostHandle) workspaceActions.appendChild(workspaceButton("Open shared folder", "mountWorkspace"));
+    else if (snapshot.connection === "online" && member) workspaceActions.appendChild(workspaceButton("Share a folder…", "hostWorkspace"));
+    if (!snapshot.hasLocalFolder) workspaceActions.appendChild(workspaceButton("Open local folder…", "openFolder"));
+    for (const button of document.querySelectorAll("[data-page]")) button.disabled = !snapshot.room && button.dataset.page !== "chat";
+    if (focused) [...document.querySelectorAll("[data-workspace-focus]")].find(button => button.dataset.workspaceFocus === focused && !button.closest("[hidden]"))?.focus({preventScroll:true});
   }
+
+  let browserState = {};
+  let screenshotSession;
+  let expectedImage;
+  const browserImage = document.getElementById("browserImage");
+  const browserAddress = document.getElementById("browserAddress");
+  function browserAction(action, fields = {}) {
+    if (!browserState.sessionId || browserState.busy && action !== "close") return;
+    vscode.postMessage({type:"browserAction", sessionId:browserState.sessionId, action, ...fields});
+  }
+  function renderBrowser(next) {
+    const changedSession = next.sessionId !== browserState.sessionId;
+    browserState = next;
+    const active = Boolean(next.sessionId);
+    const status = document.getElementById("browserStatus");
+    status.textContent = next.error || (next.busy ? "Browser is working…" : active ? `${next.label || "Agent browser"}${next.title ? ` · ${next.title}` : ""}` : "Ask an attached Codex or Claude agent to open a browser.");
+    status.classList.toggle("browser-error", Boolean(next.error));
+    document.getElementById("browserNavigate").hidden = !active;
+    document.getElementById("browserInput").hidden = !active;
+    if (changedSession || document.activeElement !== browserAddress) browserAddress.value = next.url || "";
+    if (changedSession) document.getElementById("browserText").value = "";
+    const hasImage = active && typeof next.image === "string" && /^[A-Za-z0-9+/=]+$/.test(next.image);
+    browserImage.hidden = !hasImage;
+    const imageSource = hasImage ? `data:image/png;base64,${next.image}` : undefined;
+    if (imageSource !== expectedImage || changedSession) {
+      screenshotSession = undefined; expectedImage = imageSource;
+      if (imageSource) browserImage.src = imageSource;
+      else browserImage.removeAttribute("src");
+    }
+    browserImage.setAttribute("aria-disabled", String(!active || Boolean(next.busy)));
+    browserImage.alt = next.title ? `Browser: ${next.title}` : "Agent browser page";
+    for (const control of document.querySelectorAll("#browserNavigate input, #browserNavigate button, #browserInput input, #browserInput button")) control.disabled = Boolean(next.busy) && control.id !== "browserClose";
+  }
+  document.getElementById("browserNavigate").addEventListener("submit", event => {event.preventDefault(); browserAction("navigate", {url:browserAddress.value.trim()});});
+  document.getElementById("browserRefresh").addEventListener("click", () => browserAction("refresh"));
+  document.getElementById("browserClose").addEventListener("click", () => browserAction("close"));
+  browserImage.addEventListener("load", () => {
+    if (expectedImage && browserImage.src === expectedImage) screenshotSession = browserState.sessionId;
+  });
+  browserImage.addEventListener("click", event => {
+    if (browserImage.hidden || screenshotSession !== browserState.sessionId) return;
+    const bounds = browserImage.getBoundingClientRect();
+    browserAction("click", {x:Math.min(1279, Math.max(0, Math.floor((event.clientX - bounds.left - browserImage.clientLeft) / browserImage.clientWidth * 1280))), y:Math.min(799, Math.max(0, Math.floor((event.clientY - bounds.top - browserImage.clientTop) / browserImage.clientHeight * 800)))});
+  });
+  for (const button of document.querySelectorAll("[data-browser-scroll]")) button.addEventListener("click", () => browserAction("scroll", {deltaY:Number(button.dataset.browserScroll)}));
+  for (const button of document.querySelectorAll("[data-browser-key]")) button.addEventListener("click", () => browserAction("press", {key:button.dataset.browserKey}));
+  document.getElementById("browserType").addEventListener("submit", event => {
+    event.preventDefault(); const field = document.getElementById("browserText"); if (!field.value) return;
+    browserAction("type", {text:field.value});
+  });
 
   function isStatusGroup(value) {
     return value === "active" || value === "idle" || value === "unknown";
   }
 
   function persist() {
-    vscode.setState({ page, selectedAgentId, followedAgentId, filters: [...enabledFilters] });
+    vscode.setState({ ...(vscode.getState() || {}), layoutVersion:2, page, selectedAgentId, followedAgentId, filters: [...enabledFilters] });
   }
 
   function element(tag, className, text) {
@@ -109,83 +179,18 @@
     return Number.isFinite(value) ? value.toLocaleString() : "Not reported";
   }
 
-  function metric(label, value, detail) {
-    const card = element("div", "metric");
-    card.append(
-      element("span", "metric-label", label),
-      element("strong", "metric-value", String(value)),
-      element("span", "metric-detail", detail)
-    );
-    return card;
-  }
-
   function renderOverview() {
-    const focused = document.activeElement?.dataset?.boardFocus;
-    roomNameEl.textContent = snapshot.room || "Not connected";
-    roomMetaEl.textContent = snapshot.room && snapshot.connection !== "online"
-      ? `Disconnected · last known roster: ${snapshot.memberCount} people and ${snapshot.agents.length} agents`
-      : snapshot.room
-      ? `${snapshot.mode === "hosted" ? "Hosted" : "BYO"} · ${snapshot.presentMemberCount}/${snapshot.memberCount} people present · ${snapshot.agents.length} attached agents`
-      : "Open a room to inspect its agents.";
-    const connectionLabel = snapshot.connection === "online"
-      ? snapshot.status === "idle" ? "online" : snapshot.status.replaceAll("-", " ")
-      : snapshot.connection;
+    roomNameEl.textContent = snapshot.room || "Ripieno";
+    roomMetaEl.textContent = snapshot.room ? `${snapshot.presentMemberCount} ${snapshot.presentMemberCount === 1 ? "person" : "people"} · ${snapshot.agents.length} ${snapshot.agents.length === 1 ? "agent" : "agents"}` : "";
+    const connectionLabel = snapshot.connection === "online" ? (snapshot.status === "idle" ? "" : snapshot.status.replaceAll("-", " ")) : snapshot.room ? snapshot.connection : "";
     connectionEl.textContent = connectionLabel;
-    connectionEl.className = `connection ${snapshot.connection} ${snapshot.status}`;
+    connectionEl.className = `connection ${snapshot.connection}`;
+    connectionEl.hidden = !connectionLabel;
+    document.getElementById("shareRoom").hidden = snapshot.connection !== "online";
     workspaceStateEl.className = `workspace-state ${snapshot.workspace.state}`;
     workspaceStateLabelEl.textContent = snapshot.workspace.label;
     workspaceStateDetailEl.textContent = snapshot.workspace.detail;
-    overviewUpdatedEl.textContent = `Updated ${formatTime(Date.now())}`;
-
-    overviewMetricsEl.replaceChildren(
-      metric("People", snapshot.connection === "online" ? `${snapshot.presentMemberCount}/${snapshot.memberCount}` : snapshot.memberCount, snapshot.connection === "online" ? "currently present" : "last known roster"),
-      metric("Agents", snapshot.agents.length, `${snapshot.agents.filter((agent) => agent.statusGroup === "active").length} active`),
-      metric("Goals", snapshot.activeGoals.length, "active room goals"),
-      metric("Handoffs", snapshot.pendingHandoffCount, "open handoffs"),
-      metric("Work", snapshot.actionCount, "recorded actions"),
-      metric("Brain", snapshot.contextCount, "live shared items")
-    );
-
-    roomPulseEl.replaceChildren();
-    if (snapshot.agents.length === 0) {
-      roomPulseEl.appendChild(element("div", "empty-state", "No agents are attached to this room."));
-      return;
-    }
-    for (const agent of snapshot.agents) {
-      const pulse = element("article", `pulse team-card ${agent.statusGroup}`);
-      pulse.setAttribute("role", "listitem");
-      pulse.style.setProperty("--owner-color", `var(--ripieno-hue-${agent.ownerColor})`);
-      pulse.setAttribute("aria-label", `${agent.label}, owned by ${agent.ownerName}, ${statusLabel(agent)}`);
-      pulse.append(
-        element("span", "pulse-dot"),
-        element("strong", "pulse-label", agent.label),
-        element("span", "pulse-owner", agent.ownerName),
-        element("span", "pulse-status", statusLabel(agent))
-      );
-      const held = snapshot.board.claims.filter(c => c.agentId === agent.agentId);
-      pulse.appendChild(element("p", "team-task", held[0]?.task || agent.currentTask));
-      const files = [...new Set([...held.flatMap(c => c.paths), ...(agent.activity?.locationScope === "shared" && agent.activity.path ? [agent.activity.path] : [])])];
-      pulse.appendChild(element("p", "team-files", files.length ? files.slice(0, 3).join(" · ") : "No shared files reported"));
-      const warnings = snapshot.board.overlaps.filter(w => w.agentIds.includes(agent.agentId));
-      if (warnings.length) pulse.appendChild(element("span", "attention-badge", `${warnings.length} possible overlap${warnings.length === 1 ? "" : "s"}`));
-      if (agent.state === "waiting-approval") pulse.appendChild(element("span", "attention-badge", "Needs approval"));
-      const inspect = element("button", "board-button", "Inspect agent");
-      inspect.dataset.boardFocus = `agent:${agent.agentId}`;
-      inspect.type = "button";
-      inspect.addEventListener("click", () => {
-        enabledFilters.add(agent.statusGroup);
-        followedAgentId = undefined;
-        showPage("agents");
-        selectedAgentId = agent.agentId;
-        persist();
-        renderFilters();
-        renderAgents(true);
-        detailEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      });
-      pulse.appendChild(inspect);
-      roomPulseEl.appendChild(pulse);
-    }
-    restoreBoardFocus(focused);
+    document.getElementById("reviewCount").textContent = snapshot.board.pendingApprovalCount ? String(snapshot.board.pendingApprovalCount) : "";
   }
 
   function restoreBoardFocus(key) {
@@ -416,8 +421,9 @@
   });
 
   function detailSection(title, className) {
-    const section = element("section", `detail-card ${className || ""}`.trim());
-    section.appendChild(element("h3", "detail-card-title", title));
+    const collapsed = ["intent-card", "working-set-card", "usage-card", "permissions-card"].includes(className);
+    const section = element(collapsed ? "details" : "section", `detail-card ${className || ""}`.trim());
+    section.appendChild(element(collapsed ? "summary" : "h3", "detail-card-title", title));
     return section;
   }
 
@@ -428,7 +434,11 @@
     return list;
   }
 
+  let lastDetailSignature;
   function renderAgentDetail(agent) {
+    const signature = JSON.stringify([agent, followedAgentId]);
+    if (signature === lastDetailSignature) return;
+    lastDetailSignature = signature;
     detailEl.replaceChildren();
     detailEl.style.setProperty("--owner-color", `var(--ripieno-hue-${agent.ownerColor})`);
     const header = element("header", "agent-detail-header");
@@ -657,7 +667,7 @@
       if (canAct && ["accepted", "proposed"].includes(item.status) && (item.authorHandle === snapshot.you?.handle || snapshot.you?.role === "owner")) { const archive = element("button", "context-action", "Archive"); archive.dataset.brainKey = `archive:${item.id}`; archive.addEventListener("click", () => vscode.postMessage({type:"contextStatus",id:item.id,expectedVersion:item.version,status:"archived"}));buttons.appendChild(archive); }
       card.appendChild(buttons); list.appendChild(card);
     }
-    if (!records.length) list.appendChild(element("p", "detail-note", "No matching records. Create a plan or memory here, or select shared code and use Add Shared Code Comment in the editor menu."));
+    if (!records.length) list.appendChild(element("p", "detail-note", "Nothing here yet. Save a note, decision or plan for the room."));
     const recovery = document.getElementById("handoffRecovery"); recovery.replaceChildren();
     for (const h of (snapshot.recoveryHandoffs || []).filter(h => ["pending", "assigned", "claimed", "started", "failed", "outcomeUnknown", "expired"].includes(h.status))) {
       const card = element("article", "brain-card"); card.append(element("strong", "", `${h.status}: ${h.task}`), element("p", "detail-meta", `@${h.sourceOwnerHandle} → @${h.targetHandle}`));
@@ -674,7 +684,7 @@
     if (!recovery.children.length) recovery.appendChild(element("p", "detail-note", "No handoff needs recovery. Durable assignments and outcomes are restored by the relay on reconnect."));
     if (focusedKey) {
       const replacement = [...document.querySelectorAll("[data-brain-key]")].find(node => node.dataset.brainKey === focusedKey);
-      if (replacement && !replacement.disabled) replacement.focus({preventScroll:true});
+      if (replacement && !replacement.disabled && !replacement.closest("[hidden]")) replacement.focus({preventScroll:true});
       else if (page === "brain") brainSearch.focus({preventScroll:true});
       else if (page === "work") claimTask.focus({preventScroll:true});
     }
@@ -702,7 +712,8 @@
 
   window.addEventListener("message", (event) => {
     const message = event.data;
-    if (message?.type === "navigateWorkspace" && ["work", "brain", "agents"].includes(message.page)) { showPage(message.page); return; }
+    if (message?.type === "browserState" && message.state && typeof message.state === "object") { renderBrowser(message.state); return; }
+    if (message?.type === "navigateWorkspace" && ["chat", "work", "brain", "agents", "review", "browser"].includes(message.page)) { showPage(message.page); return; }
     if (message?.type === "claimResult") {
       if (message.ok && pendingClaimAction === "create" && submittedTask === claimTask.value) { claimTask.value = ""; claimPaths.value = ""; claimGoal.value = ""; }
       pendingClaimAction = undefined;

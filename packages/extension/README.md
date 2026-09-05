@@ -17,9 +17,9 @@ or against a relay you operate; the project does not provide a hosted relay.
    Follow the provider setup prompts to install or sign in if needed.
 4. Give the agent a small first task in **Chat**. If it responds only when named,
    mention it using `@`.
-5. Choose **Open workspace** to plan and inspect work. **Work** shows the team
-   board, claims and tasks; **Brain** holds shared memory and discussions;
-   **Agents** shows each agent's activity. The Command Palette entry
+5. Choose **Open workspace** for the full conversation. Open **Tasks**, **Brain**,
+   **Agents**, **Review** or **Browser** in the optional details pane. Close the
+   pane to return to an uncluttered conversation. The Command Palette entry
    **Ripieno: Open Full Room Panel** remains available.
 
 For code-anchored comments and shared file tools, host your open project through
@@ -59,6 +59,21 @@ Agent-proposed memories remain proposed until a person accepts them. Search
 shared records by title, body, tags or owner. Handoff recovery offers explicit
 recipient actions when work is interrupted; uncertain execution is never
 silently retried.
+
+## Let an agent use a browser
+
+Ask an attached Codex or Claude agent to open a URL in its Ripieno browser. The
+first request asks you to enable browser control. Open **Browser** in the full
+workspace to see page captures and interact alongside the agent. Google Chrome
+must be installed on the machine running the extension. This is a separate,
+temporary profile with no existing browser logins.
+
+Use **Stop** to close the session and revoke control. Disconnecting or detaching
+also closes it. Only one agent at a time uses this editor's browser. API agents
+with function calling can inspect and interact too; CLI Gemini is not connected
+to the browser tools in this preview. See the
+[redesign notes](https://github.com/ijmh2/ripieno/blob/main/docs/workspace-redesign.md)
+for current capabilities and verification limits.
 
 ## Work with other people
 

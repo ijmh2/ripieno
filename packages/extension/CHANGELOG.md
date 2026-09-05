@@ -2,6 +2,18 @@
 
 All notable changes to the Ripieno extension will be documented here.
 
+## 0.0.3 — Preview
+
+- Conversation-first workspace with compact navigation and optional task,
+  memory, agent, review and browser panes.
+- Minimal welcome/resume screen and approvals available in either chat surface.
+- Isolated agent browser for Codex and Claude through MCP, plus compatible API
+  agents through function calling. Includes page text, screenshots, navigation,
+  click, type, key and scroll tools.
+- Browser access requires the owner's grant, ends on disconnect/detach/Stop and
+  uses a temporary browser profile. Google Chrome is required on the machine
+  running the extension; browser profiles and logins are not imported.
+
 ## 0.0.2 — Preview
 
 - Team board with attributed agent activity and human-owned work claims.

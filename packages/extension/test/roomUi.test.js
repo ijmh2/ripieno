@@ -31,10 +31,10 @@ test("shared context and agent inspectors are separate accessible room surfaces"
   assert.match(roomViewHost, /role="tablist" aria-label="Ripieno room surfaces"/);
   assert.match(roomViewHost, /id="contextPanel"[^>]*role="tabpanel"/);
   assert.match(roomViewHost, /id="agentsPanel"[^>]*role="tabpanel"/);
-  assert.match(roomViewHost, /Durable, attributed memory/);
+  assert.match(roomViewHost, /Decisions, notes and references shared with your room/);
   assert.match(script, /type: "contextCreate"/);
   assert.match(script, /type: "contextStatus"/);
-  assert.match(roomViewHost, /Agent additions remain proposed/);
+  assert.match(roomViewHost, /Review agent suggestions before accepting them/);
   assert.match(script, /agent\.activity/);
   // A range, when there is one: agents patch regions rather than typing, so a
   // single line would be a less honest claim than the one the relay sends.
@@ -46,7 +46,7 @@ test("shared context and agent inspectors are separate accessible room surfaces"
     script,
     /aria-label",\s*`\$\{agent\.label\}, owned by \$\{member\.displayName \|\| member\.handle\}, \$\{activityText\.textContent\}`/
   );
-  assert.match(roomViewHost, /Hidden reasoning and raw logs are never shared/);
+  assert.match(roomViewHost, /See who owns each agent and what it is working on/);
   assert.match(styles, /\.surface-tabs\s*\{/);
   assert.match(styles, /\.context-card\.proposed/);
   assert.match(styles, /\.agent-inspector\s*\{/);

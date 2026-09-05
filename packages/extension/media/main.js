@@ -5,7 +5,8 @@
 (function () {
   "use strict";
 
-  const vscode = acquireVsCodeApi();
+  const vscode = window.ripienoVsCode || (window.ripienoVsCode = acquireVsCodeApi());
+  const embedded = document.body.classList.contains("workspace-shell");
 
   const transcriptEl = document.getElementById("transcript");
   const rosterEl = document.getElementById("roster");
@@ -47,6 +48,10 @@
   const contextListEl = document.getElementById("contextList");
   const contextAnnouncementsEl = document.getElementById("contextAnnouncements");
   const agentInspectorsEl = document.getElementById("agentInspectors");
+  if (embedded) {
+    const review = document.getElementById("reviewContent");
+    for (const node of [goalsEl, handoffsEl, actionsEl]) review.appendChild(node);
+  }
   // Mirrors MAX_COMPOSER_CHARS in roomViewMessages.ts. The host remains the
   // authority; this copy prevents a legitimate draft being cleared on rejection.
   const MAX_COMPOSER_CHARS = 32_000;
@@ -133,6 +138,10 @@
 
   function showSurface(surface, focus = false) {
     if (!["room", "work", "context", "agents"].includes(surface)) return;
+    if (embedded && surface !== "room") {
+      window.dispatchEvent(new CustomEvent("ripieno:navigate", {detail: surface === "context" ? "brain" : surface}));
+      surface = "room";
+    }
     activeSurface = surface;
     const panels = { work: document.getElementById("workPanel"), room: roomPanelEl, context: contextPanelEl, agents: agentsPanelEl };
     for (const button of surfaceTabsEl.querySelectorAll("[role=tab]")) {
@@ -164,7 +173,7 @@
     if (next === "work") vscode.postMessage({ type: "workspaceAction", action: "openWork" });
     event.preventDefault();
   });
-  showSurface(activeSurface);
+  showSurface(embedded ? "room" : activeSurface);
 
   function clearEmptyState() {
     const el = transcriptEl.querySelector(".empty-state");
@@ -740,6 +749,7 @@
         const button = document.getElementById("resumeRoom"); button.hidden = !msg.room || Boolean(currentRoom); button.textContent = msg.room ? `Rejoin ${msg.room}` : ""; break;
       }
       case "showChat":
+        if (embedded) window.dispatchEvent(new CustomEvent("ripieno:navigate", {detail:"chat"}));
         showSurface("room"); composerEl.focus(); break;
       case "snapshot":
         applySnapshot(msg);
@@ -764,6 +774,9 @@
         break;
       case "connection":
         applyConnection(msg.state);
+        break;
+      case "approvalResolved":
+        approvalStackEl.querySelector(`[data-approval-id="${CSS.escape(msg.id)}"]`)?.remove();
         break;
       case "approval":
         showApproval(msg);
