@@ -3,372 +3,76 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ripieno — a shared room for people and their AI agents</title>
-<meta name="description" content="A shared workspace in your editor where several people and several AI agents work on one codebase, and every message, file write and command carries the name of whoever's agent did it.">
-<meta property="og:title" content="Ripieno">
-<meta property="og:description" content="Several people, several AI agents, one codebase — and git log names each of them correctly.">
+<meta name="theme-color" content="#f6f5f0">
+<title>Ripieno — Good work is a group project.</title>
+<meta name="description" content="Bring your people, your AI agents, and your code into one shared room. Ripieno is the multiplayer workspace inside your editor.">
+<link rel="canonical" href="https://ripieno.app/">
+<meta property="og:title" content="Ripieno — Good work is a group project.">
+<meta property="og:description" content="Your people. Your agents. One shared workspace inside your editor.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://ripieno.app/">
-<link rel="canonical" href="https://ripieno.app/">
-<!-- Absolute, because a scraper resolves this against nothing. A relative
-     og:image is the usual reason a shared link renders with no picture. -->
-<meta property="og:image" content="https://ripieno.app/docs/images/room-light.png">
+<meta property="og:image" content="https://ripieno.app/docs/images/ripieno-network-card.png">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="stylesheet" href="site.css">
 <link rel="stylesheet" href="landing.css">
+<script src="landing.js" defer></script>
 </head>
-<body class="landing">
+<body>
 <a class="skip" href="#main">Skip to content</a>
-
-<header class="top">
-  <a class="wordmark" href="./">Ripieno</a>
-  <nav aria-label="Documentation">
-    <a href="overview.html">Overview</a>
-    <a href="self-hosting.html">Run a relay</a>
-    <a href="provenance.html">Provenance</a>
-    <a href="security.html">Security</a>
-    <a href="support.html">Support</a>
-  </nav>
+<header class="header wrap">
+  <a class="brand" href="./" aria-label="Ripieno home"><span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i><i></i></span>ripieno<span class="brand-period">.</span></a>
+  <nav aria-label="Main navigation"><a href="#workspace">The workspace</a><a href="overview.html">Docs <span aria-hidden="true">↗</span></a><a href="https://github.com/ijmh2/ripieno">GitHub <span aria-hidden="true">↗</span></a></nav>
+  <a class="button small dark" href="#install">Get Ripieno <span aria-hidden="true">↗</span></a>
 </header>
-
 <main id="main">
-
-  <!-- ================= HERO ================= -->
-  <section class="hero">
-    <div class="hero-copy">
-      <p class="kicker">VS&nbsp;Code · Cursor · Windsurf · VSCodium</p>
-      <h1>AI coding agents<br>are single-player.<br>This makes them<br>multiplayer.</h1>
-      <p class="lede">
-        A shared room in your editor where your whole team works with their own agents on one
-        project. Everyone brings their own Claude Code, Codex or Gemini — you all see the same
-        conversation, steer each other's agents, and hand work between them.
-      </p>
-      <div class="cta">
-        <a class="btn primary" href="#install">Install the Preview</a>
-        <a class="btn secondary" href="https://github.com/ijmh2/ripieno">Read the source</a>
-      </div>
-      <ul class="cta-facts">
-        <li>Bring your own agent — nothing shared, nothing resold</li>
-        <li>Several people and several agents in one room</li>
-        <li>Self-hosted, or no host at all</li>
-      </ul>
-      <!-- Product facts belong in the list; what it costs and how finished it is
-           are a different kind of claim and sit apart from them. -->
-      <p class="cta-note">0.0.1 Preview · free for personal use, always · organisations licensed</p>
-    </div>
-    <!-- Drawn, not photographed. Everything illustrative on this page is markup;
-         only the two terminals are literal machine output. Mixing a screenshot in
-         put two visual registers on one page, and left the reader unsure which
-         parts were a real interface and which were an illustration of one. -->
-    <div class="hero-shot">
-      <div class="room" role="img" aria-label="The Ripieno room panel: three people present with their own agents, a message from ijmh1, a correction from you, an agent reply acting on it, an action log naming which agent did what on whose machine, and an approval card asking permission to run a command.">
-        <div class="room-top">
-          <span class="room-code">tgtbt-review</span>
-          <span class="room-byo">BYO</span>
-        </div>
-        <div class="roster">
-          <span class="pres you">● @ijmh2</span>
-          <span class="pres">● @ijmh1</span>
-          <span class="pres busy">◐ their coder</span>
-        </div>
-        <div class="chat">
-          <div class="cm sam"><b>@ijmh1</b>use close-to-close returns</div>
-          <div class="cm kate"><b>@ijmh2</b>careful — the 18th had a half-day</div>
-          <div class="cm bot"><b>@ijmh1's coder</b>Good catch. Re-running with an explicit half-day mask.</div>
-        </div>
-        <div class="room-log">
-          <div class="room-log-h">Work · 3 · 1 failed</div>
-          <div class="rl"><span class="ok">✓</span> wrote <code>room.ts</code> <em>on @ijmh1</em></div>
-          <div class="rl"><span class="ok">✓</span> read <code>latest.json</code> <em>on @ijmh2</em></div>
-          <div class="rl"><span class="bad">✕</span> <code>npm test</code> — exit 1</div>
-        </div>
-        <div class="room-appr">
-          <div class="ra-t">@ijmh1's coder wants to run Bash</div>
-          <code class="cmd">npm test -- --runInBand</code>
-          <div class="ui-btns"><span class="ui-btn pri">Allow once</span><span class="ui-btn sec">Deny</span></div>
-        </div>
-        <div class="room-composer">Message…  @ people · / commands</div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= THE PROBLEM ================= -->
-  <section class="band">
-    <div class="band-inner">
-      <h2>Every agent you run is alone in a room</h2>
-      <p class="band-lede">
-        Your agent has your terminal, your files and your context. Your colleague's has theirs.
-        Neither can see the other, nobody can watch what either is doing, and there is no way to
-        hand a job from one to the other. Every coding agent shipped so far is single-player.
-      </p>
-      <p class="band-note">
-        The naive fix is a shared login, which is worse: one anonymous view of a team, unable to
-        tell agreement from disagreement, whose preferences to honour, or whose filesystem the
-        next write lands on.
-      </p>
-    </div>
-  </section>
-
-  <!-- ================= HOW IT WORKS ================= -->
-  <section class="how">
-    <div class="section-head">
-      <h2>One room. Everyone's own agent.</h2>
-      <p>
-        Each person runs their own agent, on their own machine, on their own subscription. The
-        room is the shared part — one conversation everyone and every agent is in. The relay
-        routes it and executes nothing.
-      </p>
-    </div>
-
-    <svg class="diagram" viewBox="0 0 760 340" role="img"
-         aria-label="Three machines, each running an editor and that person's own agent, all connected to one room. Agents and files stay on the machines; the room only carries the shared conversation.">
-      <!-- Boxes drawn as paths, not rects: a rect cannot be wobbly, and every
-           edge on this page is meant to look drawn rather than computed. -->
-      <g class="dg-node">
-        <path d="M11 21 C70 18 150 20 221 17 C224 45 222 78 220 108 C155 111 78 109 12 110 C9 79 10 50 11 21 Z"/>
-        <path d="M275 19 C340 17 410 21 486 18 C488 48 487 80 485 109 C420 112 340 110 276 111 C273 80 274 48 275 19 Z"/>
-      </g>
-      <g class="dg-handle">
-        <text x="30"  y="48">@ijmh0</text>
-        <text x="294" y="48">@ijmh1</text>
-      </g>
-
-      <g class="dg-you">
-        <path class="dg-box" d="M539 18 C600 21 680 17 750 20 C752 50 751 78 749 110 C685 108 610 112 540 109 C537 80 538 48 539 18 Z"/>
-        <text class="dg-handle-t" x="558" y="48">@ijmh2</text>
-        <text class="dg-you-tag" x="700" y="48">you</text>
-      </g>
-
-      <g class="dg-sub">
-        <text x="30"  y="72">their agent, their plan</text>
-        <text x="294" y="72">their agent, their plan</text>
-        <text x="558" y="72">their agent, their plan</text>
-        <text x="30"  y="95">their files, their keys</text>
-        <text x="294" y="95">their files, their keys</text>
-        <text x="558" y="95">their files, their keys</text>
-      </g>
-
-      <g class="dg-line">
-        <path d="M116 112 C114 135 118 158 117 176 C160 179 300 177 372 180"/>
-        <path d="M380 112 C378 135 382 158 380 180"/>
-        <path d="M644 112 C646 136 642 158 643 177 C580 180 450 178 388 180"/>
-        <path d="M380 180 C382 196 378 210 380 224"/>
-      </g>
-      <g class="dg-dot"><circle cx="380" cy="180" r="4.5" fill="#a8322a"/></g>
-
-      <g class="dg-relay">
-        <path class="dg-box" d="M234 230 C300 227 400 231 527 228 C529 255 528 285 526 309 C440 312 320 310 235 311 C232 285 233 256 234 230 Z"/>
-        <text class="dg-relay-t" x="258" y="262">the room</text>
-        <text class="dg-sub" x="258" y="285">one shared conversation</text>
-        <text class="dg-sub" x="258" y="304">holds no code &#183; runs nothing</text>
-      </g>
-
-      <g class="dg-note">
-        <text x="12"  y="146">agents run here</text>
-        <text x="558" y="146">and only here</text>
-      </g>
-    </svg>
-  </section>
-
-  <!-- ================= BYO ================= -->
-  <section class="feature">
-    <div class="feature-copy">
-      <p class="eyebrow">Bring your own</p>
-      <h2>Everyone uses the agent they already pay for</h2>
-      <p>
-        No shared login, no pooled key, no seat you buy from me. You attach Claude Code on your
-        plan, your colleague attaches Codex on theirs, and both are in the same room.
-      </p>
-      <p class="muted">
-        Run several at once — a coder and a reviewer — each with its own name, brief, model and
-        permission boundary.
-      </p>
-    </div>
-    <div class="feature-visual">
-      <div class="providers">
-        <span class="prov">Claude Code<em>subscription CLI</em></span>
-        <span class="prov">Codex<em>ChatGPT plan</em></span>
-        <span class="prov">Gemini<em>subscription CLI</em></span>
-        <span class="prov">OpenAI-compatible<em>your key</em></span>
-        <span class="prov">Ollama<em>your GPU</em></span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= WATCH & REDIRECT ================= -->
-  <section class="feature reverse">
-    <div class="feature-copy">
-      <p class="eyebrow">Together</p>
-      <h2>Watch someone else's agent work, and steer it</h2>
-      <p>
-        Everyone sees the same conversation. When somebody's agent starts down the wrong path,
-        a colleague can say so — in the room, mid-task — and it acts on the correction, because
-        the room knows which of you is speaking.
-      </p>
-      <p class="muted">
-        Address a specific person's agent with <code>@</code>, or ask the room. Several agents can
-        answer one question without answering as one voice.
-      </p>
-    </div>
-    <div class="feature-visual">
-      <div class="ui-card">
-        <div class="roster">
-          <span class="pres you">● @ijmh2 · you</span>
-          <span class="pres sam">● @ijmh1</span>
-          <span class="pres busy">◐ @ijmh1's coder</span>
-          <span class="pres idle">○ your reviewer</span>
-        </div>
-        <div class="chat">
-          <div class="cm sam"><b>@ijmh1</b>use close-to-close returns</div>
-          <div class="cm kate"><b>@ijmh2 · you</b>careful — the 18th had a half-day</div>
-          <div class="cm bot"><b>@ijmh1's coder</b>Good catch, @ijmh2. Re-running with an explicit half-day mask.</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= HANDOFF ================= -->
-  <section class="feature">
-    <div class="feature-copy">
-      <p class="eyebrow">Handoff</p>
-      <h2>Give the job to somebody else's agent</h2>
-      <p>
-        Finish for the day and pass the work on. The task, the context and the history go with
-        it, and the person receiving it accepts with their own agent rather than inheriting
-        yours.
-      </p>
-      <p class="muted">
-        Offer, accept, decline, cancel or retry — the room keeps the state, so a closed laptop
-        does not lose the thread.
-      </p>
-    </div>
-    <div class="feature-visual">
-      <div class="ui-card handoff">
-        <div class="ui-head">Handoff offered</div>
-        <p class="ho-task">“Finish the half-day mask and get the suite green”</p>
-        <p class="ho-meta"><b>@ijmh1's coder</b> → <b>@ijmh2</b></p>
-        <div class="ui-btns">
-          <span class="ui-btn pri">Accept with my coder</span>
-          <span class="ui-btn sec">Decline</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= SELF-HOSTED ================= -->
-  <section class="feature reverse">
-    <div class="feature-copy">
-      <p class="eyebrow">Self-hosted</p>
-      <h2>There is no service in the middle</h2>
-      <p>
-        Solo mode runs the room inside your editor — nothing deployed, no account, no token. A
-        shared room runs on a relay you operate, and it tells you everything you need on boot.
-      </p>
-      <p class="muted">
-        There is no hosted option because a relay sees every message and routes every tool call.
-        You run your own, or you run none at all.
-      </p>
-    </div>
-    <div class="feature-visual">
-      <div class="term small">
-        <div class="term-bar"><span></span><span></span><span></span></div>
-        <pre><code><span class="p">$</span> docker run -p 8787:8787 -v ripieno-data:/data ripieno-relay
-
-  Ripieno relay ready
-
-    URL     <span class="s">wss://relay.example.com</span>
-    Token   <span class="who">0123456789…456789abcdef</span>  (generated, saved)
-    Room    general</code></pre>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= PROOF ================= -->
-  <section class="band">
-    <div class="band-inner">
-      <h2>And it really is several agents</h2>
-      <p class="band-lede">
-        Not one agent with several people talking to it. Three agents belonging to three
-        different people, writing to one repository at the same time.
-      </p>
-      <div class="term" role="img" aria-label="git log output listing five commits whose author column holds three different agent names: Alex's agent, Sam's reviewer and Mira's coder.">
-        <div class="term-bar"><span></span><span></span><span></span></div>
-        <pre><code><span class="p">$</span> git log --pretty=<span class="s">'%&lt;(16)%an  %s'</span> -5
-
-  <span class="who">Alex's agent</span>      Mention the limits in the README
-  <span class="who">Sam's reviewer</span>    Write down both limits
-  <span class="who">Mira's coder</span>      Bound the transcript
-  <span class="who">Sam's reviewer</span>    Cover the rate limit
-  <span class="who">Mira's coder</span>      Add rate limit to relay</code></pre>
-      </div>
-      <p class="band-note">
-        Real output from <code>npm run demo:provenance</code>, writing concurrently rather than in
-        turn — git serialises on <code>.git/index.lock</code>, and losing that race is how five
-        writes in six once vanished. Every action in the room is recorded the same way, naming
-        the agent and the machine it ran on.
-      </p>
-    </div>
-  </section>
-
-  <!-- ================= GET STARTED ================= -->
-  <section class="start" id="install">
-    <div class="section-head">
-      <h2>Getting started</h2>
-      <p>Two of these need nothing but an editor.</p>
-    </div>
-    <ol class="steps">
-      <li>
-        <h3>Install it</h3>
-        <p>Not on the Marketplace yet — this is a 0.0.1 Preview, so you install a <code>.vsix</code>.</p>
-        <pre><code>git clone https://github.com/ijmh2/ripieno
-cd ripieno &amp;&amp; npm run setup</code></pre>
-        <p class="muted">Builds, packages and installs into whichever editor you have.</p>
-      </li>
-      <li>
-        <h3>Start a room for yourself</h3>
-        <p>
-          Open the Ripieno panel and press <strong>Start a room</strong>. No relay, token or
-          account — the extension runs one inside the window. It is the same relay a team
-          shares, not a reduced imitation.
-        </p>
-      </li>
-      <li>
-        <h3>Add somebody else</h3>
-        <p>That needs a relay you both can reach. One command, and it prints what to hand over.</p>
-        <pre><code>docker run -p 8787:8787 -v ripieno-data:/data ripieno-relay</code></pre>
-        <p class="muted"><a href="self-hosting.html">Running your own relay</a> covers three ways, in increasing order of effort.</p>
-      </li>
-    </ol>
-  </section>
-
-</main>
-
-<footer class="foot site-foot">
-  <div class="foot-cols">
-    <div>
-      <p class="foot-h">Ripieno</p>
-      <p class="foot-tag">Several parts, sounding together, each still its own line.</p>
-    </div>
-    <div>
-      <p class="foot-h">Docs</p>
-      <a href="overview.html">Overview</a>
-      <a href="self-hosting.html">Run a relay</a>
-      <a href="provenance.html">Provenance</a>
-      <a href="mcp.html">MCP</a>
-    </div>
-    <div>
-      <p class="foot-h">Project</p>
-      <a href="https://github.com/ijmh2/ripieno">Source</a>
-      <a href="security.html">Security</a>
-      <a href="privacy.html">Privacy</a>
-      <a href="support.html">Support</a>
-    </div>
+<section class="hero wrap" aria-labelledby="hero-title">
+  <div class="hero-copy">
+    <p class="eyebrow"><span class="status-dot"></span> THE MULTIPLAYER WORKSPACE FOR YOUR EDITOR</p>
+    <h1 id="hero-title">Good work<br>is a <span class="serif">group</span><br><span class="orange">project.</span></h1>
+    <p class="hero-description">Your people. Your agents. One shared room.<br>Think, build, and browse together—without leaving your editor.</p>
+    <div class="hero-actions"><a class="button orange-button" href="#install">Start building together <span aria-hidden="true">↗</span></a><a class="text-link" href="#workspace">Take a look <span aria-hidden="true">↓</span></a></div>
+    <p class="micro hero-note">Bring your own agents · Source available · Preview</p>
   </div>
-  <p class="foot-legal">
-    Source-available, free for personal and non-commercial use. Licensed for
-    organisations. Not open source — the source is public so it can be checked,
-    not so it can be resold. Built by Ivan Hart.
-  </p>
-</footer>
+  <div class="network-column">
+    <div class="network-toolbar"><span class="micro">A SMALL WORLD OF POSSIBILITIES</span><button id="motion-toggle" class="quiet" type="button" aria-pressed="false">Pause motion <span aria-hidden="true">Ⅱ</span></button></div>
+    <div id="network" class="network" role="group" aria-label="Interactive workspace network. Choose a node to learn more. Drag nodes to rearrange them.">
+      <canvas id="network-canvas" aria-hidden="true"></canvas>
+      <div class="orbit orbit-one" aria-hidden="true"></div><div class="orbit orbit-two" aria-hidden="true"></div>
+      <button class="node node-room" data-node="room" style="--x:49;--y:49" aria-pressed="true"><span class="node-shape"><span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i><i></i></span></span><span class="node-label">The room</span></button>
+      <button class="node node-person" data-node="you" style="--x:20;--y:24" aria-pressed="false"><span class="node-shape">Y<span class="online-dot"></span></span><span class="node-label">You</span></button>
+      <button class="node node-agent" data-node="claude" style="--x:75;--y:23" aria-pressed="false"><span class="node-shape" aria-hidden="true">✳</span><span class="node-label">Claude Code</span></button>
+      <button class="node node-browser" data-node="browser" style="--x:84;--y:59" aria-pressed="false"><span class="node-shape"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="16" cy="16" r="11"/><ellipse cx="16" cy="16" rx="5" ry="11"/><path d="M5 16h22M7 10h18M7 22h18"/></svg></span><span class="node-label">Shared browser</span></button>
+      <button class="node node-code" data-node="codex" style="--x:59;--y:81" aria-pressed="false"><span class="node-shape" aria-hidden="true">⌘</span><span class="node-label">Codex</span></button>
+      <button class="node node-context" data-node="context" style="--x:19;--y:70" aria-pressed="false"><span class="node-shape"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m16 5 12 7-12 7-12-7 12-7Zm-12 13 12 7 12-7M4 24l12 7 12-7" transform="translate(0 -3)"/></svg></span><span class="node-label">Shared context</span></button>
+      <span class="network-coordinate micro" aria-hidden="true">EVERY CONNECTION COUNTS.</span>
+    </div>
+    <div class="network-caption"><div aria-live="polite" aria-atomic="true"><span class="caption-index" id="node-index">01 / 06</span><strong id="node-title">A place for all the moving parts.</strong><p id="node-description">One conversation connects your team, their agents, and the work in front of you.</p></div><button class="round-button" id="network-pulse" aria-label="Send a pulse through the network" title="Send a pulse">↗</button></div>
+    <p class="network-hint micro">DRAG A NODE. FOLLOW A CONNECTION. MAKE IT YOURS.</p>
+  </div>
+</section>
+<div class="compatibility wrap"><p class="micro">RIGHT AT HOME<br>IN YOUR EDITOR</p><div><span>VS Code</span><span>Cursor</span><span>Windsurf</span><span>Antigravity</span><span>VSCodium</span></div><a href="overview.html">Meet the extension <span aria-hidden="true">↗</span></a></div>
+<section id="workspace" class="workspace-section wrap" aria-labelledby="workspace-title">
+  <div class="section-intro"><p class="eyebrow">01 / SAME ROOM. SHARED MOMENTUM.</p><div><h2 id="workspace-title">Less passing context.<br>More <span class="serif">making progress.</span></h2><p>Keep the conversation beside the work. Bring in a teammate, let an agent explore, and see how the pieces come together.</p></div></div>
+  <div class="workspace-demo">
+    <div class="demo-top"><span class="demo-room"><span class="tiny-mark" aria-hidden="true">✳</span> Launch room <span class="demo-divider">/</span> website refresh</span><span class="demo-people" aria-label="Two people and two agents in this illustration"><i>Y</i><i>M</i><i>✳</i><i>⌘</i></span></div>
+    <div class="demo-body">
+      <aside class="demo-nav"><div class="micro">WORKSPACE</div><div role="tablist" aria-label="Explore the workspace"><button role="tab" id="tab-chat" aria-controls="demo-chat" aria-selected="true" tabindex="0" data-demo="chat"><span aria-hidden="true">◌</span> Conversation</button><button role="tab" id="tab-browser" aria-controls="demo-browser" aria-selected="false" tabindex="-1" data-demo="browser"><span aria-hidden="true">◎</span> Browser</button><button role="tab" id="tab-reviews" aria-controls="demo-reviews" aria-selected="false" tabindex="-1" data-demo="reviews"><span aria-hidden="true">⑂</span> Agent reports</button></div><div class="demo-sidebar-bottom"><span class="status-dot"></span> INTERACTIVE WALKTHROUGH</div></aside>
+      <div class="demo-content">
+        <div id="demo-chat" class="demo-view" role="tabpanel" aria-labelledby="tab-chat"><p class="demo-date">A GOOD PLACE TO START SOMETHING</p><div class="message you-message"><span class="avatar">Y</span><div><strong>You <time>Just now</time></strong><p>Let's give the homepage a little more life.</p></div></div><div class="message"><span class="avatar teammate">M</span><div><strong>Maya <span class="message-tag">teammate</span></strong><p>Keep it simple. Something we can explore together?</p></div></div><div class="message agent-message"><span class="avatar agent">✳</span><div><strong>Claude Code <span class="message-tag">your agent</span></strong><p>I'll open the preview here, so we can look at the same page.</p><button class="inline-action" data-demo-link="browser">Open browser preview <span aria-hidden="true">↗</span></button></div></div><div class="demo-composer"><span>Everyone starts with the same conversation.</span><button class="composer-arrow" data-demo-link="browser" aria-label="Explore browser preview">↑</button></div></div>
+        <div id="demo-browser" class="demo-view" role="tabpanel" aria-labelledby="tab-browser" hidden><div class="mock-address"><span aria-hidden="true">← &nbsp; → &nbsp; ↻</span><span class="address-value">localhost / our-next-idea</span><span class="browser-control">Same page. Your call.</span></div><div class="mini-site"><span class="micro">YOUR NEXT GREAT IDEA</span><h3>Make room<br>for <span class="serif">something good.</span></h3><div class="mini-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div><button class="mini-button" id="preview-color">Try another accent <span aria-hidden="true">↗</span></button></div><div class="demo-browser-note"><span class="status-dot"></span><p>Browse alongside your agent. Take control whenever you need.</p><button class="inline-action" data-demo-link="reviews">See agent reports ↗</button></div></div>
+        <div id="demo-reviews" class="demo-view" role="tabpanel" aria-labelledby="tab-reviews" hidden><div class="reports-heading"><span class="micro">TWO PERSPECTIVES. ONE NEXT STEP.</span><h3>A second pair of <span class="serif">agents.</span></h3><p>Give two reviewers the context. Keep both reports beside the conversation.</p></div><div class="report-options"><button class="report-card" data-report="design" aria-pressed="true"><span class="report-avatar">✳</span><span><strong>Design review</strong><small>Clarity & hierarchy</small></span><span class="done">✓ Done</span></button><button class="report-card" data-report="quality" aria-pressed="false"><span class="report-avatar blue">⌘</span><span><strong>Quality review</strong><small>Risks & edge cases</small></span><span class="done">✓ Done</span></button></div><div class="report-detail" aria-live="polite"><span class="micro" id="report-label">DESIGN REVIEW</span><p id="report-text">Give the main idea room to breathe. Keep one clear action, use the network to explain the product, and make every interaction feel intentional.</p></div><p class="demo-small">Illustrative reports. Provider support varies; the review workflow uses the context you supply.</p></div>
+      </div>
+    </div>
+    <div class="demo-bottom"><span>↳ Explore the tabs. This is a product illustration, not a live room.</span><span>BUILT FOR WORKING TOGETHER</span></div>
+  </div>
+</section>
+<section class="principles wrap" aria-labelledby="principles-title"><div class="section-intro"><p class="eyebrow">02 / INDEPENDENT MINDS. CONNECTED WORK.</p><h2 id="principles-title">All together.<br><span class="serif">Still your own.</span></h2></div><div class="principle-grid">
+<article><div class="feature-art art-agents" aria-hidden="true"><span>Y</span><span>✳</span><span>⌘</span><svg viewBox="0 0 280 110"><path d="M50 55H230"/></svg></div><span class="micro">01 — BRING YOUR OWN</span><h3>Your agents. Your setup.</h3><p>Use your own Claude Code, Codex, or another supported provider. Keep your account and your tools.</p><a href="overview.html">Explore providers ↗</a></article>
+<article><div class="feature-art art-context" aria-hidden="true"><i></i><i></i><i></i><span>THE THINGS<br>WE KNOW TOGETHER.</span></div><span class="micro">02 — STAY IN CONTEXT</span><h3>One less explanation.</h3><p>Keep decisions, notes, and references in the room. Review agent suggestions before they become shared context.</p><a href="overview.html">See how rooms work ↗</a></article>
+<article><div class="feature-art art-control" aria-hidden="true"><span class="control-line">● ──────── <b>✓</b></span><span>YOU'RE IN THE LOOP.</span></div><span class="micro">03 — KNOW WHO DID WHAT</span><h3>Shared work. Clear ownership.</h3><p>See whose agent is acting and where. Choose permissions per agent, with controls that reflect its provider.</p><a href="provenance.html">Follow the provenance ↗</a></article>
+</div></section>
+<section class="install-section" id="install" aria-labelledby="install-title"><div class="wrap install-inner"><div><p class="eyebrow">03 / PULL UP A CHAIR.</p><h2 id="install-title">Your next idea<br>could use <span class="serif">some company.</span></h2><p>Start with your own agents. Bring your people when you're ready.</p><a class="button dark" href="overview.html">Get started with Ripieno <span aria-hidden="true">↗</span></a><p class="micro install-note">PREVIEW SOFTWARE · INSTALLATION GUIDE & SOURCE BUILD</p></div><ol class="install-steps"><li><span>01</span><div><h3>Make yourself at home.</h3><p>Install the extension using the setup guide and open your project.</p></div></li><li><span>02</span><div><h3>Start your room.</h3><p>Work locally with your own agents. No Ripieno account needed for a solo room.</p></div></li><li><span>03</span><div><h3>Connect your people.</h3><p>Use a reachable relay to share a room with your team. <a href="self-hosting.html">Self-hosting guide ↗</a></p></div></li></ol></div></section>
+<section class="faq wrap" aria-labelledby="faq-title"><div><p class="eyebrow">A FEW GOOD QUESTIONS</p><h2 id="faq-title">Before you<br><span class="serif">jump in.</span></h2></div><div class="questions"><details><summary>Is this another AI subscription?<span aria-hidden="true">+</span></summary><p>No. Ripieno connects the agents you bring. Provider subscriptions, API costs, and usage limits remain with those providers.</p></details><details><summary>Can I use it on my own?<span aria-hidden="true">+</span></summary><p>Yes. Start a local room for yourself and your agents. Add other people later through a shared relay.</p></details><details><summary>Does every agent have the same tools?<span aria-hidden="true">+</span></summary><p>No. Browser integration, permissions, and native subagent tracking depend on the provider connection. Ripieno shows those capabilities rather than assuming all agents are identical.</p></details><details><summary>Is Ripieno open source?<span aria-hidden="true">+</span></summary><p>The source is available to inspect. Ripieno uses a source-available license, not an open-source license. Read the <a href="https://github.com/ijmh2/ripieno/blob/main/LICENSE">license</a> for personal and organisational use.</p></details></div></section>
+</main>
+<footer class="footer wrap"><div class="footer-top"><a class="brand" href="./"><span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i><i></i></span>ripieno.</a><p>Several parts.<br>Better together.</p><nav aria-label="Footer navigation"><a href="overview.html">Documentation</a><a href="security.html">Security</a><a href="privacy.html">Privacy</a><a href="support.html">Support</a><a href="https://github.com/ijmh2/ripieno">GitHub ↗</a></nav></div><div class="footer-bottom"><span>Made by Ivan Hart.</span><span>YOUR PEOPLE. YOUR AGENTS. YOUR WORK.</span><a href="#main">Back to the connections ↑</a></div></footer>
 </body>
 </html>

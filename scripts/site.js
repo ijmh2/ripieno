@@ -123,10 +123,11 @@ function layout({ title, body, slug, description }) {
 <meta property="og:type" content="article">
 <meta property="og:url" content="${SITE_URL}/${slug}.html">
 <link rel="canonical" href="${SITE_URL}/${slug}.html">
-<meta property="og:image" content="${SITE_URL}/docs/images/room-light.png">
+<meta property="og:image" content="${SITE_URL}/docs/images/ripieno-network-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Ripieno — Good work is a group project.">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="preload" href="fonts/kalam-700-latin.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="fonts/patrickhand-400-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="site.css">
 </head>
 <body>
@@ -208,7 +209,7 @@ function build() {
     console.log(`  ${page.source.padEnd(24)} -> ${page.slug}.html`);
   }
 
-  for (const asset of ["site.css", "landing.css", "index.html"]) {
+  for (const asset of ["site.css", "landing.css", "landing.js", "index.html"]) {
     fs.copyFileSync(path.join(ROOT, "site", asset), path.join(OUT, asset));
   }
   console.log("  site/index.html".padEnd(26) + "-> index.html (hand-authored)");
@@ -231,6 +232,7 @@ function serve(port) {
   const types = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
     ".png": "image/png",
     ".gif": "image/gif",
     ".svg": "image/svg+xml",
