@@ -42,6 +42,7 @@ import {
   isWorkspaceProvider,
   argsForAgentPermission,
   argsForAgentModel,
+  argsForProviderEvents,
   type AgentPermission,
   type ModelRunner,
   type RunContext,
@@ -51,6 +52,9 @@ import {
 } from "./runners";
 import { PresenceStream } from "./presence";
 import { DraftStream } from "./draftStream";
+import { ProposalStream } from "./proposalStream";
+import type { WorkClaim } from "@ripieno/protocol";
+import { formatWorkClaims } from "./teamBoard";
 import {
   boundSummary,
   safePath,
@@ -159,7 +163,8 @@ export interface LocalHandoffDelivery {
   deliveryId: string;
   handoffVersion: number;
   status: LocalHandoffStatus;
-  context: HandoffContinuationContext;
+  /** Terminal receipts omit the bulky continuation payload after persistence. */
+  context?: HandoffContinuationContext;
   detail?: string;
   updatedAt: number;
 }
@@ -182,6 +187,8 @@ export class AgentHost implements vscode.Disposable {
   private readonly presence = new PresenceStream((message) => this.relay?.send(message));
   /** User-facing response text only; relay still owns identity, quotas and id. */
   private readonly drafts = new DraftStream((message) => this.relay?.send(message));
+  /** Provider-exposed review material only; this stream has no apply operation. */
+  private readonly proposals = new ProposalStream((message) => this.relay?.send(message));
   /** The phase and summary a location event should be attached to. */
   private turnPhase: RunnerPhase = "thinking";
   private turnSummary: string | undefined;
@@ -243,6 +250,8 @@ export class AgentHost implements vscode.Disposable {
    * placed there is wrong the moment anybody joins or leaves.
    */
   private roster: RosterEntry[] = [];
+  private workClaims: WorkClaim[] = [];
+  private workClaimRevision = 0;
   /** This agent's id *as the room knows it*, told to us on joining. */
   private roomAgentId: string | undefined;
   /** Distinguishes a first empty join from an empty-history reconnect. */
@@ -263,7 +272,7 @@ export class AgentHost implements vscode.Disposable {
   /** Last local provider failure. Kept out of the shared transcript. */
   private failureReason: string | undefined;
   /** Claimed starts queued for this local agent, deduped by delivery id. */
-  private readonly handoffQueue: LocalHandoffDelivery[] = [];
+  private readonly handoffQueue: Array<LocalHandoffDelivery & { context: HandoffContinuationContext }> = [];
   private readonly activeHandoffDeliveries = new Set<string>();
   /**
    * Incremented whenever relay authority is lost. Provider cancellation is
@@ -328,6 +337,7 @@ export class AgentHost implements vscode.Disposable {
       token: this.opts.token,
       githubToken: this.opts.githubToken,
       onStateChange: (s) => {
+        if (s !== "online") this.workClaims = [];
         // A refusal is terminal, and the close that carries it also reports
         // "offline" first. Letting that overwrite "refused" would put the agent
         // back on "attaching…" — the exact lie this is here to stop.
@@ -350,6 +360,8 @@ export class AgentHost implements vscode.Disposable {
       },
       onMessage: (msg) => {
         if (msg.t === "joined") {
+          this.workClaims = msg.workClaims ?? [];
+          this.workClaimRevision = msg.workClaimRevision ?? 0;
           // The relay namespaces agent ids by owner, so ours is not something
           // we can construct — it has to be told to us, and it is how we
           // recognise our own messages rather than answering them.
@@ -384,6 +396,11 @@ export class AgentHost implements vscode.Disposable {
           this.consider(msg.entry);
         } else if (msg.t === "roster") {
           this.noteRoster(msg.roster);
+        } else if (msg.t === "workClaims") {
+          if (msg.revision >= this.workClaimRevision) {
+            this.workClaims = msg.claims;
+            this.workClaimRevision = msg.revision;
+          }
         } else if (msg.t === "context") {
           if (msg.contextRevision >= this.contextRevision) {
             this.context = msg.context;
@@ -439,6 +456,7 @@ export class AgentHost implements vscode.Disposable {
   dispose(): void {
     this.haltLocalExecution("agent detached");
     this.drafts.dispose();
+    this.proposals.dispose();
     this.presence.dispose();
     this.relay?.dispose();
     this.relay = undefined;
@@ -456,6 +474,7 @@ export class AgentHost implements vscode.Disposable {
     // drops this agent's presence when the socket goes, and a queued frame
     // must not arrive afterwards claiming otherwise.
     this.drafts.cancel();
+    this.proposals.cancel();
     this.presence.dispose();
     // Settle, do not merely forget. These promises back an open editor tab and
     // "propose change"; abandoning them left the tab spinning forever.
@@ -571,7 +590,11 @@ export class AgentHost implements vscode.Disposable {
   ): Promise<RunnerToolResult> {
     if (name === "context_read") {
       this.publishActivity("reading", "Reading the room's shared context");
-      return { content: this.sharedContext(true), isError: false };
+      if (typeof input.id === "string") {
+        const item = this.context.find(item => item.id === input.id);
+        return item ? { content:formatSharedContext([item], true, 32_000), isError:false } : {content:"Shared context item not found.",isError:true};
+      }
+      return { content: this.sharedContext(true) + "\n\nContext index (read one complete item with context_read id):\n" + this.context.map(item => `${item.id} ${quotedForPrompt(item.title)}`).join("\n"), isError: false };
     }
     if (name !== "context_add") {
       return { content: `Unknown room tool "${name}".`, isError: true };
@@ -787,6 +810,7 @@ export class AgentHost implements vscode.Disposable {
     if (unseen.length === 0) return;
     this.busy = true;
     this.drafts.start();
+    this.proposals.cancel();
     for (const entry of this.transcript) this.fedIds.add(entry.id);
     this.setState("thinking");
 
@@ -823,16 +847,19 @@ export class AgentHost implements vscode.Disposable {
         // The last draft frame is ordered before `say` on this socket. The
         // relay reuses its own preview id for the authoritative entry.
         this.drafts.complete();
+        this.proposals.cancel();
         this.relay?.send({ t: "say", text });
         this.log(`posted ${text.length} chars`);
       } else {
         this.drafts.cancel();
+        this.proposals.cancel();
         this.log("no reply produced");
       }
     } catch (err) {
       if (!this.hasExecutionAuthority(epoch)) return;
       const detail = err instanceof Error ? err.message : String(err);
       this.drafts.cancel();
+      this.proposals.cancel();
       this.log(`turn failed: ${detail}`);
       // Provider failures are local account/configuration facts, not the
       // agent's answer. Keep them out of the shared transcript and give the
@@ -944,7 +971,7 @@ export class AgentHost implements vscode.Disposable {
       this.sendStoredHandoffOutcome(existing);
       return;
     }
-    const started: LocalHandoffDelivery = {
+    const started: LocalHandoffDelivery & { context: HandoffContinuationContext } = {
       ...existing,
       handoffVersion: msg.handoffVersion,
       status: "started",
@@ -1008,6 +1035,7 @@ export class AgentHost implements vscode.Disposable {
     const context = delivery.context;
     this.busy = true;
     this.drafts.start();
+    this.proposals.cancel();
     this.setState("thinking");
     let failed = false;
     try {
@@ -1032,10 +1060,12 @@ export class AgentHost implements vscode.Disposable {
       if (text) {
         this.publishActivity("responding", "Posting the handoff result");
         this.drafts.complete();
+        this.proposals.cancel();
         this.relay?.send({ t: "say", text });
         this.log(`posted ${text.length} chars for accepted handoff ${context.handoff.id}`);
       } else {
         this.drafts.cancel();
+        this.proposals.cancel();
         this.log(`no reply produced for accepted handoff ${context.handoff.id}`);
       }
       await this.markLocalOutcome(
@@ -1048,6 +1078,7 @@ export class AgentHost implements vscode.Disposable {
       failed = true;
       const detail = err instanceof Error ? err.message : String(err);
       this.drafts.cancel();
+      this.proposals.cancel();
       this.failureReason = detail;
       this.log(`handoff continuation failed: ${detail}`);
       this.setState("error");
@@ -1105,7 +1136,7 @@ export class AgentHost implements vscode.Disposable {
           providerId,
           argsForAgentPermission(
             providerId,
-            this.opts.args ?? ["{prompt}"],
+            argsForProviderEvents(providerId, this.opts.args ?? providerById(providerId)?.args ?? ["{prompt}"]),
             this.opts.permissions
           ),
           this.opts.model
@@ -1256,7 +1287,7 @@ export class AgentHost implements vscode.Disposable {
   }
 
   private sharedContext(includeRetired = false): string {
-    return formatSharedContext(this.context, includeRetired);
+    return [formatSharedContext(this.context, includeRetired), formatWorkClaims(this.workClaims)].filter(Boolean).join("\n\n");
   }
 
   private recent(): string {
@@ -1292,7 +1323,7 @@ export class AgentHost implements vscode.Disposable {
       if (phase === "idle") {
         this.turnPhase = "thinking";
         this.turnSummary = undefined;
-        this.publishActivity("idle");
+        this.publishActivity("idle", state === "error" ? "Turn failed; owner attention needed" : undefined);
       } else {
         this.turnPhase = "thinking";
         this.turnSummary = boundSummary(summarisePhase("thinking"));
@@ -1337,6 +1368,12 @@ export class AgentHost implements vscode.Disposable {
       case "draft":
         this.drafts.publish(event.delta);
         break;
+      case "proposal": {
+        const locationScope = this.opts.presenceLocationScope?.(event.locationScope);
+        if (locationScope === "shared") this.proposals.publish(event.path, event.patch);
+        else this.proposals.cancel();
+        break;
+      }
       case "complete":
         // The final text is post-processed before completion/reconciliation in
         // respond()/runNextHandoff(); never trust a provider complete frame to
@@ -1373,7 +1410,7 @@ const ROOM_CONTEXT_TOOLS: RunnerTool[] = [
     name: "context_read",
     description:
       "Read the room's shared context: accepted memory plus unverified agent proposals.",
-    parameters: { type: "object", properties: {}, additionalProperties: false },
+    parameters: { type: "object", properties: { id: { type:"string", description:"Optional exact context id to read a complete plan or memory." } }, additionalProperties: false },
   },
   {
     name: "context_add",
@@ -1467,7 +1504,8 @@ export function quotedForPrompt(value: string): string {
  */
 export function formatSharedContext(
   items: readonly ContextItem[],
-  includeRetired = false
+  includeRetired = false,
+  maxChars = 8_000
 ): string {
   const visible = items
     .filter(
@@ -1498,8 +1536,9 @@ export function formatSharedContext(
         : "") +
       `\n  tags=${quotedForPrompt(item.tags.join(", "))}` +
       `\n  title=${quotedForPrompt(item.title)}` +
-      `\n  body=${quotedForPrompt(item.body)}`;
-    if (rendered.length + block.length + footer.length > 8_000) {
+      `\n  body=${quotedForPrompt(item.body)}` +
+      (item.collaboration ? `\n  sharedWork=${quotedForPrompt(JSON.stringify(item.collaboration))}` : "");
+    if (rendered.length + block.length + footer.length > maxChars) {
       rendered += "\n\nMore context is available through the context_read tool.";
       break;
     }

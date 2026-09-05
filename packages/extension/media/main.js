@@ -968,6 +968,16 @@
       contextCard.setAttribute("aria-label", `${item.status} ${item.kind}: ${item.title}, added by ${author}`);
       contextCard.append(heading, title, body, meta);
 
+      if (item.collaboration) {
+        const record = item.collaboration;
+        const detail = document.createElement("div"); detail.className = "context-card-meta";
+        detail.textContent = `${record.type} · ${record.progress}${record.assigneeHandle ? ` · Assigned to @${record.assigneeHandle}` : ""}${record.steps.length ? ` · ${record.steps.filter(s => s.status === "done").length}/${record.steps.length} steps complete` : ""}`;
+        contextCard.appendChild(detail);
+        for (const [label, action] of [["Manage / reply", "edit"], ...(record.anchor ? [[`${record.anchor.path}:${record.anchor.startLine}`, "open"]] : [])]) {
+          const button = document.createElement("button"); button.textContent = label; button.className = "context-action";
+          button.addEventListener("click", () => vscode.postMessage({type:"collaborationAction",action,id:item.id})); contextCard.appendChild(button);
+        }
+      }
       if (item.tags.length > 0) {
         const tags = document.createElement("div");
         tags.className = "context-card-tags";

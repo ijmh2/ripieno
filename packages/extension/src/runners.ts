@@ -157,6 +157,7 @@ export class ClaudeCodeRunner implements ModelRunner {
     // model can learn that somebody has joined since; on a fresh one the system
     // text is about to go stale for the same reason, so it is stated here too
     // rather than only there.
+    this.usage = undefined;
     const shared = ctx.context ? `${ctx.context}\n\n` : "";
     const prompt = this.sessionId
       ? `${ctx.roster}\n\n${shared}${ctx.unseen}`
@@ -211,12 +212,14 @@ export class ClaudeCodeRunner implements ModelRunner {
       // still has something to fall back on without holding every frame of a
       // long turn in memory.
       let fallback = "";
-      child.stdout?.on("data", (d: Buffer) => {
-        const chunk = d.toString();
-        if (!adapter.recognised && fallback.length < MAX_FALLBACK_CHARS) fallback += chunk;
+      child.stdout?.setEncoding("utf8");
+      child.stderr?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => {
+        if (!adapter.recognised) fallback = (fallback + chunk).slice(0, MAX_FALLBACK_CHARS);
         consume(adapter.push(chunk));
+        if (adapter.recognised) fallback = "";
       });
-      child.stderr?.on("data", (d: Buffer) => log(d.toString().trimEnd()));
+      child.stderr?.on("data", (line: string) => log(line.trimEnd()));
 
       child.on("error", (err) => {
         this.child = undefined;
@@ -226,6 +229,13 @@ export class ClaudeCodeRunner implements ModelRunner {
       child.on("close", (code) => {
         this.child = undefined;
         consume(adapter.end());
+        if (adapter.failure || code !== 0 || (adapter.recognised && !completed)) {
+          this.usage = undefined;
+          reject(new Error(adapter.failure ?? (code !== 0
+            ? `claude exited ${code}`
+            : "Claude Code stopped before confirming the turn completed. Retry the turn.")));
+          return;
+        }
         if (adapter.sessionId && adapter.sessionId !== this.sessionId) {
           this.sessionId = adapter.sessionId;
           this.opts.onSession?.(adapter.sessionId);
@@ -654,6 +664,7 @@ export class CliRunner implements ModelRunner {
   run(ctx: RunContext, log: (line: string) => void, onEvent?: RunnerEventSink): Promise<string> {
     // Every turn is a fresh process here, so the roster is never stale — but it
     // has to be included for the same reason, since nothing carries over.
+    this.usage = undefined;
     const shared = ctx.context ? `${ctx.context}\n\n` : "";
     const prompt = `${ctx.system}\n\n${ctx.roster}\n\n${shared}--- the room so far ---\n${ctx.recent}\n\n--- new ---\n${ctx.unseen}`;
     const usesPlaceholder = this.opts.args.some((a) => a.includes("{prompt}"));
@@ -695,18 +706,23 @@ export class CliRunner implements ModelRunner {
 
       let out = "";
       let err = "";
-      child.stdout?.on("data", (d: Buffer) => {
-        const chunk = d.toString();
-        out += chunk;
+      // Pipe chunks can split a UTF-8 character. Decode across chunk boundaries.
+      child.stdout?.setEncoding("utf8");
+      child.stderr?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => {
+        if (!adapter?.recognised) out = (out + chunk).slice(0, MAX_FALLBACK_CHARS);
         if (adapter) consume(adapter.push(chunk));
+        if (adapter?.recognised) out = "";
       });
-      child.stderr?.on("data", (d: Buffer) => {
-        const line = d.toString();
-        err += line;
+      child.stderr?.on("data", (line: string) => {
+        err = (err + line).slice(-MAX_FALLBACK_CHARS);
         log(line.trimEnd());
       });
 
       if (!usesPlaceholder) {
+        // A CLI can reject its flags before reading the prompt. Its exit
+        // handler owns that failure; EPIPE must not crash the extension host.
+        child.stdin?.on("error", () => {});
         child.stdin?.write(prompt);
         child.stdin?.end();
       }
@@ -721,7 +737,14 @@ export class CliRunner implements ModelRunner {
         clearTimeout(timer);
         this.child = undefined;
         if (adapter) consume(adapter.end());
-        this.usage = completed?.usage;
+        if (adapter?.failure) {
+          reject(new Error(adapter.failure));
+          return;
+        }
+        if (this.opts.eventFormat === "codex-jsonl" && this.opts.args.includes("--json") && !adapter?.recognised) {
+          reject(new Error("Codex did not emit the expected JSON events. Check your CLI version and agent arguments."));
+          return;
+        }
         // A recognised stream owns the reply, whether or not it finished: its
         // raw form is machine output, not something to post under an agent's
         // name. An unrecognised one leaves the previous plain-text behaviour
@@ -737,6 +760,7 @@ export class CliRunner implements ModelRunner {
           reject(new Error(`${this.opts.command} exited ${code}: ${detail}`));
           return;
         }
+        this.usage = completed?.usage;
         resolve(text);
       });
     });
@@ -772,6 +796,17 @@ export interface ProviderPreset {
    */
   eventFormat?: ProviderEventFormat;
   hint: string;
+}
+
+const LEGACY_CODEX_ARGS = ["exec", "--color", "never", "--skip-git-repo-check", "-"];
+
+/** Upgrade only the exact stock preset saved by earlier builds. */
+export function argsForProviderEvents(providerId: string, args: readonly string[]): string[] {
+  if (providerId === "codex" && args.length === LEGACY_CODEX_ARGS.length &&
+      args.every((arg, i) => arg === LEGACY_CODEX_ARGS[i])) {
+    return [...args.slice(0, -1), "--json", "-"];
+  }
+  return [...args];
 }
 
 /**
@@ -867,11 +902,8 @@ export const PROVIDERS: ProviderPreset[] = [
     command: "codex",
     // Stdin keeps room text out of the process list and avoids command-line
     // length limits. `exec` is Codex's non-interactive path.
-    args: ["exec", "--color", "never", "--skip-git-repo-check", "-"],
-    // Declared, not switched on: the arguments above are unchanged, so this
-    // does nothing until a member adds Codex's own JSON flag to them. Adding
-    // that flag here would change what every new Codex agent runs on the
-    // strength of a format this repository has not been able to verify.
+    args: [...LEGACY_CODEX_ARGS.slice(0, -1), "--json", "-"],
+    // Verified with codex-cli 0.153.1; permissions are still selected separately.
     eventFormat: "codex-jsonl",
     hint: "Recommended — your ChatGPT account through Codex CLI, with workspace access.",
   },

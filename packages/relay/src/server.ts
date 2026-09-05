@@ -580,6 +580,24 @@ export function startServer(config: ServerConfig): Relay {
             joined.room.cancelAgentDraftById(joined.agentId);
             break;
 
+          case "agentProposal":
+            // As with presence and drafts, the socket supplies exact identity.
+            // A proposal is review material only; this path has no apply call.
+            if (!joined?.agentId || joined.role !== "agent") return;
+            joined.room.publishAgentProposal(
+              joined.agentId,
+              msg.path,
+              msg.patch,
+              msg.sequence,
+              msg.locationScope
+            );
+            break;
+
+          case "agentProposalCancel":
+            if (!joined?.agentId || joined.role !== "agent") return;
+            joined.room.cancelAgentProposalById(joined.agentId);
+            break;
+
           case "setRole":
             if (!joined) return send(socket, "join a room before changing roles");
             if (joined.role !== "human") {
@@ -597,6 +615,19 @@ export function startServer(config: ServerConfig): Relay {
           case "workspaceChanged":
             if (!joined) return;
             joined.room.noteWorkspaceChanged(joined.handle, msg.paths);
+            break;
+
+          case "workClaimCreate":
+            if (!joined || joined.role !== "human") return send(socket, "only a human member may claim work");
+            sendMessage(socket, joined.room.createWorkClaim(joined.handle, msg));
+            break;
+          case "workClaimRelease":
+            if (!joined || joined.role !== "human") return send(socket, "only a human member may release work");
+            sendMessage(socket, joined.room.releaseWorkClaim(joined.handle, msg.requestId, msg.claimId));
+            break;
+          case "workClaimRenew":
+            if (!joined || joined.role !== "human") return;
+            joined.room.renewWorkClaims(joined.handle, msg.claimIds);
             break;
 
           case "goalCreate":
@@ -645,7 +676,8 @@ export function startServer(config: ServerConfig): Relay {
                 msg.kind,
                 msg.title,
                 msg.body,
-                msg.tags
+                msg.tags,
+                msg.collaboration
               )
             );
             break;
@@ -667,7 +699,7 @@ export function startServer(config: ServerConfig): Relay {
                 msg.requestId,
                 msg.contextId,
                 msg.expectedVersion,
-                { title: msg.title, body: msg.body, tags: msg.tags, status: msg.status }
+                { title: msg.title, body: msg.body, tags: msg.tags, status: msg.status, collaboration: msg.collaboration }
               )
             );
             break;

@@ -1,8 +1,10 @@
+import { CollaborationCommands } from "./collaborationCommands";
 import * as vscode from "vscode";
 import { spawn } from "child_process";
 import { randomUUID } from "node:crypto";
 import type {
   AgentPresence,
+  AgentProposal,
   AttachedAgent,
   ContextAuditEntry,
   ContextItem,
@@ -39,6 +41,7 @@ import {
   type LocalHandoffDelivery,
 } from "./agentHost";
 import { handoffDeliveryScopeKey, providerSessionScopeKey } from "./sessionScope";
+import { storeHandoffDelivery } from "./handoffJournal";
 import { RoomsTreeProvider, type MyAgent } from "./roomsTree";
 import {
   PROVIDERS,
@@ -52,6 +55,7 @@ import { ApprovalBridge } from "./approvals";
 import { WorkspaceFileSystem, WORKSPACE_SCHEME, uriFor } from "./workspaceFs";
 import { WorkspaceTreeProvider, isHostDocument } from "./workspaceTree";
 import { PresenceDecorations, presenceRange } from "./presenceDecorations";
+import { LiveProposalDocuments } from "./liveProposalDocuments";
 import { presenceLocationScope, resolvePresencePath } from "./presenceLocationPolicy";
 import {
   availableRoomWorkspacePath,
@@ -77,6 +81,8 @@ import {
 import { parseModelValue, resolveModelRequest } from "./agentCommands";
 import { displayGoalId, parseGoalCommand, resolveGoalReference } from "./goalCommands";
 import { GoalMutationQueue, type GoalMutationMsg } from "./goalMutations";
+import type { WorkClaim, WorkClaimCreateMsg, WorkClaimReleaseMsg } from "@ripieno/protocol";
+import type { ClaimPanelMessage } from "./teamBoard";
 import { ContextMutationQueue, type ContextMutationMsg } from "./contextMutations";
 import {
   displayHandoffId,
@@ -89,6 +95,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const toolExecutor = new ToolExecutor();
   // Backs the right-hand side of the diff shown before any write is applied.
   context.subscriptions.push(registerProposedDocuments());
+  const liveProposalDocuments = new LiveProposalDocuments();
+  context.subscriptions.push(liveProposalDocuments);
   context.subscriptions.push(
     vscode.window.registerUriHandler({
       handleUri: (uri) => void handleInvite(uri),
@@ -119,7 +127,16 @@ export function activate(context: vscode.ExtensionContext): void {
   let handoffAudit: HandoffAuditEntry[] = [];
   let handoffRevision = 0;
   let latestRoster: RosterEntry[] = [];
+  /** Current relay-owned proposals, keyed only by authoritative exact agent id. */
+  const latestProposals = new Map<string, AgentProposal>();
   const pendingGoalMutations = new GoalMutationQueue();
+  let workClaims: WorkClaim[] = [];
+  let workClaimRevision = 0;
+  let claimsOnline = false;
+  let claimsSupported = false;
+  let collaborationSupported = false;
+  const locallyHeldClaims = new Set<string>();
+  const pendingClaimMutations = new Map<string, { room: string; message: WorkClaimCreateMsg | WorkClaimReleaseMsg }>();
   const pendingContextMutations = new ContextMutationQueue();
   /**
    * Proves who `me` is to the relay, when it asks.
@@ -279,6 +296,11 @@ export function activate(context: vscode.ExtensionContext): void {
     "workspaceServer.js"
   ).fsPath;
 
+  const collaboration = new CollaborationCommands(
+    () => ({ online:claimsOnline, supported:collaborationSupported, connection:relay, room:currentRoom, handle:me?.handle, host:workspaceHost, root:hostingWorkspaceRoot, context:sharedContext, goals, claims:workClaims, roster:latestRoster, handoffs }),
+    (message) => sendContextMutation(message),
+    (relativePath) => sharedWorkspaceUriFor(relativePath)
+  );
   const roomView = new RoomViewProvider(
     context.extensionUri,
     (text) => {
@@ -299,9 +321,42 @@ export function activate(context: vscode.ExtensionContext): void {
         expectedVersion: request.expectedVersion,
         status: request.status,
       }),
-    (request) => sendHandoffDecision(request.action, request.id, request.expectedVersion, request.targetAgentId),
-    (agentId) => void openAgentLocation(agentId)
+    (request) => void decideHandoffFromPanel(request.action, request.id, request.expectedVersion, request.targetAgentId),
+    (agentId) => void openAgentLocation(agentId),
+    (agentId) => void openAgentProposal(agentId),
+    (message) => sendClaimMutation(message),
+    (action, id) => {
+      if (action === "open" && id) void collaboration.open(id);
+      else if (action === "edit" && id) void collaboration.edit(id);
+      else if (action === "export") void collaboration.export();
+      else if (action === "comment" || action === "task" || action === "plan" || action === "memory") void collaboration.create(action);
+    }
   );
+
+  const claimHeartbeat = setInterval(() => {
+    if (!claimsOnline || !relay || !currentRoom || locallyHeldClaims.size === 0) return;
+    const claimIds = workClaims.filter(c => locallyHeldClaims.has(c.id) && c.expiresAt > Date.now()).map(c => c.id);
+    if (claimIds.length) relay.send({ t: "workClaimRenew", claimIds });
+  }, 25_000);
+  claimHeartbeat.unref?.();
+  context.subscriptions.push({ dispose: () => clearInterval(claimHeartbeat) });
+
+  function sendClaimMutation(message: ClaimPanelMessage): void {
+    if (!relay || !currentRoom || !claimsOnline || !claimsSupported) {
+      roomView.claimResult(false, "Connect to a relay that supports work claims first.");
+      return;
+    }
+    if (pendingClaimMutations.size >= 5) {
+      roomView.claimResult(false, "Waiting for the relay to confirm earlier claims. Check the connection before retrying.");
+      return;
+    }
+    const requestId = `claim_${randomUUID()}`;
+    const wire: WorkClaimCreateMsg | WorkClaimReleaseMsg = message.type === "claimCreate"
+      ? { t: "workClaimCreate", requestId, task: message.task, paths: message.paths, agentId: message.agentId, goalId: message.goalId }
+      : { t: "workClaimRelease", requestId, claimId: message.claimId };
+    pendingClaimMutations.set(requestId, { room: currentRoom, message: wire });
+    relay.send(wire);
+  }
 
   // The host's workspace, as a real filesystem. Read-only: edits go through
   // "Propose change to host" so the owner sees a diff instead of a stream of
@@ -353,16 +408,21 @@ export function activate(context: vscode.ExtensionContext): void {
   ): vscode.Uri | undefined {
     if (!presence.path || !presenceDecorations.isCurrent(presence)) return undefined;
     if (presence.locationScope === "shared") {
-      if (!workspaceHost) return undefined;
-      if (workspaceHost !== me?.handle) return uriFor(presence.path);
-      const root = hostingWorkspaceRoot;
-      const target = root ? resolvePresencePath(root, presence.path) : undefined;
-      return target ? vscode.Uri.file(target) : undefined;
+      return sharedWorkspaceUriFor(presence.path);
     }
     if (presence.locationScope !== "private" || !sharePrivateWorkspacePresence()) return undefined;
     const spec = localSpecFor(member.handle, agent.id);
     const root = spec?.cwd ?? editorWorkspaceRoot();
     const target = root ? resolvePresencePath(root, presence.path) : undefined;
+    return target ? vscode.Uri.file(target) : undefined;
+  }
+
+  /** Phase 5's single shared coordinate mapping, reused by locations and patches. */
+  function sharedWorkspaceUriFor(relativePath: string): vscode.Uri | undefined {
+    if (!workspaceHost) return undefined;
+    if (workspaceHost !== me?.handle) return uriFor(relativePath);
+    const root = hostingWorkspaceRoot;
+    const target = root ? resolvePresencePath(root, relativePath) : undefined;
     return target ? vscode.Uri.file(target) : undefined;
   }
 
@@ -396,6 +456,32 @@ export function activate(context: vscode.ExtensionContext): void {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(`Could not open that agent location: ${message}`);
+    }
+  }
+
+  /**
+   * Open relay-authoritative proposal text as a read-only diff document.
+   * The webview supplies only an exact agent id; path and patch are re-read
+   * here, and this path intentionally has no WorkspaceEdit/apply operation.
+   */
+  async function openAgentProposal(agentId: string): Promise<void> {
+    const member = latestRoster.find((entry) => entry.agents?.some((agent) => agent.id === agentId));
+    const agent = member?.agents.find((candidate) => candidate.id === agentId);
+    const proposal = latestProposals.get(agentId);
+    const mapped = proposal ? sharedWorkspaceUriFor(proposal.path) : undefined;
+    if (!member || !agent || !proposal || proposal.locationScope !== "shared" || !mapped) {
+      void vscode.window.showInformationMessage(
+        "That proposed patch is no longer available in the shared workspace."
+      );
+      return;
+    }
+    try {
+      const uri = liveProposalDocuments.set(proposal);
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document, { preview: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(`Could not open that proposed patch: ${message}`);
     }
   }
 
@@ -484,6 +570,10 @@ export function activate(context: vscode.ExtensionContext): void {
       treeDataProvider: roomsTree,
       dragAndDropController: roomsTree,
     }),
+    vscode.commands.registerCommand("ripieno.addCodeComment", () => collaboration.create("comment")),
+    vscode.commands.registerCommand("ripieno.addSharedMemory", () => collaboration.create("memory")),
+    vscode.commands.registerCommand("ripieno.addSharedPlan", () => collaboration.create("plan")),
+    vscode.commands.registerCommand("ripieno.continueInAmoeba", () => collaboration.export()),
     vscode.commands.registerCommand("ripieno.startSolo", () => startSolo()),
     vscode.commands.registerCommand("ripieno.openRoomPanel", () => roomView.openRoomPanel()),
     vscode.commands.registerCommand("ripieno.joinRoom", () => joinRoom()),
@@ -1892,6 +1982,22 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   }
 
+  async function decideHandoffFromPanel(action: HandoffDecision, id: string, version: number, target?: string): Promise<void> {
+    const room = currentRoom; const handle = me?.handle; const connection = relay;
+    if ((action === "accept" || action === "retry") && !target) {
+      const candidates = latestRoster.find(m => m.handle === handle)?.agents ?? [];
+      if (!candidates.length) { note("Attach one of your agents before accepting or retrying a handoff."); return; }
+      const chosen = await vscode.window.showQuickPick(candidates.map(a => ({ label:a.label, description:a.id, id:a.id })), { title: action === "retry" ? "Choose your agent for a new handoff attempt" : "Choose your agent to accept this handoff" });
+      if (!chosen) return; target = chosen.id;
+    }
+    if (action === "retry") {
+      const choice = await vscode.window.showWarningMessage("Review shared files and Work evidence first: the previous attempt may already have executed. Start a new attempt?", "Retry handoff");
+      if (choice !== "Retry handoff") return;
+    }
+    if (room !== currentRoom || handle !== me?.handle || connection !== relay || !claimsOnline || handoffs.find(h => h.id === id)?.version !== version) { note("Handoff or room changed. Review its current state before continuing."); return; }
+    sendHandoffDecision(action, id, version, target);
+  }
+
   function sendHandoffDecision(
     action: HandoffDecision,
     handoffId: string,
@@ -1914,7 +2020,7 @@ export function activate(context: vscode.ExtensionContext): void {
       nonce: known.nonce,
       action,
       expectedVersion,
-      targetAgentId: action === "accept" ? targetAgentId : undefined,
+      targetAgentId: action === "accept" || action === "retry" ? targetAgentId : undefined,
     });
   }
 
@@ -2255,10 +2361,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const key = handoffDeliveryScopeKey(hostUrl, hostRoom, spec.id, delivery.deliveryId);
         await updateState((current) => ({
           ...current,
-          handoffDeliveries: {
-            ...current.handoffDeliveries,
-            [key]: structuredClone(delivery),
-          },
+          handoffDeliveries: storeHandoffDelivery(current.handoffDeliveries, key, delivery),
         }));
       },
     };
@@ -2712,8 +2815,19 @@ export function activate(context: vscode.ExtensionContext): void {
     // A new room means the old agents are watching the wrong conversation.
     detachAll();
     latestRoster = [];
+    latestProposals.clear();
+    liveProposalDocuments.clearAll();
     applyWorkspaceHost(undefined);
     currentRoom = room;
+    // Explicit room switches end this editor's intentions. Automatic socket
+    // reconnects retain pending requests through handleServerMsg instead.
+    pendingClaimMutations.clear();
+    locallyHeldClaims.clear();
+    workClaims = [];
+    claimsOnline = false;
+    claimsSupported = false;
+    collaborationSupported = false;
+    workClaimRevision = 0;
     me = member;
     refreshStatusBar();
     saveState({ room, relayUrl: activeRelayUrl });
@@ -2776,8 +2890,17 @@ export function activate(context: vscode.ExtensionContext): void {
     handoffAudit = [];
     handoffRevision = 0;
     latestRoster = [];
+    latestProposals.clear();
+    liveProposalDocuments.clearAll();
     applyWorkspaceHost(undefined);
     pendingGoalMutations.clear();
+    pendingClaimMutations.clear();
+    locallyHeldClaims.clear();
+    workClaims = [];
+    claimsOnline = false;
+    claimsSupported = false;
+    collaborationSupported = false;
+    workClaimRevision = 0;
     pendingContextMutations.clear();
     setInRoomContext(false);
     setCanAttachAgentsContext(true);
@@ -2798,10 +2921,15 @@ export function activate(context: vscode.ExtensionContext): void {
     roomView.setConnection(state);
     roomsTree.setConnected(state === "online");
     if (state !== "online") {
+      claimsOnline = false;
+      roomView.claimResult(false, "Connection lost. Claims will be checked when the room reconnects.");
       // A disconnected client cannot know whether the host, file or agent is
       // still current. Keep the coarse roster for orientation, but withdraw
       // exact coordinates until a fresh joined/roster snapshot arrives.
       presenceDecorations.update([]);
+      latestProposals.clear();
+      liveProposalDocuments.clearAll();
+      roomView.clearProposals();
       const withoutLocations = latestRoster.map((member) => ({
         ...member,
         agents: member.agents.map((agent) => ({
@@ -2824,8 +2952,18 @@ export function activate(context: vscode.ExtensionContext): void {
   function handleServerMsg(msg: ServerMsg): void {
     switch (msg.t) {
       case "joined":
+        claimsOnline = true;
+        collaborationSupported = msg.collaborationVersion === 1;
+        claimsSupported = typeof msg.workClaimRevision === "number";
+        workClaims = msg.workClaims ?? [];
+        workClaimRevision = msg.workClaimRevision ?? 0;
+        for (const id of locallyHeldClaims) if (!workClaims.some(c => c.id === id)) locallyHeldClaims.delete(id);
         setInRoomContext(true);
         latestRoster = msg.roster;
+        latestProposals.clear();
+        for (const proposal of msg.proposals ?? []) {
+          latestProposals.set(proposal.agentId, proposal);
+        }
         hostingWorkspace = msg.workspaceHost === msg.you.handle;
         applyWorkspaceHost(msg.workspaceHost);
         refreshStatusBar();
@@ -2856,11 +2994,17 @@ export function activate(context: vscode.ExtensionContext): void {
           handoffAudit,
           handoffRevision,
           msg.drafts ?? [],
+          msg.proposals ?? [],
           msg.usage ?? [],
           workspaceHost,
           hostedWorkspaceName()
         );
         roomsTree.setRoom(msg.room, msg.mode, msg.you.handle);
+        roomView.setCollaborationSupported(collaborationSupported);
+        roomView.setWorkClaims(workClaims, workClaimRevision, claimsSupported);
+        if (claimsSupported) for (const mutation of pendingClaimMutations.values()) {
+          if (mutation.room === msg.room) relay?.send(mutation.message);
+        }
         roomsTree.setRoster(msg.roster, workspaceHost);
         // No second setRoster here: it takes the host as an argument, so calling
         // it without one immediately after assigns undefined and the tree shows
@@ -2870,7 +3014,10 @@ export function activate(context: vscode.ExtensionContext): void {
         // A socket write is not an acknowledgement. If the previous connection
         // died after commit, replaying the same id returns the current state.
         for (const mutation of pendingGoalMutations.forRoom(msg.room)) relay?.send(mutation);
-        for (const mutation of pendingContextMutations.forRoom(msg.room)) relay?.send(mutation);
+        for (const mutation of pendingContextMutations.forRoom(msg.room)) {
+          if (mutation.collaboration && !collaborationSupported) { note("Structured work is queued until this relay supports it. Update the relay to save these records."); continue; }
+          relay?.send(mutation);
+        }
         break;
       case "roster":
         latestRoster = msg.roster;
@@ -2900,6 +3047,17 @@ export function activate(context: vscode.ExtensionContext): void {
       case "agentDeltaCancel":
         roomView.cancelDelta(msg.entryId);
         break;
+      case "agentProposalUpdate":
+        latestProposals.set(msg.proposal.agentId, msg.proposal);
+        roomView.setProposal(msg.proposal);
+        break;
+      case "agentProposalResolved": {
+        const current = latestProposals.get(msg.agentId);
+        if (current?.id === msg.proposalId) latestProposals.delete(msg.agentId);
+        liveProposalDocuments.clear(msg.proposalId);
+        roomView.resolveProposal(msg.proposalId, msg.agentId);
+        break;
+      }
       case "toolCall":
         void runToolCall(msg);
         break;
@@ -2930,6 +3088,24 @@ export function activate(context: vscode.ExtensionContext): void {
           roomView.setRoster(rosterForDisplay(latestRoster), workspaceHost);
         }
         break;
+      case "workClaims":
+        if (msg.revision < workClaimRevision) break;
+        workClaims = msg.claims;
+        workClaimRevision = msg.revision;
+        for (const id of locallyHeldClaims) if (!workClaims.some(c => c.id === id)) locallyHeldClaims.delete(id);
+        roomView.setWorkClaims(workClaims, workClaimRevision);
+        break;
+      case "workClaimResult": {
+        const pending = pendingClaimMutations.get(msg.requestId);
+        if (!pending || pending.room !== currentRoom) break;
+        pendingClaimMutations.delete(msg.requestId);
+        if (msg.ok && msg.claimId) {
+          if (pending.message.t === "workClaimCreate") locallyHeldClaims.add(msg.claimId);
+          else locallyHeldClaims.delete(msg.claimId);
+        }
+        roomView.claimResult(msg.ok, msg.message ?? (pending.message.t === "workClaimCreate" ? "Work claimed. Other members can now see your intention." : "Work released."));
+        break;
+      }
       case "goals":
         if (msg.roomRevision < goalsRevision) break;
         goals = msg.goals;
@@ -2963,6 +3139,7 @@ export function activate(context: vscode.ExtensionContext): void {
         pendingContextMutations.acknowledge(msg.requestId);
         if (!msg.ok) {
           note(msg.message ?? "Shared context could not be changed.");
+          void vscode.window.showWarningMessage(msg.message ?? "Shared context could not be changed.");
         } else if (
           msg.context &&
           msg.contextAudit &&

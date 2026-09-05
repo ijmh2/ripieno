@@ -9,10 +9,8 @@
  * fixture is a real one and why half of these tests are about what is absent
  * from the output rather than what is present.
  *
- * The Codex and Gemini fixtures are NOT captures. Neither CLI is installed
- * here, so those are written to the documented event shapes; the tests prove
- * the mapping and the refusal to leak, not that either vendor emits exactly
- * this.
+ * codex-0.153.1-readonly.jsonl is a real read-only CLI capture, with the thread
+ * id replaced. The other Codex fixtures and Gemini fixtures are synthetic.
  */
 
 const { test, describe } = require("node:test");
@@ -93,13 +91,12 @@ describe("Claude Code stream JSON", () => {
     assert.equal(complete.usage.cacheReadTokens, 48236);
   });
 
-  test("nothing the provider said reaches an event", () => {
+  test("only the explicit edit proposal may carry provider source text", () => {
     const adapter = new ClaudeStreamJsonAdapter("/work/room");
     const shared = JSON.stringify(
-      drain(adapter, raw).filter((event) => event.type !== "complete")
+      drain(adapter, raw).filter((event) => event.type !== "complete" && event.type !== "proposal")
     );
-    // The command that ran, the file it read, the reply text and the model's
-    // own interim narration are all in the fixture, and none of them is here.
+    // The command, read result and narration are not proposal material.
     for (const leak of [
       "echo hi",
       "zebra apple",
@@ -110,6 +107,32 @@ describe("Claude Code stream JSON", () => {
     ]) {
       assert.equal(shared.includes(leak), false, `"${leak}" must not reach the room`);
     }
+    const proposal = drain(new ClaudeStreamJsonAdapter("/work/room"), raw)
+      .find((event) => event.type === "proposal");
+    assert.equal(proposal.path, "note.txt");
+    assert.match(proposal.patch, /-zebra apple/);
+    assert.match(proposal.patch, /\+yak apple/);
+  });
+
+  test("Task sub-agent edit arguments never become the parent agent's proposal", () => {
+    const adapter = new ClaudeStreamJsonAdapter("/work/room");
+    const events = adapter.push(`${JSON.stringify({
+      type: "assistant",
+      parent_tool_use_id: "toolu_task",
+      message: {
+        content: [{
+          type: "tool_use",
+          name: "Edit",
+          input: {
+            file_path: "/work/room/src/private.ts",
+            old_string: "sub-agent scratch",
+            new_string: "not room-facing",
+          },
+        }],
+      },
+    })}\n`);
+    assert.equal(events.some((event) => event.type === "proposal"), false);
+    assert.equal(JSON.stringify(events).includes("sub-agent scratch"), false);
   });
 
   test("an absolute path outside the agent's directory is not a location", () => {
@@ -226,7 +249,60 @@ describe("Claude Code stream JSON", () => {
   });
 });
 
-describe("Codex JSONL (documented shape, not a capture)", () => {
+describe("Codex JSONL", () => {
+  test("the captured 0.153.1 stream reports activity and only the final reply", () => {
+    const adapter = new CodexJsonlAdapter("/work/room");
+    const events = drain(adapter, fixture("codex-0.153.1-readonly.jsonl"), 1);
+    assert.equal(adapter.failure, undefined);
+    assert.equal(adapter.sessionId, "probe-thread");
+    assert.deepEqual(summaries(events), ["Running a shell command", "Running a shell command"]);
+    assert.equal(events.at(-1).text, "Probe complete.");
+    assert.equal(events.at(-1).usage.inputTokens, 29708);
+    assert.equal(events.at(-1).usage.cacheReadTokens, 26112);
+    assert.equal(events.some((e) => e.type === "draft" || e.type === "proposal"), false);
+    assert.equal(JSON.stringify(events).includes("ripieno-provider-probe"), false);
+  });
+
+  test("terminal failure and truncated output cannot turn interim commentary into a reply", () => {
+    for (const terminal of [[], [{ type: "turn.failed", error: { message: "PRIVATE ACCOUNT DETAIL" } }]]) {
+      const adapter = new CodexJsonlAdapter();
+      const frames = [
+        { type: "thread.started", thread_id: "t" },
+        { type: "item.completed", item: { type: "agent_message", text: "I'll check the file." } },
+        ...terminal,
+      ];
+      const events = drain(adapter, frames.map(JSON.stringify).join("\n"));
+      assert.ok(adapter.failure);
+      assert.equal(events.some((e) => e.type === "complete"), false);
+      assert.equal(JSON.stringify(events).includes("PRIVATE ACCOUNT DETAIL"), false);
+      assert.equal(adapter.failure.includes("PRIVATE ACCOUNT DETAIL"), false);
+    }
+  });
+
+  test("a transient error followed by terminal success still succeeds", () => {
+    const adapter = new CodexJsonlAdapter();
+    const events = drain(adapter, [
+      { type: "error", message: "Reconnecting: PRIVATE DIAGNOSTIC" },
+      { type: "item.completed", item: { type: "agent_message", text: "Ready" } },
+      { type: "turn.completed" },
+    ].map(JSON.stringify).join("\n"));
+    assert.equal(adapter.failure, undefined);
+    assert.equal(events.at(-1).text, "Ready");
+    assert.equal(JSON.stringify(events).includes("PRIVATE DIAGNOSTIC"), false);
+  });
+
+  test("standalone and legacy provider errors are recognised without exposing diagnostics", () => {
+    for (const frame of [
+      { type: "error", message: "PRIVATE" },
+      { id: "1", msg: { type: "error", message: "PRIVATE" } },
+    ]) {
+      const adapter = new CodexJsonlAdapter();
+      const events = drain(adapter, JSON.stringify(frame));
+      assert.equal(adapter.recognised, true);
+      assert.ok(adapter.failure);
+      assert.deepEqual(events, []);
+    }
+  });
   test("thread events become phases, a location and the reply", () => {
     const adapter = new CodexJsonlAdapter("/work/room");
     const events = drain(adapter, fixture("codex-thread-events.jsonl"));
@@ -280,6 +356,30 @@ describe("Codex JSONL (documented shape, not a capture)", () => {
     const shared = JSON.stringify(events.filter((e) => e.type !== "complete"));
     assert.equal(shared.includes("sk-real-token"), false);
     assert.equal(shared.includes("Hidden chain of thought"), false);
+    const proposal = events.find((event) => event.type === "proposal");
+    assert.equal(proposal.path, "src/index.ts");
+    assert.equal(proposal.patch, "@@ -1 +1 @@");
+  });
+
+  test("threaded Codex emits a proposal only before completion and only with an explicit patch", () => {
+    const adapter = new CodexJsonlAdapter("/work/room");
+    const started = adapter.push(`${JSON.stringify({
+      type: "item.started",
+      item: {
+        type: "file_change",
+        changes: [{ path: "src/a.ts", diff: "@@ -1 +1 @@\n-old\n+new" }],
+      },
+    })}\n`);
+    assert.equal(started.find((event) => event.type === "proposal")?.patch, "@@ -1 +1 @@\n-old\n+new");
+
+    const completed = adapter.push(`${JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "file_change",
+        changes: [{ path: "src/a.ts", diff: "@@ -1 +1 @@\n-old\n+new" }],
+      },
+    })}\n`);
+    assert.equal(completed.some((event) => event.type === "proposal"), false);
   });
 
   test("plain text output is not recognised, so the caller keeps its own reply", () => {

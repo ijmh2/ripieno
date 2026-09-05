@@ -4,6 +4,13 @@ const { buildRoomPanelSnapshot } = require("../dist/roomPanelState.js");
 
 const now = 1_725_000_000_000;
 
+test("disconnected boards do not present stale activity or unverified claims as live", () => {
+  const state = buildRoomPanelSnapshot(input({ connection: "offline", claimsSupported: true }));
+  assert.equal(state.board.canClaim, false);
+  assert.equal(state.board.claims.length, 0);
+  assert.ok(state.agents.every(a => a.statusGroup === "unknown" && !a.activity && !a.locationOpenable && !a.proposal));
+});
+
 function member(handle, displayName, agents, overrides = {}) {
   return {
     handle,
@@ -85,6 +92,16 @@ function input(overrides = {}) {
         ts: now,
       },
     ],
+    proposals: [{
+      id: "proposal_1",
+      agentId: miraAgent.id,
+      agentLabel: miraAgent.label,
+      authorHandle: "mira",
+      path: "packages/extension/src/roomView.ts",
+      locationScope: "shared",
+      patch: "@@ -1 +1 @@\n-old\n+new",
+      updatedAt: now,
+    }],
     goals: [
       {
         id: "goal_active",
@@ -190,11 +207,14 @@ test("panel derives exact-agent work, task, goals, handoffs and usage from autho
   assert.deepEqual(mira.handoffs.map((handoff) => handoff.id), ["handoff_one"]);
   assert.equal(mira.usage.provider, "claude-code");
   assert.equal(mira.locationOpenable, true);
+  assert.equal(mira.proposal.id, "proposal_1");
+  assert.equal(mira.proposalOpenable, true);
 });
 
 test("only mappable shared or owner-opted-in private locations are openable", () => {
   const withoutHost = buildRoomPanelSnapshot(input({ workspaceHost: undefined }));
   assert.equal(withoutHost.agents[0].locationOpenable, false);
+  assert.equal(withoutHost.agents[0].proposalOpenable, false);
 
   const privateRoster = input().roster.map((member) => ({
     ...member,

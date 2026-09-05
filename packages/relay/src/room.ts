@@ -1,3 +1,5 @@
+import { validateCollaboration, canAdvanceAssignedWork } from "./collaboration.js";
+import type { CollaborationRecord } from "@ripieno/protocol";
 /**
  * Room — membership, transcript, presence, and the bridge between connected
  * editors and whichever driver is running the agent.
@@ -7,12 +9,16 @@
  */
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { WorkClaimStore } from "./workClaims.js";
+import { MAX_WORK_CLAIM_PATHS, MAX_WORK_CLAIM_TASK_CHARS, MAX_WORK_CLAIMS_PER_MEMBER,
+  type WorkClaimCreateMsg, type WorkClaimResultMsg } from "@ripieno/protocol";
 import type {
   ActionEntry,
   AgentActivity,
   AgentCapability,
   AgentDraft,
   AgentPresence,
+  AgentProposal,
   AttachedAgent,
   ConnectionRole,
   ContextAuditEntry,
@@ -66,11 +72,16 @@ import {
   MAX_PRESENCE_PATH_CHARS,
   MAX_PRESENCE_SUMMARY_CHARS,
   AGENT_DRAFT_TTL_MS,
+  AGENT_PROPOSAL_TTL_MS,
   MAX_AGENT_DRAFT_BYTES,
   MAX_AGENT_DRAFT_FRAME_BYTES,
   MAX_AGENT_DRAFT_FRAMES_PER_SECOND,
   MAX_ROOM_DRAFT_BYTES,
   MAX_ROOM_DRAFT_FRAMES_PER_SECOND,
+  MAX_AGENT_PROPOSAL_PATCH_BYTES,
+  MAX_AGENT_PROPOSALS_PER_SECOND,
+  MAX_ROOM_PROPOSAL_PATCH_BYTES,
+  MAX_ROOM_PROPOSALS_PER_SECOND,
   WORKSPACE_HANDLE,
 } from "@ripieno/protocol";
 import { toRosterEntry } from "./roomCore.js";
@@ -124,6 +135,11 @@ interface AgentConnection extends Connection {
   draft?: LiveAgentDraft;
   draftRateStartedAt?: number;
   draftRateFrames?: number;
+  /** One temporary review proposal, never durable Work. */
+  proposal?: LiveAgentProposal;
+  proposalSequence?: number;
+  proposalRateStartedAt?: number;
+  proposalRateFrames?: number;
 }
 
 interface LiveAgentDraft extends AgentDraft {
@@ -133,6 +149,11 @@ interface LiveAgentDraft extends AgentDraft {
   pending: string;
   publishedAt?: number;
   flushTimer?: NodeJS.Timeout;
+  expiryTimer?: NodeJS.Timeout;
+}
+
+interface LiveAgentProposal extends AgentProposal {
+  bytes: number;
   expiryTimer?: NodeJS.Timeout;
 }
 
@@ -237,6 +258,7 @@ export class Room {
   private readonly actions: ActionEntry[] = [];
   /** Durable goals and their mutation history are authoritative here. */
   private readonly goals = new Map<string, Goal>();
+  private readonly workClaims = new WorkClaimStore(state => this.broadcast(state));
   private readonly goalAudit: GoalAuditEntry[] = [];
   private readonly goalRequests = new Map<string, GoalRequestReceipt>();
   private roomRevision = 0;
@@ -283,6 +305,17 @@ export class Room {
   private activeDraftBytes = 0;
   private draftRoomRateStartedAt = 0;
   private draftRoomRateFrames = 0;
+  /** Relay-side caps for one full provider-exposed proposed patch. */
+  static readonly proposalLimits = {
+    maxAgentBytes: MAX_AGENT_PROPOSAL_PATCH_BYTES,
+    maxRoomBytes: MAX_ROOM_PROPOSAL_PATCH_BYTES,
+    maxAgentFramesPerSecond: MAX_AGENT_PROPOSALS_PER_SECOND,
+    maxRoomFramesPerSecond: MAX_ROOM_PROPOSALS_PER_SECOND,
+    ttlMs: AGENT_PROPOSAL_TTL_MS,
+  };
+  private activeProposalBytes = 0;
+  private proposalRoomRateStartedAt = 0;
+  private proposalRoomRateFrames = 0;
   /** Outstanding remote tool requests, so a reply can find who asked. */
   private readonly remoteCalls = new Map<
     string,
@@ -468,6 +501,46 @@ export class Room {
     return [...this.goals.values()].map((goal) => ({ ...goal }));
   }
 
+  get workClaimState() { return this.workClaims.snapshot(); }
+
+  createWorkClaim(actor: string, msg: WorkClaimCreateMsg): WorkClaimResultMsg {
+    const requestId = validHandoffRequestId(msg.requestId) ? msg.requestId : "";
+    const fail = (message: string): WorkClaimResultMsg => ({ t: "workClaimResult", requestId, ok: false, message });
+    if (!requestId) return fail("Invalid claim request ID.");
+    if (!this.connections.has(actor) || !this.canAct(actor) || isContainer(actor)) return fail("Only present human members may claim work.");
+    if (typeof msg.task !== "string" || !msg.task.trim() || msg.task.length > MAX_WORK_CLAIM_TASK_CHARS) return fail("Describe the work in 240 characters or fewer.");
+    if (!Array.isArray(msg.paths) || msg.paths.length > MAX_WORK_CLAIM_PATHS) return fail("Choose at most eight shared-workspace paths.");
+    const paths: string[] = [];
+    for (const raw of msg.paths) {
+      if (typeof raw !== "string" || raw.length > MAX_PRESENCE_PATH_CHARS) return fail("Invalid shared-workspace path.");
+      const path = boundedPresencePath(raw);
+      if (!path) return fail("Use relative paths inside the shared workspace.");
+      // Canonical component spelling keeps a/./b and a//b from hiding overlaps.
+      const canonical = path.split("/").filter(part => part && part !== ".").join("/");
+      if (!canonical || /[*?\[\]]/.test(canonical)) return fail("Use exact file paths, without wildcards.");
+      if (!paths.includes(canonical)) paths.push(canonical);
+    }
+    if (paths.length && !this.host) return fail("Host a shared workspace before claiming its files.");
+    if (msg.agentId !== undefined && (typeof msg.agentId !== "string" || !this.isAgentAuthorized(msg.agentId) || this.agents.get(msg.agentId)?.member.handle !== actor)) return fail("Choose one of your own attached agents.");
+    if (msg.goalId !== undefined && (typeof msg.goalId !== "string" || this.goals.get(msg.goalId)?.status !== "active")) return fail("Choose an active room goal.");
+    return this.workClaims.create(actor, this.known.get(actor)?.displayName ?? actor, requestId, {
+      task: redactHandoffText(msg.task.trim()).slice(0, MAX_WORK_CLAIM_TASK_CHARS), paths,
+      workspaceHost: paths.length ? this.host : undefined, agentId: msg.agentId, goalId: msg.goalId,
+    });
+  }
+
+  releaseWorkClaim(actor: string, requestId: string, claimId: string): WorkClaimResultMsg {
+    if (!validHandoffRequestId(requestId) || typeof claimId !== "string" || claimId.length > 128 || !this.connections.has(actor) || !this.canAct(actor)) {
+      return { t: "workClaimResult", requestId: validHandoffRequestId(requestId) ? requestId : "", ok: false, message: "Invalid claim release or missing permission." };
+    }
+    return this.workClaims.release(actor, requestId, claimId);
+  }
+
+  renewWorkClaims(actor: string, ids: string[]): void {
+    if (!this.connections.has(actor) || !this.canAct(actor) || !Array.isArray(ids) || ids.length > MAX_WORK_CLAIMS_PER_MEMBER || ids.some(id => typeof id !== "string" || id.length > 128)) return;
+    this.workClaims.renew(actor, ids);
+  }
+
   get goalAuditLog(): GoalAuditEntry[] {
     return this.goalAudit.map((entry) => ({ ...entry }));
   }
@@ -575,11 +648,15 @@ export class Room {
     }
     this.roles.set(handle, role);
     if (role === "viewer") {
+      this.workClaims.removeWhere(claim => claim.ownerHandle === handle);
       // Drafts are ephemeral and authority has already changed in memory. Drop
       // them before the durability barrier below so a coalesced tail cannot be
       // published while handoff state is waiting on slow storage.
       for (const agent of this.agents.values()) {
-        if (agent.member.handle === handle) this.cancelAgentDraft(agent);
+        if (agent.member.handle === handle) {
+          this.cancelAgentDraft(agent);
+          this.resolveAgentProposal(agent, "authority-ended");
+        }
       }
       const handoffsChanged = this.transitionHandoffsForRemoval(
         handle,
@@ -783,6 +860,7 @@ export class Room {
         // A host whose heartbeat is stale no longer has a truthful live reply
         // either. Withdraw it even if its own TTL has not fired yet.
         this.cancelAgentDraft(agent);
+        this.resolveAgentProposal(agent, "authority-ended");
         agent.activity = undefined;
         agent.state = undefined;
         agent.activityPending = undefined;
@@ -981,6 +1059,142 @@ export class Room {
     return draft.entryId;
   }
 
+  /** Current temporary proposals for a newly joined client. */
+  private get liveProposals(): AgentProposal[] {
+    return [...this.agents.values()]
+      .map((agent) => agent.proposal)
+      .filter((proposal): proposal is LiveAgentProposal => Boolean(proposal))
+      .map(({ bytes: _bytes, expiryTimer: _timer, ...proposal }) => ({ ...proposal }));
+  }
+
+  /**
+   * Publish one complete provider-exposed patch for the authenticated agent.
+   *
+   * The relay accepts only shared-workspace coordinates. Phase 5's private
+   * presence opt-in covers a path, not source text, so it cannot be stretched
+   * into consent to broadcast a private patch.
+   */
+  publishAgentProposal(
+    agentId: string,
+    rawPath: string,
+    rawPatch: string,
+    rawSequence: number,
+    rawLocationScope: PresenceLocationScope
+  ): void {
+    const agent = this.isAgentAuthorized(agentId) ? this.agents.get(agentId) : undefined;
+    if (!agent || rawLocationScope !== "shared" || !this.host) return;
+    if (!Number.isSafeInteger(rawSequence) || rawSequence <= 0) return;
+    if (rawSequence <= (agent.proposalSequence ?? 0)) return;
+    agent.proposalSequence = rawSequence;
+
+    const rate = this.spendProposalRate(agent, Date.now());
+    if (rate === "agent") {
+      if (agent.proposal) this.resolveAgentProposal(agent, "cancelled");
+      return;
+    }
+    if (rate === "room") return;
+
+    const path = boundedPresencePath(rawPath);
+    if (!path || typeof rawPatch !== "string" || /\u0000/.test(rawPatch)) return;
+    const patch = redactHandoffText(rawPatch).replace(/\r\n?/g, "\n").trimEnd();
+    const bytes = Buffer.byteLength(patch, "utf8");
+    if (bytes === 0 || bytes > Room.proposalLimits.maxAgentBytes) {
+      if (agent.proposal) this.resolveAgentProposal(agent, "cancelled");
+      return;
+    }
+
+    const previousBytes = agent.proposal?.bytes ?? 0;
+    if (this.activeProposalBytes - previousBytes + bytes > Room.proposalLimits.maxRoomBytes) {
+      // Aggregate pressure is not proof this exact agent misbehaved. Keep the
+      // existing proposal rather than tearing down a valid review surface.
+      return;
+    }
+    if (agent.proposal) this.resolveAgentProposal(agent, "replaced");
+
+    const proposal: LiveAgentProposal = {
+      id: randomUUID(),
+      agentId: agent.id,
+      agentLabel: agent.label,
+      authorHandle: agent.member.handle,
+      path,
+      locationScope: "shared",
+      patch,
+      updatedAt: Date.now(),
+      bytes,
+    };
+    agent.proposal = proposal;
+    this.activeProposalBytes += bytes;
+    proposal.expiryTimer = setTimeout(() => {
+      if (this.agents.get(agent.id) === agent && agent.proposal === proposal) {
+        this.resolveAgentProposal(agent, "expired");
+      }
+    }, Room.proposalLimits.ttlMs);
+    proposal.expiryTimer.unref?.();
+    const { bytes: _bytes, expiryTimer: _timer, ...wire } = proposal;
+    this.broadcast({ t: "agentProposalUpdate", proposal: wire });
+  }
+
+  cancelAgentProposalById(agentId: string): void {
+    const agent = this.isAgentAuthorized(agentId) ? this.agents.get(agentId) : undefined;
+    if (agent?.proposal) this.resolveAgentProposal(agent, "cancelled");
+  }
+
+  private spendProposalRate(agent: AgentConnection, now: number): "ok" | "agent" | "room" {
+    if (!agent.proposalRateStartedAt || now - agent.proposalRateStartedAt >= 1_000) {
+      agent.proposalRateStartedAt = now;
+      agent.proposalRateFrames = 0;
+    }
+    if (!this.proposalRoomRateStartedAt || now - this.proposalRoomRateStartedAt >= 1_000) {
+      this.proposalRoomRateStartedAt = now;
+      this.proposalRoomRateFrames = 0;
+    }
+    agent.proposalRateFrames = (agent.proposalRateFrames ?? 0) + 1;
+    this.proposalRoomRateFrames += 1;
+    if (agent.proposalRateFrames > Room.proposalLimits.maxAgentFramesPerSecond) return "agent";
+    if (this.proposalRoomRateFrames > Room.proposalLimits.maxRoomFramesPerSecond) return "room";
+    return "ok";
+  }
+
+  private resolveAgentProposal(
+    agent: AgentConnection,
+    reason: Extract<ServerMsg, { t: "agentProposalResolved" }>["reason"],
+    actionId?: string,
+    broadcast = true
+  ): void {
+    const proposal = agent.proposal;
+    if (!proposal) return;
+    if (proposal.expiryTimer) clearTimeout(proposal.expiryTimer);
+    this.activeProposalBytes = Math.max(0, this.activeProposalBytes - proposal.bytes);
+    agent.proposal = undefined;
+    if (broadcast) {
+      this.broadcast({
+        t: "agentProposalResolved",
+        proposalId: proposal.id,
+        agentId: agent.id,
+        reason,
+        actionId,
+      });
+    }
+  }
+
+  /** A host write or edit has made an earlier proposal no longer current. */
+  private reconcileProposalWithAction(entry: ActionEntry): void {
+    if (entry.verb !== "wrote" && entry.verb !== "edited") return;
+    // Identical relative paths on different members' machines are different
+    // files. Only work on the shared host can resolve a shared proposal.
+    if (!this.host || entry.targetHandle !== this.host) return;
+    const agent = this.agents.get(entry.agentId);
+    const proposal = agent?.proposal;
+    if (!agent || !proposal || normaliseWorkspacePath(proposal.path) !== normaliseWorkspacePath(entry.target)) {
+      return;
+    }
+    this.resolveAgentProposal(
+      agent,
+      entry.ok ? "work-completed" : "work-failed",
+      entry.id
+    );
+  }
+
   /* ---------------------------------------------------------------- */
   /* Membership                                                        */
   /* ---------------------------------------------------------------- */
@@ -1034,6 +1248,7 @@ export class Room {
       const replaced = this.agents.get(id);
       if (replaced) {
         this.cancelAgentDraft(replaced);
+        this.resolveAgentProposal(replaced, "authority-ended");
         this.clearPresenceTimer(replaced);
         replaced.socket.close(4000, `another connection claimed the agent id ${id}`);
       }
@@ -1054,8 +1269,12 @@ export class Room {
       else this.connections.set(member.handle, new Set([{ member, socket }]));
     }
 
+    const workClaimState = this.workClaimState;
     this.sendTo(socket, {
       t: "joined",
+      collaborationVersion: 1,
+      workClaims: workClaimState.claims,
+      workClaimRevision: workClaimState.revision,
       room: this.code,
       mode: this.mode,
       workspaceHost: this.host,
@@ -1086,6 +1305,7 @@ export class Room {
       roster: this.roster,
       transcript: this.transcript,
       drafts: this.liveDrafts,
+      proposals: this.liveProposals,
     });
     if (announceArrival) this.system(`${label} joined the room.`);
     this.broadcastRoster();
@@ -1221,6 +1441,7 @@ export class Room {
     const before = goal.status;
     const now = Date.now();
     goal.status = next;
+    if (next !== "active") this.workClaims.removeWhere(claim => claim.goalId === goal.id);
     goal.version += 1;
     goal.updatedAt = now;
     if (next === "completed") goal.completedAt = now;
@@ -1366,7 +1587,8 @@ export class Room {
     rawKind: ContextKind,
     rawTitle: string,
     rawBody: string,
-    rawTags?: string[]
+    rawTags?: string[],
+    collaboration?: CollaborationRecord
   ): ContextResultMsg {
     const actorKey = contextActorKey(actor);
     const fingerprint = contextRequestFingerprint({
@@ -1376,6 +1598,7 @@ export class Room {
       title: rawTitle,
       body: rawBody,
       tags: rawTags,
+      collaboration,
     });
     const replay = this.replayContextRequest(actorKey, requestId, fingerprint);
     if (replay) return replay;
@@ -1393,6 +1616,13 @@ export class Room {
       );
     const actorError = this.contextActorError(actor);
     if (actorError) return fail(actorError);
+    if (collaboration !== undefined) {
+      if (actor.role !== "human") return fail("Only people may create assigned work or anchored memory.");
+      if (collaboration.replyTo && !this.context.has(collaboration.replyTo)) return fail("Discussion parent no longer exists.");
+      const error = validateCollaboration(collaboration, this.roster, this.goalList, this.workClaimState.claims);
+      if (error) return fail(error);
+      if (collaboration.anchor && redactHandoffText(collaboration.anchor.path) !== collaboration.anchor.path) return fail("Anchor path contains credential-like text.");
+    }
     if (!validContextKind(rawKind)) return fail("Choose a valid context kind.");
 
     const title = normaliseContextText(rawTitle, MAX_CONTEXT_TITLE_CHARS);
@@ -1412,6 +1642,7 @@ export class Room {
     const now = Date.now();
     const item: ContextItem = {
       id: `context_${randomUUID()}`,
+      collaboration: collaboration ? sanitiseCollaboration(collaboration) : undefined,
       kind: rawKind,
       title,
       body,
@@ -1449,6 +1680,7 @@ export class Room {
     contextId: string,
     expectedVersion: number,
     changes: {
+      collaboration?: CollaborationRecord;
       title?: string;
       body?: string;
       tags?: string[];
@@ -1486,7 +1718,7 @@ export class Room {
     }
 
     const editing =
-      changes.title !== undefined || changes.body !== undefined || changes.tags !== undefined;
+      changes.title !== undefined || changes.body !== undefined || changes.tags !== undefined || changes.collaboration !== undefined;
     const transitioning = changes.status !== undefined;
     if (editing === transitioning) {
       return fail("Edit context text or change its status in one request, not both.");
@@ -1497,10 +1729,18 @@ export class Room {
       if (item.authorAgentId !== actor.agentId || item.status !== "proposed") {
         return fail("An agent may edit only its own proposed context.");
       }
-    } else if (editing && item.authorHandle !== actor.handle && this.roleOf(actor.handle) !== "owner") {
+    } else if (editing && item.authorHandle !== actor.handle && this.roleOf(actor.handle) !== "owner" && !(changes.title === undefined && changes.body === undefined && changes.tags === undefined && canAdvanceAssignedWork(item.collaboration, changes.collaboration, actor.handle))) {
       return fail("Only the context author or room owner may edit this item.");
     }
 
+    if (changes.collaboration !== undefined) {
+      if (actor.role !== "human") return fail("Only people may change assigned work or anchored memory.");
+      const error = validateCollaboration(changes.collaboration, this.roster, this.goalList, this.workClaimState.claims, item.collaboration);
+      if (error) return fail(error);
+      if (changes.collaboration.anchor && redactHandoffText(changes.collaboration.anchor.path) !== changes.collaboration.anchor.path) return fail("Anchor path contains credential-like text.");
+      if (changes.collaboration.replyTo !== item.collaboration?.replyTo) return fail("A discussion parent cannot be changed.");
+      if (item.collaboration?.anchor && JSON.stringify(item.collaboration.anchor) !== JSON.stringify(changes.collaboration.anchor)) return fail("An existing code anchor cannot be changed. Create a new anchored record.");
+    }
     const before = item.status;
     let action: ContextAuditEntry["action"] = "edit";
     if (transitioning) {
@@ -1535,6 +1775,7 @@ export class Room {
           `Use at most ${MAX_CONTEXT_TAGS} tags of 1-${MAX_CONTEXT_TAG_CHARS} characters each.`
         );
       }
+      if (changes.collaboration !== undefined) item.collaboration = sanitiseCollaboration(changes.collaboration);
       item.title = title;
       item.body = body;
       item.tags = tags;
@@ -1985,6 +2226,7 @@ export class Room {
     this.releasedAgents.add(handoff.sourceAgentId);
     if (source) {
       this.cancelAgentDraft(source);
+      this.resolveAgentProposal(source, "authority-ended");
       this.clearPresenceTimer(source);
       this.agents.delete(source.id);
     }
@@ -2486,7 +2728,10 @@ export class Room {
       // The socket is already gone. Cancel ephemeral text before waiting for
       // any durable handoff transition so a pending coalesced frame cannot
       // publish after detach.
-      if (conn) this.cancelAgentDraft(conn);
+      if (conn) {
+        this.cancelAgentDraft(conn);
+        this.resolveAgentProposal(conn, "authority-ended");
+      }
       const handoffsChanged = this.transitionHandoffsForRemoval(
         handle,
         "disconnected",
@@ -2531,6 +2776,7 @@ export class Room {
         return;
       }
       this.connections.delete(handle);
+      this.workClaims.removeWhere(claim => claim.ownerHandle === handle);
       if (!isContainer(handle)) {
         await this.cancelPreClaimHandoffsFor(handle, "disconnected");
       }
@@ -2614,12 +2860,18 @@ export class Room {
       this.host = undefined;
       this.system("The room no longer has a shared workspace.");
     }
-    if (this.host !== previousHost) this.clearSharedPresenceLocations();
+    if (this.host !== previousHost) {
+      this.clearSharedPresenceLocations();
+      for (const agent of this.agents.values()) {
+        if (agent.proposal) this.resolveAgentProposal(agent, "workspace-changed");
+      }
+    }
     this.broadcastRoster();
   }
 
   /** A changed shared coordinate system invalidates every exact shared path. */
   private clearSharedPresenceLocations(): void {
+    this.workClaims.removeWhere(claim => claim.paths.length > 0);
     const clear = (presence: AgentPresence | undefined): AgentPresence | undefined => {
       if (presence?.locationScope !== "shared") return presence;
       const { path: _path, line: _line, endLine: _endLine, locationScope: _scope, ...coarse } = presence;
@@ -2760,6 +3012,12 @@ export class Room {
    */
   noteWorkspaceChanged(handle: string, paths: string[]): void {
     if (this.host !== handle || paths.length === 0) return;
+    const changed = new Set(paths.map(normaliseWorkspacePath));
+    for (const agent of this.agents.values()) {
+      if (agent.proposal && changed.has(normaliseWorkspacePath(agent.proposal.path))) {
+        this.resolveAgentProposal(agent, "workspace-changed");
+      }
+    }
     this.broadcast({ t: "workspaceInvalidated", paths });
   }
 
@@ -2770,6 +3028,7 @@ export class Room {
     if (this.actions.length > Room.MAX_ACTIONS) {
       this.actions.splice(0, this.actions.length - Room.MAX_ACTIONS);
     }
+    this.reconcileProposalWithAction(full);
     this.broadcast({ t: "action", entry: full });
     this.onChanged?.();
   }
@@ -2784,12 +3043,14 @@ export class Room {
 
   /** Release the driver's session, stream and timers. */
   async dispose(): Promise<void> {
+    this.workClaims.dispose();
     if (this.handoffExpiryTimer) clearTimeout(this.handoffExpiryTimer);
     this.handoffExpiryTimer = undefined;
     if (this.presenceSweepTimer) clearInterval(this.presenceSweepTimer);
     this.presenceSweepTimer = undefined;
     for (const agent of this.agents.values()) {
       this.cancelAgentDraft(agent, false);
+      this.resolveAgentProposal(agent, "authority-ended", undefined, false);
       this.clearPresenceTimer(agent);
     }
     await this.driver.close?.();
@@ -2814,12 +3075,14 @@ export class Room {
       if (!conn || !this.isAgentAuthorized(conn.id)) return;
       if (text.trim() === "") {
         this.cancelAgentDraft(conn);
+        this.resolveAgentProposal(conn, "cancelled");
         return;
       }
       const depth = (this.chainDepth.get(conn.id) ?? 0) + 1;
       this.chainDepth.set(conn.id, depth);
       // Attributed to its owner, in their colour, and named so two of one
       // person's agents are told apart rather than blurring into "the agent".
+      this.resolveAgentProposal(conn, "cancelled");
       this.append({
         id: this.completeAgentDraft(conn) ?? randomUUID(),
         kind: "agent",
@@ -3230,7 +3493,12 @@ function boundedPresencePath(value: unknown): string | undefined {
   if (/^(?:[\\/]|[A-Za-z]:[\\/])/.test(raw) || raw.split(/[\\/]/).includes("..")) {
     return undefined;
   }
-  return boundedOptional(raw, MAX_PRESENCE_PATH_CHARS);
+  const bounded = boundedOptional(raw, MAX_PRESENCE_PATH_CHARS);
+  return bounded ? normaliseWorkspacePath(bounded) : undefined;
+}
+
+function normaliseWorkspacePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
 function validHandoffRequestId(value: unknown): value is string {
@@ -3418,4 +3686,11 @@ function add(a: number | undefined, b: number | undefined): number | undefined {
   if (a === undefined) return b;
   if (b === undefined) return a;
   return a + b;
+}
+
+function sanitiseCollaboration(value: CollaborationRecord): CollaborationRecord {
+  const clean = structuredClone(value);
+  clean.steps = clean.steps.map(s => ({ ...s, text:redactHandoffText(s.text).trim() }));
+  // Paths cannot be redacted into a different file coordinate; refuse secret-like names at validation.
+  return clean;
 }

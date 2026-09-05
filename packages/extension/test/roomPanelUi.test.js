@@ -8,6 +8,7 @@ const styles = fs.readFileSync(path.join(__dirname, "../media/roomPanel.css"), "
 const sidebarStyles = fs.readFileSync(path.join(__dirname, "../media/main.css"), "utf8");
 const roomView = fs.readFileSync(path.join(__dirname, "../src/roomView.ts"), "utf8");
 const extension = fs.readFileSync(path.join(__dirname, "../src/extension.ts"), "utf8");
+const proposalDocuments = fs.readFileSync(path.join(__dirname, "../src/liveProposalDocuments.ts"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../package.json"), "utf8"));
 
 test("full Room panel is discoverable and keeps the compact sidebar surfaces", () => {
@@ -75,4 +76,20 @@ test("exact locations are opened by authoritative agent id, never by a webview-s
   assert.match(extension, /latestRoster\.find\(\(entry\) => entry\.agents\?\.some/);
   assert.doesNotMatch(script, /openAgentLocation"[^\n]*path/);
   assert.match(styles, /\.location-link/);
+});
+
+test("temporary proposed diffs are accessible, read-only, and opened by exact agent id", () => {
+  assert.match(script, /Temporary proposal · not applied/);
+  assert.match(script, /aria-label.*Temporary proposed diff/);
+  assert.match(script, /type: "openAgentProposal", agentId: agent\.agentId/);
+  assert.match(script, /A streamed proposal never writes a file/);
+  assert.doesNotMatch(script, /openAgentProposal"[^\n]*(?:path|patch)/);
+  assert.doesNotMatch(script, /innerHTML/);
+  assert.match(roomView, /type === "openAgentProposal"/);
+  assert.match(extension, /latestProposals\.get\(agentId\)/);
+  assert.match(extension, /sharedWorkspaceUriFor\(proposal\.path\)/);
+  assert.match(proposalDocuments, /registerTextDocumentContentProvider/);
+  // Check mutation calls; a comment naming the forbidden API is harmless.
+  assert.doesNotMatch(proposalDocuments, /\b(?:applyEdit|writeFile)\s*\(|new\s+(?:vscode\.)?WorkspaceEdit\b/);
+  assert.match(styles, /\.proposal-patch:focus-visible/);
 });

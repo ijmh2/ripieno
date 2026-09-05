@@ -19,6 +19,7 @@ body {
   font-size: var(--vscode-font-size);
 }
 button { font: inherit; }
+input, textarea, select { font: inherit; }
 .room-workbench {
   width: min(1400px, 100%);
   margin: 0 auto;
@@ -86,6 +87,7 @@ h3 { margin-bottom: 14px; font-size: 13px; }
   font-size: 12px;
 }
 .overview,
+.claims-section,
 .agents-workbench {
   margin-top: 28px;
   border-top: 1px solid var(--vscode-widget-border);
@@ -212,6 +214,34 @@ h3 { margin-bottom: 14px; font-size: 13px; }
   margin-top: 22px;
 }
 .detail-card { min-width: 0; padding: 16px; }
+.proposal-card { grid-column: 1 / -1; }
+.proposal-status {
+  display: inline-block;
+  margin: 0 8px 10px 0;
+  padding: 3px 7px;
+  border: 1px solid var(--vscode-notificationsWarningIcon-foreground);
+  border-radius: 999px;
+  color: var(--vscode-notificationsWarningIcon-foreground);
+  font-size: 11px;
+}
+.proposal-path { overflow-wrap: anywhere; }
+.proposal-patch {
+  max-height: 320px;
+  margin: 12px 0 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 6px;
+  background: var(--vscode-textCodeBlock-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  line-height: 1.45;
+  white-space: pre;
+}
+.proposal-patch:focus-visible,
+.proposal-open:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.proposal-open { margin-top: 12px; }
 .current-task { font-size: 16px; line-height: 1.45; }
 .active-location,
 .work-target { overflow-wrap: anywhere; }
@@ -287,3 +317,46 @@ h3 { margin-bottom: 14px; font-size: 13px; }
   .detail-grid { grid-template-columns: 1fr; }
   .agent-detail-controls { width: 100%; justify-content: space-between; }
 }
+
+/* Team board and human-owned work claims. */
+.room-pulse { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); align-items: stretch; }
+.room-pulse .team-card { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; padding: 16px; text-align: left; cursor: default; min-width: 0; }
+.team-card .pulse-dot { display: none; }
+.team-card .pulse-label { font-size: 15px; }
+.team-card .pulse-status { margin: 0; }
+.team-task { margin: 5px 0 0; line-height: 1.5; overflow-wrap: anywhere; }
+.team-files { color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; margin: 0; }
+.board-help, .claim-owner { color: var(--vscode-descriptionForeground); font-size: 12px; line-height: 1.6; }
+.claims-section > .board-help { margin-top: 12px; }
+.board-button, #claimSubmit { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid transparent; border-radius: 5px; padding: 7px 11px; cursor: pointer; }
+.board-button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); margin-top: 6px; }
+button:disabled { opacity: .55; cursor: default; }
+.claim-form { display: grid; gap: 8px; border: 1px solid var(--vscode-widget-border); border-radius: 10px; padding: 18px; margin: 16px 0; }
+.claim-form label { display: block; font-weight: 600; font-size: 12px; margin-bottom: 3px; }
+.claim-form input, .claim-form textarea, .claim-form select { width: 100%; min-width: 0; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-widget-border)); padding: 9px 10px; border-radius: 5px; }
+.claim-form textarea { resize: vertical; }
+.claim-form-options { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 3px 0; }
+.claim-form .board-help { margin: 0; }
+#claimSubmit { justify-self: start; }
+.claim-feedback { margin: 0; font-size: 12px; }
+.claim-preflight, .board-attention, .attention-badge { color: var(--vscode-editorWarning-foreground, #d7ba7d); font-size: 12px; line-height: 1.6; }
+.claim-preflight:empty, .board-attention:empty, .claim-feedback:empty { display: none; }
+.overlap-warnings, .work-claims { display: grid; gap: 10px; }
+.overlap-card { border: 1px solid var(--vscode-editorWarning-foreground, #d7ba7d); border-radius: 8px; padding: 13px 15px; margin-top: 10px; overflow-wrap: anywhere; }
+.overlap-card p { margin: 6px 0 0; font-size: 12px; line-height: 1.6; }
+.overlap-card button { margin-right: 8px; }
+.claim-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 15px; border: 1px solid var(--vscode-widget-border); border-radius: 8px; background: var(--vscode-sideBar-background); overflow-wrap: anywhere; }
+.claim-card p { margin: 0; }
+.claim-form input:focus-visible, .claim-form textarea:focus-visible, .claim-form select:focus-visible, .board-button:focus-visible, #claimSubmit:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
+@media (max-width: 600px) { .claim-form-options { grid-template-columns: 1fr; } .room-pulse { grid-template-columns: 1fr; } }
+
+.shared-brain { border:1px solid var(--vscode-panel-border); border-radius:10px; padding:18px; margin:18px 0; }
+.brain-heading, .brain-filters, .brain-card-actions, #brainActions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.brain-heading { justify-content:space-between; } .brain-filters input { flex:1; min-width:180px; }
+.brain-filters input, .brain-filters select { padding:8px; color:var(--vscode-input-foreground); background:var(--vscode-input-background); border:1px solid var(--vscode-input-border, var(--vscode-panel-border)); }
+.brain-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:12px; margin:14px 0; }
+.brain-card { border:1px solid var(--vscode-panel-border); padding:14px; border-radius:8px; min-width:0; }
+.brain-body { white-space:pre-wrap; overflow-wrap:anywhere; } .plan-steps { padding-left:20px; } .plan-steps li { margin:8px 0; }
+.context-action { cursor:pointer; color:var(--vscode-button-foreground); background:var(--vscode-button-background); border:0; padding:7px 10px; border-radius:4px; } .context-action:disabled { opacity:.5; cursor:default; }
+
+#brainList { max-height:540px; overflow:auto; padding:2px; }

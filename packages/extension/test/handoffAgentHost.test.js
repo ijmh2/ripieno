@@ -451,3 +451,17 @@ test("a restarted host never reruns a delivery already marked started", async ()
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 });
+
+test("a compact terminal receipt resends its outcome without claiming or rerunning", async () => {
+  for (const status of ["completed", "failed", "outcomeUnknown"]) {
+    const sent=[];
+    const receipt={handoffId:"h",deliveryId:"d",handoffVersion:4,status,updatedAt:1,detail:"Recorded result"};
+    const host=new AgentHost({url:"ws://127.0.0.1:1",room:"r",member:{handle:"sam",displayName:"Sam"},id:"reviewer",label:"Reviewer",providerId:"cli-custom",command:process.execPath,args:[],approvals:{start:async()=>({url:"",token:""})},permissionServerPath:"unused",workspaceServerPath:"unused",cwd:__dirname,onStateChange:()=>{},handoffStore:{get:async()=>receipt,put:async()=>{throw new Error("must not rewrite a terminal receipt");}}});
+    host.relay={send:m=>sent.push(m),disconnect(){}};
+    host.ensureRunner=async()=>{throw new Error("must not execute compact terminal receipt");};
+    await host.receiveHandoffAssignment({t:"handoffAssignment",handoffId:"h",deliveryId:"d",handoffVersion:3,context:{}});
+    assert.deepEqual(sent,[{t:"handoffOutcome",handoffId:"h",deliveryId:"d",outcome:status,detail:"Recorded result"}]);
+    assert.equal(host.handoffQueue.length,0);
+    host.relay=undefined;host.dispose();
+  }
+});

@@ -8,7 +8,11 @@
 // redacts and caps whatever still arrives, but the derivation is the boundary
 // that matters, because a cap on a leaked secret is still a leaked secret.
 
-import { MAX_PRESENCE_PATH_CHARS, MAX_PRESENCE_SUMMARY_CHARS } from "@ripieno/protocol";
+import {
+  MAX_AGENT_PROPOSAL_PATCH_BYTES,
+  MAX_PRESENCE_PATH_CHARS,
+  MAX_PRESENCE_SUMMARY_CHARS,
+} from "@ripieno/protocol";
 import type { TurnUsage } from "@ripieno/protocol";
 
 /** The observable phases a room shows. Deliberately the protocol's own set. */
@@ -32,6 +36,14 @@ export type RunnerEvent =
       locationScope?: "shared";
     }
   | { type: "draft"; delta: string }
+  | {
+      type: "proposal";
+      path: string;
+      /** Provider-exposed review text. The host never applies this event. */
+      patch: string;
+      /** Set only for the bundled shared-workspace MCP namespace. */
+      locationScope?: "shared";
+    }
   | { type: "tool"; name: string; safeSummary: string }
   | { type: "complete"; text: string; usage?: TurnUsage };
 
@@ -164,6 +176,57 @@ export function summarisePhase(phase: RunnerPhase): string {
 /** Last-resort cap. Nothing reaching this should be provider-authored text. */
 export function boundSummary(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, MAX_PRESENCE_SUMMARY_CHARS);
+}
+
+/**
+ * Bound provider-exposed patch text without splitting a UTF-8 code point.
+ * Empty, binary-looking, or non-string material is not a patch we can show.
+ */
+export function boundedProposalPatch(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0 || /\u0000/.test(value)) return undefined;
+  const normalised = value.replace(/\r\n?/g, "\n").trimEnd();
+  if (!normalised) return undefined;
+  const bytes = Buffer.byteLength(normalised, "utf8");
+  if (bytes <= MAX_AGENT_PROPOSAL_PATCH_BYTES) return normalised;
+  const marker = "\n... [proposal truncated]";
+  const prefix = utf8Prefix(
+    normalised,
+    MAX_AGENT_PROPOSAL_PATCH_BYTES - Buffer.byteLength(marker, "utf8")
+  ).trimEnd();
+  return prefix ? `${prefix}${marker}` : undefined;
+}
+
+/** Format an exact replacement the provider itself exposed as review text. */
+export function replacementProposalPatch(
+  path: string,
+  before: unknown,
+  after: unknown
+): string | undefined {
+  if (typeof before !== "string" || typeof after !== "string" || before === after) return undefined;
+  // Preserve some of both sides even for a huge full-file write. Prefixing
+  // every line can nearly double the bytes, so each raw side gets a deliberately
+  // conservative share before the final protocol cap is applied.
+  const sideLimit = Math.floor(MAX_AGENT_PROPOSAL_PATCH_BYTES / 5);
+  const boundedSide = (value: string): string => {
+    if (Buffer.byteLength(value, "utf8") <= sideLimit) return value;
+    return `${utf8Prefix(value, sideLimit).trimEnd()}\n... [side truncated]`;
+  };
+  const lines = [
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    "@@ provider-exposed replacement @@",
+    ...boundedSide(before).replace(/\r\n?/g, "\n").split("\n").map((line) => `-${line}`),
+    ...boundedSide(after).replace(/\r\n?/g, "\n").split("\n").map((line) => `+${line}`),
+  ];
+  return boundedProposalPatch(lines.join("\n"));
+}
+
+function utf8Prefix(value: string, maxBytes: number): string {
+  const buffer = Buffer.from(value, "utf8");
+  if (buffer.length <= maxBytes) return value;
+  let end = Math.max(0, maxBytes);
+  while (end > 0 && (buffer[end] & 0xc0) === 0x80) end -= 1;
+  return buffer.subarray(0, end).toString("utf8");
 }
 
 /** Build a tool event without letting a caller assemble the summary itself. */

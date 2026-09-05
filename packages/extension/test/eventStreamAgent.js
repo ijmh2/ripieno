@@ -29,6 +29,18 @@ const frames = [
     },
   },
   {
+    type: "item.started",
+    item: {
+      id: "i2",
+      type: "file_change",
+      changes: [{
+        path: "packages/extension/src/runners.ts",
+        kind: "update",
+        diff: "@@ -1 +1 @@\n-const mode = 'old';\n+const mode = 'new';",
+      }],
+    },
+  },
+  {
     type: "item.completed",
     item: {
       id: "i2",

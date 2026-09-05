@@ -6,9 +6,12 @@
 // process around) we just resend a full snapshot on visibility change.
 
 import * as vscode from "vscode";
+import type { WorkClaim } from "@ripieno/protocol";
+import { parseClaimPanelMessage, type ClaimPanelMessage } from "./teamBoard";
 import type {
   ActionEntry,
   AgentDraft,
+  AgentProposal,
   AgentUsage,
   ContextAuditEntry,
   ContextItem,
@@ -43,6 +46,10 @@ export interface LocalAgentOnboarding extends LocalAgentPanelDetail {
 }
 
 interface RoomState {
+  collaborationSupported?: boolean;
+  workClaims?: WorkClaim[];
+  workClaimRevision?: number;
+  claimsSupported?: boolean;
   room?: string;
   workspaceHost?: string;
   /** Local display name only; never relayed to another member. */
@@ -68,6 +75,8 @@ interface RoomState {
   usage: AgentUsage[];
   /** entryId -> relay-attributed preview, cleared once the final entry lands. */
   liveDeltas: Map<string, LiveDelta>;
+  /** agentId -> current relay-owned temporary patch. */
+  proposals: Map<string, AgentProposal>;
   status: RoomStatus;
   waitingOn?: string;
   connection: ConnectionState;
@@ -105,6 +114,7 @@ function emptyState(connection: ConnectionState): RoomState {
     localAgents: [],
     usage: [],
     liveDeltas: new Map(),
+    proposals: new Map(),
     status: "idle",
     connection,
   };
@@ -207,7 +217,10 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       expectedVersion: number;
       targetAgentId?: string;
     }) => void,
-    private readonly onOpenAgentLocation: (agentId: string) => void
+    private readonly onOpenAgentLocation: (agentId: string) => void,
+    private readonly onOpenAgentProposal: (agentId: string) => void,
+    private readonly onClaimAction: (message: ClaimPanelMessage) => void = () => undefined,
+    private readonly onCollaborationAction: (action: string, id?: string) => void = () => undefined
   ) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -219,6 +232,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.renderHtml(webviewView.webview);
 
     webviewView.webview.onDidReceiveMessage((raw: unknown) => {
+      if (this.handleCollaborationMessage(raw)) return;
       const msg = parseRoomViewMessage(raw);
       if (!msg) return;
 
@@ -262,6 +276,21 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  setCollaborationSupported(supported: boolean): void { this.state.collaborationSupported = supported; this.postRoomPanelSnapshot(); }
+
+  private handleCollaborationMessage(value: unknown): boolean {
+    if (!value || typeof value !== "object") return false;
+    const v = value as Record<string, unknown>;
+    if (v.type !== "collaborationAction") return false;
+    if (Object.keys(v).some(k => !["type", "action", "id"].includes(k))) return true;
+    if (typeof v.action !== "string" || !["open", "edit", "comment", "task", "plan", "memory", "export"].includes(v.action)) return true;
+    if (v.action === "open" || v.action === "edit") {
+      if (typeof v.id !== "string" || !this.state.context.some(c => c.id === v.id)) return true;
+    } else if (v.id !== undefined) return true;
+    this.onCollaborationAction(v.action, typeof v.id === "string" ? v.id : undefined);
+    return true;
+  }
+
   /** Open (or reveal) the editor-sized Room overview and exact-agent tabs. */
   openRoomPanel(): void {
     if (this.roomPanel) {
@@ -283,6 +312,12 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     this.roomPanel = panel;
     panel.webview.html = this.renderRoomPanelHtml(panel.webview);
     panel.webview.onDidReceiveMessage((value: unknown) => {
+      if (this.handleCollaborationMessage(value)) return;
+      const handoffMessage = parseRoomViewMessage(value);
+      if (handoffMessage?.type === "contextStatus") { this.onContextStatus(handoffMessage); return; }
+      if (handoffMessage?.type === "handoffAction") { this.onHandoffAction(handoffMessage); return; }
+      const claimMessage = parseClaimPanelMessage(value);
+      if (claimMessage) { this.onClaimAction(claimMessage); return; }
       if (
         typeof value === "object" &&
         value !== null &&
@@ -299,12 +334,24 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
         (value as { agentId: string }).agentId.length <= 300
       ) {
         this.onOpenAgentLocation((value as { agentId: string }).agentId);
+      } else if (
+        typeof value === "object" &&
+        value !== null &&
+        Object.keys(value).length === 2 &&
+        (value as { type?: unknown }).type === "openAgentProposal" &&
+        typeof (value as { agentId?: unknown }).agentId === "string" &&
+        (value as { agentId: string }).agentId.length <= 300
+      ) {
+        this.onOpenAgentProposal((value as { agentId: string }).agentId);
       }
     });
     panel.onDidChangeViewState(() => {
       if (panel.visible) this.postRoomPanelSnapshot();
     });
+    // Expiry stays honest even when no new network frame reaches the panel.
+    const refresh = setInterval(() => { if (panel.visible) this.postRoomPanelSnapshot(); }, 5_000);
     panel.onDidDispose(() => {
+      clearInterval(refresh);
       if (this.roomPanel === panel) this.roomPanel = undefined;
     });
   }
@@ -330,6 +377,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     handoffAudit: HandoffAuditEntry[] = [],
     handoffRevision = 0,
     drafts: AgentDraft[] = [],
+    proposals: AgentProposal[] = [],
     usage: AgentUsage[] = [],
     workspaceHost?: string,
     localWorkspaceFolder?: string
@@ -355,6 +403,7 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       roster,
       transcript: [...transcript],
       liveDeltas: new Map(drafts.map((draft) => [draft.entryId, { ...draft }])),
+      proposals: new Map(proposals.map((proposal) => [proposal.agentId, { ...proposal }])),
       status: "idle",
       waitingOn: undefined,
       connection: this.state.connection,
@@ -404,6 +453,18 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
       roomRevision: next.roomRevision,
     });
     this.postRoomPanelSnapshot();
+  }
+
+  setWorkClaims(claims: WorkClaim[], revision: number, supported = true): void {
+    if (revision < (this.state.workClaimRevision ?? 0)) return;
+    this.state.workClaims = claims.map(c => ({ ...c, paths: [...c.paths] }));
+    this.state.workClaimRevision = revision;
+    this.state.claimsSupported = supported;
+    this.postRoomPanelSnapshot();
+  }
+
+  claimResult(ok: boolean, message: string): void {
+    void this.roomPanel?.webview.postMessage({ type: "claimResult", ok, message });
   }
 
   setContextState(
@@ -485,6 +546,24 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
   cancelDelta(entryId: string): void {
     this.state.liveDeltas.delete(entryId);
     this.post({ type: "deltaCancel", entryId });
+  }
+
+  setProposal(proposal: AgentProposal): void {
+    this.state.proposals.set(proposal.agentId, { ...proposal });
+    this.postRoomPanelSnapshot();
+  }
+
+  resolveProposal(proposalId: string, agentId: string): void {
+    const current = this.state.proposals.get(agentId);
+    if (!current || current.id !== proposalId) return;
+    this.state.proposals.delete(agentId);
+    this.postRoomPanelSnapshot();
+  }
+
+  clearProposals(): void {
+    if (this.state.proposals.size === 0) return;
+    this.state.proposals.clear();
+    this.postRoomPanelSnapshot();
   }
 
   setStatus(status: RoomStatus, waitingOn?: string): void {
@@ -594,6 +673,9 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     panel.title = this.state.room ? `Ripieno · ${this.state.room}` : "Ripieno Room";
     void panel.webview.postMessage(
       buildRoomPanelSnapshot({
+        workClaims: this.state.workClaims,
+        claimsSupported: this.state.claimsSupported,
+        pendingApprovalCount: this.pendingApprovals.size,
         room: this.state.room,
         workspaceHost: this.state.workspaceHost,
         mode: this.state.mode,
@@ -601,7 +683,10 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
         roster: this.state.roster,
         transcriptCount: this.state.transcript.length,
         actions: this.state.actions,
+        proposals: [...this.state.proposals.values()],
         goals: this.state.goals,
+        collaborationSupported: this.state.collaborationSupported,
+        context: this.state.context,
         contextCount: this.state.context.filter(
           (item) => item.status !== "archived" && item.status !== "superseded"
         ).length,
@@ -787,12 +872,45 @@ export class RoomViewProvider implements vscode.WebviewViewProvider {
     <div class="section-heading">
       <div>
         <span class="eyebrow">Shared, relay-authoritative</span>
-        <h2 id="overviewTitle">Room overview</h2>
+        <h2 id="overviewTitle">Team board</h2>
       </div>
       <span id="overviewUpdated" class="updated"></span>
     </div>
     <div id="overviewMetrics" class="overview-metrics"></div>
     <div id="roomPulse" class="room-pulse" role="list" aria-label="Agent status overview"></div>
+  </section>
+
+  <section class="claims-section" aria-labelledby="claimsTitle">
+    <div class="section-heading">
+      <div><span class="eyebrow">Coordinate before starting</span><h2 id="claimsTitle">Claim work</h2></div>
+      <span id="claimCount" class="updated"></span>
+    </div>
+    <p class="board-help">Claims belong to people. Shared-file overlap is a warning, not a lock or permission to edit. Claims end when their editor disconnects or stops renewing them.</p>
+    <div id="boardAttention" class="board-attention" role="status" aria-live="polite"></div>
+    <div id="overlapWarnings" class="overlap-warnings" role="list" aria-label="Possible overlapping work"></div>
+    <form id="claimForm" class="claim-form">
+      <label for="claimTask">What will you work on?</label>
+      <input id="claimTask" maxlength="240" required placeholder="For example, authentication tests" />
+      <div class="claim-form-options">
+        <div><label for="claimAgent">Agent</label><select id="claimAgent"><option value="">I'll coordinate it myself</option></select></div>
+        <div><label for="claimGoal">Related goal</label><select id="claimGoal"><option value="">No goal link</option></select></div>
+      </div>
+      <label for="claimPaths">Shared-workspace files (optional, one path per line)</label>
+      <textarea id="claimPaths" rows="2" maxlength="2000" placeholder="src/auth.ts&#10;test/auth.test.ts" aria-describedby="claimPathsHelp"></textarea>
+      <p id="claimPathsHelp" class="board-help">Up to eight exact relative paths in the host's folder. Private copies are not compared.</p>
+      <div id="claimPreflight" class="claim-preflight" role="status" aria-live="polite"></div>
+      <button id="claimSubmit" type="submit">Claim work</button>
+      <p id="claimFeedback" class="claim-feedback" role="status" aria-live="polite"></p>
+    </form>
+    <div id="workClaims" class="work-claims" role="list" aria-label="Claimed work"></div>
+  </section>
+
+  <section class="shared-brain" aria-labelledby="brainTitle">
+    <div class="brain-heading"><h2 id="brainTitle">Plans, tasks &amp; Brain</h2><div id="brainActions"></div></div>
+    <p class="detail-note">Shared, attributed records. Code anchors open only while their host and file content still match.</p>
+    <div class="brain-filters"><input id="brainSearch" type="search" placeholder="Search titles, details, tags or owners" aria-label="Search Brain" /><select id="brainFilter" aria-label="Record type"><option value="all">All records</option><option value="plan">Plans</option><option value="task">Tasks</option><option value="comment">Code comments</option><option value="memory">Brain memory</option><option value="proposed">Proposed context</option><option value="retired">Archived / superseded</option></select></div>
+    <div id="brainList" class="brain-list"></div>
+    <h3>Handoff recovery</h3><div id="handoffRecovery" class="brain-list"></div>
   </section>
 
   <section class="agents-workbench" aria-labelledby="agentsTitle">

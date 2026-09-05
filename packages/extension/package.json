@@ -107,12 +107,12 @@
       },
       {
         "command": "ripieno.customizeAgent",
-        "title": "Ripieno: Customize Agent…",
+        "title": "Ripieno: Customize Agent\u2026",
         "icon": "$(settings-gear)"
       },
       {
         "command": "ripieno.removeAgent",
-        "title": "Ripieno: Delete Agent…",
+        "title": "Ripieno: Delete Agent\u2026",
         "icon": "$(trash)"
       },
       {
@@ -138,7 +138,27 @@
       },
       {
         "command": "ripieno.setRole",
-        "title": "Change Role…",
+        "title": "Change Role\u2026",
+        "category": "Ripieno"
+      },
+      {
+        "command": "ripieno.addCodeComment",
+        "title": "Add Shared Code Comment",
+        "category": "Ripieno"
+      },
+      {
+        "command": "ripieno.addSharedMemory",
+        "title": "Remember Selection in Brain",
+        "category": "Ripieno"
+      },
+      {
+        "command": "ripieno.addSharedPlan",
+        "title": "Create Shared Plan",
+        "category": "Ripieno"
+      },
+      {
+        "command": "ripieno.continueInAmoeba",
+        "title": "Continue in Amoeba (Export)",
         "category": "Ripieno"
       }
     ],
@@ -152,29 +172,49 @@
             "id": "addAgent",
             "title": "Bring your own agent",
             "description": "Attach an agent you already pay for \u2014 Claude Code, Codex, Gemini, or a local model.\n[Add an agent](command:ripieno.addAgent)",
-            "media": { "markdown": "media/walkthrough/agent.md", "altText": "Choosing an agent provider" },
-            "completionEvents": ["onCommand:ripieno.addAgent"]
+            "media": {
+              "markdown": "media/walkthrough/agent.md",
+              "altText": "Choosing an agent provider"
+            },
+            "completionEvents": [
+              "onCommand:ripieno.addAgent"
+            ]
           },
           {
             "id": "startRoom",
             "title": "Start a room for yourself",
             "description": "No relay, no token, no account \u2014 the extension runs one in this window.\n[Start a room](command:ripieno.startSolo)",
-            "media": { "markdown": "media/walkthrough/room.md", "altText": "A solo room running on loopback" },
-            "completionEvents": ["onCommand:ripieno.startSolo"]
+            "media": {
+              "markdown": "media/walkthrough/room.md",
+              "altText": "A solo room running on loopback"
+            },
+            "completionEvents": [
+              "onCommand:ripieno.startSolo"
+            ]
           },
           {
             "id": "attribution",
             "title": "See who did what",
             "description": "Ask your agent something, then open Work under the conversation. Every action names the agent and the machine it ran on.",
-            "media": { "markdown": "media/walkthrough/attribution.md", "altText": "The action log naming agents and machines" },
-            "completionEvents": ["onContext:ripieno.inRoom"]
+            "media": {
+              "markdown": "media/walkthrough/attribution.md",
+              "altText": "The action log naming agents and machines"
+            },
+            "completionEvents": [
+              "onContext:ripieno.inRoom"
+            ]
           },
           {
             "id": "invite",
             "title": "Add a second person",
             "description": "One link. They bring their own agent, and their agent runs on their machine under their permissions.\n[Copy an invite link](command:ripieno.copyInvite)",
-            "media": { "markdown": "media/walkthrough/approval.md", "altText": "An approval card asking permission to run a command" },
-            "completionEvents": ["onCommand:ripieno.copyInvite"]
+            "media": {
+              "markdown": "media/walkthrough/approval.md",
+              "altText": "An approval card asking permission to run a command"
+            },
+            "completionEvents": [
+              "onCommand:ripieno.copyInvite"
+            ]
           }
         ]
       }
@@ -300,6 +340,18 @@
           "when": "ripieno.hasSharedWorkspace",
           "group": "navigation"
         }
+      ],
+      "editor/context": [
+        {
+          "command": "ripieno.addCodeComment",
+          "group": "ripieno",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "ripieno.addSharedMemory",
+          "group": "ripieno",
+          "when": "editorHasSelection"
+        }
       ]
     },
     "configuration": {
@@ -308,7 +360,7 @@
         "ripieno.relayUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "WebSocket URL of the relay hosting the room. Remote relays must use `wss://`; plaintext `ws://` is accepted only on loopback.\n\n**Leave empty to work solo** — the extension runs a relay on this machine, so a room needs no server, no token and no second person. Set a URL when you want other people in the room with you."
+          "markdownDescription": "WebSocket URL of the relay hosting the room. Remote relays must use `wss://`; plaintext `ws://` is accepted only on loopback.\n\n**Leave empty to work solo** \u2014 the extension runs a relay on this machine, so a room needs no server, no token and no second person. Set a URL when you want other people in the room with you."
         },
         "ripieno.commandApproval": {
           "type": "string",
@@ -345,7 +397,7 @@
             "bypassPermissions"
           ],
           "enumDescriptions": [
-            "Your agent asks you before anything with side effects — running code, launching apps, git writes. The prompt appears in your editor, so it is a real decision rather than a stalled request.",
+            "Your agent asks you before anything with side effects \u2014 running code, launching apps, git writes. The prompt appears in your editor, so it is a real decision rather than a stalled request.",
             "Your agent runs everything without asking, like an ordinary Claude Code session. Remember the room steers it: anyone in the room can talk your agent into running things on your machine."
           ],
           "default": "ask",
@@ -369,7 +421,7 @@
         "ripieno.roomToken": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Legacy/configuration fallback for the shared relay gate. Invite tokens are kept in SecretStorage and scoped to their relay. Leave empty for embedded solo mode. This is a gate, not a login — without identity verification a holder can still claim any handle."
+          "markdownDescription": "Legacy/configuration fallback for the shared relay gate. Invite tokens are kept in SecretStorage and scoped to their relay. Leave empty for embedded solo mode. This is a gate, not a login \u2014 without identity verification a holder can still claim any handle."
         }
       }
     }

@@ -18,6 +18,14 @@
   const detailEl = document.getElementById("agentDetail");
   const filterEmptyEl = document.getElementById("filterEmpty");
   const announcementsEl = document.getElementById("panelAnnouncements");
+  const claimForm = document.getElementById("claimForm");
+  const claimTask = document.getElementById("claimTask");
+  const claimPaths = document.getElementById("claimPaths");
+  const claimAgent = document.getElementById("claimAgent");
+  const claimGoal = document.getElementById("claimGoal");
+  const claimFeedback = document.getElementById("claimFeedback");
+  let pendingClaimAction;
+  let submittedTask;
 
   const restored = vscode.getState() || {};
   let snapshot;
@@ -67,8 +75,11 @@
   }
 
   function renderOverview() {
+    const focused = document.activeElement?.dataset?.boardFocus;
     roomNameEl.textContent = snapshot.room || "Not connected";
-    roomMetaEl.textContent = snapshot.room
+    roomMetaEl.textContent = snapshot.room && snapshot.connection !== "online"
+      ? `Disconnected · last known roster: ${snapshot.memberCount} people and ${snapshot.agents.length} agents`
+      : snapshot.room
       ? `${snapshot.mode === "hosted" ? "Hosted" : "BYO"} · ${snapshot.presentMemberCount}/${snapshot.memberCount} people present · ${snapshot.agents.length} attached agents`
       : "Open a room to inspect its agents.";
     const connectionLabel = snapshot.connection === "online"
@@ -82,7 +93,7 @@
     overviewUpdatedEl.textContent = `Updated ${formatTime(Date.now())}`;
 
     overviewMetricsEl.replaceChildren(
-      metric("People", `${snapshot.presentMemberCount}/${snapshot.memberCount}`, "currently present"),
+      metric("People", snapshot.connection === "online" ? `${snapshot.presentMemberCount}/${snapshot.memberCount}` : snapshot.memberCount, snapshot.connection === "online" ? "currently present" : "last known roster"),
       metric("Agents", snapshot.agents.length, `${snapshot.agents.filter((agent) => agent.statusGroup === "active").length} active`),
       metric("Goals", snapshot.activeGoals.length, "active room goals"),
       metric("Handoffs", snapshot.pendingHandoffCount, "open lifecycle items"),
@@ -96,8 +107,7 @@
       return;
     }
     for (const agent of snapshot.agents) {
-      const pulse = element("button", `pulse ${agent.statusGroup}`);
-      pulse.type = "button";
+      const pulse = element("article", `pulse team-card ${agent.statusGroup}`);
       pulse.setAttribute("role", "listitem");
       pulse.style.setProperty("--owner-color", `var(--ripieno-hue-${agent.ownerColor})`);
       pulse.setAttribute("aria-label", `${agent.label}, owned by ${agent.ownerName}, ${statusLabel(agent)}`);
@@ -107,16 +117,154 @@
         element("span", "pulse-owner", agent.ownerName),
         element("span", "pulse-status", statusLabel(agent))
       );
-      pulse.addEventListener("click", () => {
+      const held = snapshot.board.claims.filter(c => c.agentId === agent.agentId);
+      pulse.appendChild(element("p", "team-task", held[0]?.task || agent.currentTask));
+      const files = [...new Set([...held.flatMap(c => c.paths), ...(agent.activity?.locationScope === "shared" && agent.activity.path ? [agent.activity.path] : [])])];
+      pulse.appendChild(element("p", "team-files", files.length ? files.slice(0, 3).join(" · ") : "No shared files reported"));
+      const warnings = snapshot.board.overlaps.filter(w => w.agentIds.includes(agent.agentId));
+      if (warnings.length) pulse.appendChild(element("span", "attention-badge", `${warnings.length} possible overlap${warnings.length === 1 ? "" : "s"}`));
+      if (agent.state === "waiting-approval") pulse.appendChild(element("span", "attention-badge", "Needs approval"));
+      const inspect = element("button", "board-button", "Inspect agent");
+      inspect.dataset.boardFocus = `agent:${agent.agentId}`;
+      inspect.type = "button";
+      inspect.addEventListener("click", () => {
         enabledFilters.add(agent.statusGroup);
+        followedAgentId = undefined;
         selectedAgentId = agent.agentId;
         persist();
         renderFilters();
         renderAgents(true);
+        detailEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
       });
+      pulse.appendChild(inspect);
       roomPulseEl.appendChild(pulse);
     }
+    restoreBoardFocus(focused);
   }
+
+  function restoreBoardFocus(key) {
+    if (!key) return;
+    [...document.querySelectorAll("[data-board-focus]")].find(node => node.dataset.boardFocus === key)?.focus({ preventScroll: true });
+  }
+
+  function setOptions(select, items, placeholder) {
+    const signature = JSON.stringify(items);
+    if (select.dataset.options === signature) return;
+    const selected = select.value;
+    select.replaceChildren(new Option(placeholder, ""), ...items.map(([id, label]) => new Option(label, id)));
+    if (items.some(([id]) => id === selected)) select.value = selected;
+    select.dataset.options = signature;
+  }
+
+  function enteredPaths() {
+    return [...new Set(claimPaths.value.split("\n").map(p => p.trim()).filter(Boolean))];
+  }
+
+  function renderPreflight() {
+    const preflight = document.getElementById("claimPreflight");
+    if (!snapshot?.board.canClaim) { preflight.textContent = ""; return; }
+    const paths = enteredPaths().map(p => p.replace(/\\/g, "/").split("/").filter(p => p && p !== ".").join("/"));
+    const task = claimTask.value.trim().toLowerCase().replace(/\s+/g, " ");
+    const others = snapshot.board.claims.filter(c => c.ownerHandle !== snapshot.you?.handle &&
+      (c.paths.some(p => paths.includes(p)) || task && c.task.toLowerCase().replace(/\s+/g, " ") === task));
+    const editing = snapshot.agents.filter(a => a.ownerHandle !== snapshot.you?.handle &&
+      a.activity?.phase === "editing" && a.activity.locationScope === "shared" && paths.includes(a.activity.path));
+    const owners = [...new Set([...others.map(c => c.ownerHandle), ...editing.map(a => a.ownerHandle)])];
+    preflight.textContent = owners.length ? `Possible overlap with ${owners.map(o => `@${o}`).join(", ")}. Review their work below and coordinate before editing. Claiming does not pause another agent.` : "";
+  }
+
+  function renderBoard() {
+    const focused = document.activeElement?.dataset?.boardFocus;
+    const board = snapshot.board;
+    document.getElementById("claimCount").textContent = snapshot.connection === "online" ? `${board.claims.length} active claim${board.claims.length === 1 ? "" : "s"}` : "Claims unavailable";
+    const attention = [];
+    if (board.overlapCount) attention.push(`${board.overlapCount} possible overlap${board.overlapCount === 1 ? "" : "s"}`);
+    if (board.pendingApprovalCount) attention.push(`${board.pendingApprovalCount} approval${board.pendingApprovalCount === 1 ? "" : "s"} waiting in the Room sidebar`);
+    if (snapshot.pendingHandoffCount) attention.push(`${snapshot.pendingHandoffCount} open handoff${snapshot.pendingHandoffCount === 1 ? "" : "s"} in the Room sidebar`);
+    const attentionEl = document.getElementById("boardAttention");
+    const attentionText = attention.join(" · ");
+    if (attentionEl.textContent !== attentionText) attentionEl.textContent = attentionText;
+    const warningList = document.getElementById("overlapWarnings");
+    warningList.replaceChildren();
+    for (const warning of board.overlaps) {
+      const card = element("article", "overlap-card");
+      card.setAttribute("role", "listitem");
+      card.append(element("strong", "", `${warning.kind === "file" ? "Shared file" : "Same task"}: ${warning.target}`),
+        element("p", "", `${warning.owners.map(o => `@${o}`).join(" and ")} · ${warning.evidence === "activity" ? "live editing or proposed changes overlap" : "declared intentions overlap"}. Check before editing.`));
+      for (const id of warning.agentIds) {
+        const agent = snapshot.agents.find(a => a.agentId === id);
+        if (!agent) continue;
+        const inspect = element("button", "board-button", `View ${agent.label}`);
+        inspect.dataset.boardFocus = `${warning.key}:${id}`;
+        inspect.type = "button";
+        inspect.addEventListener("click", () => { enabledFilters.add(agent.statusGroup); selectAgent(id, true); detailEl.scrollIntoView({ block: "nearest" }); });
+        card.appendChild(inspect);
+      }
+      warningList.appendChild(card);
+    }
+    setOptions(claimAgent, snapshot.agents.filter(a => a.ownerHandle === snapshot.you?.handle).map(a => [a.agentId, a.label]), "I'll coordinate it myself");
+    setOptions(claimGoal, snapshot.activeGoals.map(g => [g.id, g.text]), "No goal link");
+    for (const control of claimForm.querySelectorAll("input, textarea, select, button")) control.disabled = !board.canClaim || Boolean(pendingClaimAction);
+    if (!board.canClaim) {
+      claimFeedback.textContent = snapshot.connection !== "online" ? "Reconnect to claim work. Live overlap cannot be checked while offline."
+        : !board.supported ? "This relay needs an update to support work claims." : "Viewers can watch claims. A room member can claim work.";
+      claimFeedback.dataset.unavailable = "true";
+    } else if (claimFeedback.dataset.unavailable) {
+      claimFeedback.textContent = "";
+      delete claimFeedback.dataset.unavailable;
+    }
+    const list = document.getElementById("workClaims");
+    list.replaceChildren();
+    if (!board.claims.length) list.appendChild(element("p", "empty-state", snapshot.connection !== "online"
+      ? "Current claims are unavailable until the room reconnects."
+      : !board.supported ? "Update the relay to see and share work claims."
+      : "No work is claimed. Tell the team what you intend to do before starting your agent."));
+    for (const claim of board.claims) {
+      const card = element("article", "claim-card");
+      card.setAttribute("role", "listitem");
+      const agent = snapshot.agents.find(a => a.agentId === claim.agentId);
+      const goal = snapshot.activeGoals.find(g => g.id === claim.goalId);
+      card.append(element("strong", "", claim.task), element("p", "claim-owner", `@${claim.ownerHandle}${agent ? ` · ${agent.label}` : claim.agentId ? " · agent detached" : " · coordinating without an agent"}`));
+      if (goal) card.appendChild(element("p", "board-help", `Goal: ${goal.text}`));
+      if (claim.paths.length) card.appendChild(element("p", "team-files", claim.paths.join(" · ")));
+      card.appendChild(element("span", "board-help", "Intention only · renews while its editor is connected"));
+      if (claim.ownerHandle === snapshot.you?.handle) {
+        const release = element("button", "board-button", "Release work");
+        release.dataset.boardFocus = `release:${claim.id}`;
+        release.type = "button";
+        release.disabled = !board.canClaim || Boolean(pendingClaimAction);
+        release.addEventListener("click", () => {
+          pendingClaimAction = "release";
+          vscode.postMessage({ type: "claimRelease", claimId: claim.id });
+          renderBoard();
+        });
+        card.appendChild(release);
+      }
+      list.appendChild(card);
+    }
+    renderPreflight();
+    restoreBoardFocus(focused);
+  }
+
+  claimTask.addEventListener("input", renderPreflight);
+  claimPaths.addEventListener("input", renderPreflight);
+  claimGoal.addEventListener("change", () => {
+    if (!claimTask.value.trim()) claimTask.value = snapshot.activeGoals.find(g => g.id === claimGoal.value)?.text.slice(0, 240) || "";
+    renderPreflight();
+  });
+  claimForm.addEventListener("submit", event => {
+    event.preventDefault();
+    if (!snapshot?.board.canClaim || pendingClaimAction) return;
+    const paths = enteredPaths();
+    if (paths.length > 8 || paths.some(p => p.length > 240)) { claimFeedback.textContent = "Choose up to eight paths, each at most 240 characters."; return; }
+    if (paths.length && snapshot.workspace.state === "offline") { claimFeedback.textContent = "Host a shared workspace first, or leave the file list empty."; return; }
+    pendingClaimAction = "create";
+    submittedTask = claimTask.value;
+    claimFeedback.textContent = "Waiting for the room to confirm…";
+    vscode.postMessage({ type: "claimCreate", task: claimTask.value.trim(), paths,
+      ...(claimAgent.value ? { agentId: claimAgent.value } : {}), ...(claimGoal.value ? { goalId: claimGoal.value } : {}) });
+    renderBoard();
+  });
 
   function statusLabel(agent) {
     const phase = agent.activity?.phase || agent.state;
@@ -289,6 +437,38 @@
     }
     grid.appendChild(task);
 
+    if (agent.proposal) {
+      const proposal = detailSection("Proposed change", "proposal-card");
+      const status = element("p", "proposal-status", "Temporary proposal · not applied");
+      status.title = "Only an approved write followed by durable Work can confirm this change";
+      proposal.append(status, element("code", "proposal-path", agent.proposal.path));
+      const patch = element("pre", "proposal-patch", agent.proposal.patch);
+      patch.tabIndex = 0;
+      patch.setAttribute("aria-label", `Temporary proposed diff for ${agent.proposal.path}`);
+      proposal.appendChild(patch);
+      if (agent.proposalOpenable) {
+        const open = element("button", "proposal-open", "Open proposed patch");
+        open.type = "button";
+        open.title = "Open a read-only diff document; this does not apply the proposal";
+        open.addEventListener("click", () => {
+          vscode.postMessage({ type: "openAgentProposal", agentId: agent.agentId });
+        });
+        proposal.appendChild(open);
+      } else {
+        proposal.appendChild(element(
+          "p",
+          "detail-note",
+          "The shared workspace is offline, so this patch cannot be mapped to a current document."
+        ));
+      }
+      proposal.appendChild(element(
+        "p",
+        "detail-note",
+        "A streamed proposal never writes a file. Approved writes reconcile into durable Work below."
+      ));
+      grid.appendChild(proposal);
+    }
+
     const intent = detailSection("Goals and handoffs", "intent-card");
     intent.appendChild(listOrEmpty(agent.handoffs, (handoff) => {
       const item = element("li", "handoff-item");
@@ -365,6 +545,65 @@
     detailEl.appendChild(grid);
   }
 
+  const brainSearch = document.getElementById("brainSearch");
+  const brainFilter = document.getElementById("brainFilter");
+  brainSearch?.addEventListener("input", () => renderBrain());
+  brainFilter?.addEventListener("change", () => renderBrain());
+  function sharedAction(label, action, id, disabled = false) {
+    const button = element("button", "context-action", label); button.type = "button"; button.disabled = disabled; button.dataset.brainKey = `${action}:${id || "new"}`;
+    button.addEventListener("click", () => vscode.postMessage({ type: "collaborationAction", action, ...(id ? { id } : {}) })); return button;
+  }
+  function renderBrain() {
+    const list = document.getElementById("brainList"); if (!list) return;
+    const focusedKey = document.activeElement?.dataset?.brainKey;
+    const canAct = snapshot.collaborationSupported !== false && snapshot.connection === "online" && ["owner", "member"].includes(snapshot.you?.role);
+    const actions = document.getElementById("brainActions"); actions.replaceChildren();
+    for (const [label, action] of [["New plan", "plan"], ["New task", "task"], ["Remember", "memory"], ["Continue in Amoeba ↗", "export"]]) actions.appendChild(sharedAction(label, action, undefined, action === "export" ? !snapshot.room : !canAct));
+    list.replaceChildren(); const search = (brainSearch.value || "").toLowerCase(); const filter = brainFilter.value;
+    const records = (snapshot.context || []).filter(item => {
+      const retired = ["archived", "superseded"].includes(item.status);
+      if (filter === "retired" ? !retired : retired) return false;
+      if (!["all", "retired"].includes(filter) && (filter === "proposed" ? item.status !== "proposed" : (item.collaboration?.type || "memory") !== filter)) return false;
+      return [item.title, item.body, item.authorHandle, item.collaboration?.assigneeHandle, ...item.tags].join(" ").toLowerCase().includes(search);
+    });
+    for (const item of records) {
+      const r = item.collaboration; const card = element("article", "brain-card");
+      card.append(element("span", "eyebrow", `${r?.type || item.kind} · ${item.status}${r && ["task", "plan"].includes(r.type) ? ` · ${r.progress}` : ""}`), element("h3", "", item.title), element("p", "brain-body", item.body));
+      card.appendChild(element("p", "detail-meta", `By @${item.authorHandle} · v${item.version}${r?.assigneeHandle ? ` · Assigned to @${r.assigneeHandle}` : ""}`));
+      if (r?.replyTo) card.appendChild(element("p", "detail-meta", `Reply to: ${(snapshot.context || []).find(c => c.id === r.replyTo)?.title || r.replyTo}`));
+      if (r?.anchor) card.appendChild(element("p", "detail-note", r.anchor.workspaceHost === snapshot.workspace.hostHandle ? "Anchor content is verified when opened." : "Anchor host must match before opening; content will be verified."));
+      if (r?.goalId) card.appendChild(element("p", "detail-meta", `Goal: ${snapshot.goals.find(g => g.id === r.goalId)?.text || r.goalId}`));
+      if (r?.claimId) { const claim = snapshot.board.claims.find(c => c.id === r.claimId); card.appendChild(element("p", "detail-meta", claim ? `Work claim: ${claim.task}` : "Linked work claim expired or was released; this record remains saved.")); }
+      if (r?.steps?.length) { const steps = element("ol", "plan-steps"); for (const step of r.steps) steps.appendChild(element("li", "", `${step.status === "done" ? "✓" : step.status === "doing" ? "●" : "○"} ${step.text}${step.assigneeHandle ? ` (@${step.assigneeHandle})` : ""}${step.dependsOn.length ? ` — after ${step.dependsOn.join(", ")}` : ""}`)); card.appendChild(steps); }
+      const buttons = element("div", "brain-card-actions");
+      if (r?.anchor) buttons.appendChild(sharedAction(`${r.anchor.path}:${r.anchor.startLine}–${r.anchor.endLine}`, "open", item.id));
+      if (r) buttons.appendChild(sharedAction("Manage / reply", "edit", item.id, !canAct));
+      if (canAct && item.status === "proposed") { const accept = element("button", "context-action", "Accept memory"); accept.dataset.brainKey = `accept:${item.id}`; accept.addEventListener("click", () => vscode.postMessage({type:"contextStatus",id:item.id,expectedVersion:item.version,status:"accepted"}));buttons.appendChild(accept); }
+      if (canAct && ["accepted", "proposed"].includes(item.status) && (item.authorHandle === snapshot.you?.handle || snapshot.you?.role === "owner")) { const archive = element("button", "context-action", "Archive"); archive.dataset.brainKey = `archive:${item.id}`; archive.addEventListener("click", () => vscode.postMessage({type:"contextStatus",id:item.id,expectedVersion:item.version,status:"archived"}));buttons.appendChild(archive); }
+      card.appendChild(buttons); list.appendChild(card);
+    }
+    if (!records.length) list.appendChild(element("p", "detail-note", "No matching records. Create a plan or memory here, or select shared code and use Add Shared Code Comment in the editor menu."));
+    const recovery = document.getElementById("handoffRecovery"); recovery.replaceChildren();
+    for (const h of (snapshot.recoveryHandoffs || []).filter(h => ["pending", "assigned", "claimed", "started", "failed", "outcomeUnknown", "expired"].includes(h.status))) {
+      const card = element("article", "brain-card"); card.append(element("strong", "", `${h.status}: ${h.task}`), element("p", "detail-meta", `@${h.sourceOwnerHandle} → @${h.targetHandle}`));
+      if (h.status === "outcomeUnknown") card.appendChild(element("p", "detail-note", "Execution may already have happened. Review shared files and Work evidence before explicitly retrying; retry creates a new attempt."));
+      if (h.outcomeDetail) card.appendChild(element("p", "brain-body", h.outcomeDetail));
+      const recipient = h.targetHandle === snapshot.you?.handle;
+      if (recipient && canAct && ["pending", "failed", "outcomeUnknown"].includes(h.status)) {
+        const button = element("button", "context-action", h.status === "pending" ? "Accept with my agent…" : "Review and retry with my agent…");
+        button.dataset.brainKey = `handoff:${h.id}`;
+        button.addEventListener("click", () => vscode.postMessage({type:"handoffAction",action:h.status === "pending" ? "accept" : "retry",id:h.id,expectedVersion:h.version})); card.appendChild(button);
+      }
+      recovery.appendChild(card);
+    }
+    if (!recovery.children.length) recovery.appendChild(element("p", "detail-note", "No handoff needs recovery. Durable assignments and outcomes are restored by the relay on reconnect."));
+    if (focusedKey) {
+      const replacement = [...document.querySelectorAll("[data-brain-key]")].find(node => node.dataset.brainKey === focusedKey);
+      if (replacement && !replacement.disabled) replacement.focus({preventScroll:true});
+      else brainSearch.focus({preventScroll:true});
+    }
+  }
+
   function applySnapshot(next) {
     const followed = next.agents.find((agent) => agent.agentId === followedAgentId);
     if (followedAgentId && !followed) {
@@ -377,12 +616,21 @@
     }
     snapshot = next;
     renderOverview();
+    renderBoard();
+    renderBrain();
     renderFilters();
     renderAgents();
   }
 
   window.addEventListener("message", (event) => {
     const message = event.data;
+    if (message?.type === "claimResult") {
+      if (message.ok && pendingClaimAction === "create" && submittedTask === claimTask.value) { claimTask.value = ""; claimPaths.value = ""; claimGoal.value = ""; }
+      pendingClaimAction = undefined;
+      claimFeedback.textContent = message.message;
+      if (snapshot) renderBoard();
+      return;
+    }
     if (!message || message.type !== "panelSnapshot" || !Array.isArray(message.agents)) return;
     applySnapshot(message);
   });

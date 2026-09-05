@@ -16,7 +16,9 @@
 import type { TurnUsage } from "@ripieno/protocol";
 import {
   boundSummary,
+  boundedProposalPatch,
   phaseForToolKind,
+  replacementProposalPatch,
   safeLine,
   safePath,
   summarisePhase,
@@ -37,6 +39,8 @@ export interface ProviderEventAdapter {
   readonly recognised: boolean;
   /** A provider session to resume, when the stream disclosed one. */
   readonly sessionId?: string;
+  /** Fixed diagnostic for the owner; never a room event or provider payload. */
+  readonly failure?: string;
 }
 
 /**
@@ -55,6 +59,7 @@ abstract class JsonLineAdapter implements ProviderEventAdapter {
   protected buffer = "";
   recognised = false;
   sessionId: string | undefined;
+  failure: string | undefined;
 
   constructor(protected readonly cwd?: string) {}
 
@@ -193,6 +198,52 @@ function locationFrom(
   return { path, line, endLine };
 }
 
+/**
+ * Extract review material only from known edit-tool arguments. No file is read
+ * to fill gaps, and tool results are deliberately excluded because they arrive
+ * after the provider may already have applied the change.
+ */
+function proposalFromTool(
+  name: string,
+  input: Record<string, unknown> | undefined,
+  cwd: string | undefined
+): Extract<RunnerEvent, { type: "proposal" }> | undefined {
+  if (!input) return undefined;
+  const path = locationFrom(input, cwd).path;
+  if (!path) return undefined;
+  const editNames = new Set([
+    "Edit",
+    "mcp__workspace__workspace_edit_file",
+  ]);
+  const writeNames = new Set([
+    "Write",
+    "mcp__workspace__workspace_write_file",
+  ]);
+  let patch: string | undefined;
+  if (editNames.has(name)) {
+    patch = replacementProposalPatch(
+      path,
+      input.old_string ?? input.old_text,
+      input.new_string ?? input.new_text
+    );
+  } else if (writeNames.has(name)) {
+    patch = replacementProposalPatch(path, "", input.content);
+  } else if (name === "MultiEdit" && Array.isArray(input.edits)) {
+    const hunks = input.edits
+      .map(record)
+      .map((edit) => edit && replacementProposalPatch(path, edit.old_string, edit.new_string))
+      .filter((value): value is string => Boolean(value));
+    patch = boundedProposalPatch(hunks.join("\n"));
+  }
+  if (!patch) return undefined;
+  return {
+    type: "proposal",
+    path,
+    patch,
+    ...(isSharedWorkspaceTool(name) ? { locationScope: "shared" as const } : {}),
+  };
+}
+
 export class ClaudeStreamJsonAdapter extends JsonLineAdapter {
   private draftResponded = false;
 
@@ -235,6 +286,9 @@ export class ClaudeStreamJsonAdapter extends JsonLineAdapter {
     if (type === "assistant") {
       this.recognised = true;
       const message = record(frame.message);
+      const internal = Boolean(
+        text(frame.parent_tool_use_id) || text(message?.parent_tool_use_id)
+      );
       const content = Array.isArray(message?.content) ? message?.content : [];
       for (const raw of content as unknown[]) {
         const block = record(raw);
@@ -246,7 +300,8 @@ export class ClaudeStreamJsonAdapter extends JsonLineAdapter {
         } else if (kind === "tool_use") {
           const name = text(block?.name) ?? "";
           const toolKind = toolKindFor(name);
-          const where = locationFrom(record(block?.input), this.cwd);
+          const input = record(block?.input);
+          const where = locationFrom(input, this.cwd);
           events.push({ type: "phase", phase: phaseForToolKind(toolKind) });
           events.push(toolEvent(toolKind, name, where.path));
           if (where.path) {
@@ -257,6 +312,13 @@ export class ClaudeStreamJsonAdapter extends JsonLineAdapter {
               endLine: where.endLine,
               ...(isSharedWorkspaceTool(name) ? { locationScope: "shared" as const } : {}),
             });
+          }
+          // Task sub-agent tool frames are internal work. They may establish a
+          // coarse phase, but their source text must never become room review
+          // material owned by the parent agent.
+          if (!internal) {
+            const proposal = proposalFromTool(name, input, this.cwd);
+            if (proposal) events.push(proposal);
           }
         }
       }
@@ -270,6 +332,10 @@ export class ClaudeStreamJsonAdapter extends JsonLineAdapter {
     }
     if (type === "result") {
       this.recognised = true;
+      if (frame.is_error === true || text(frame.subtype)?.startsWith("error")) {
+        this.failure = "Claude Code reported a failed turn. Check the provider account and retry.";
+        return [];
+      }
       const session = text(frame.session_id);
       if (session) this.sessionId = session;
       const usageFrame = record(frame.usage);
@@ -294,11 +360,9 @@ export class ClaudeStreamJsonAdapter extends JsonLineAdapter {
 /**
  * Codex's JSONL, in both of the shapes its releases have used.
  *
- * NOT verified against a running binary: `codex` is not installed here, so this
- * is written to the documented event schema and to the older `{id, msg}` form
- * that earlier releases emit. It is deliberately inert on anything else — an
- * unrecognised stream produces no events, and `CliRunner` then keeps the plain
- * stdout reply and coarse presence it had before.
+ * Thread, command, assistant and usage events verified with codex-cli 0.153.1
+ * in a disposable read-only workspace. File changes and the older `{id,msg}`
+ * form have synthetic coverage. Completed changes are never review proposals.
  */
 export class CodexJsonlAdapter extends JsonLineAdapter {
   private reply = "";
@@ -306,18 +370,14 @@ export class CodexJsonlAdapter extends JsonLineAdapter {
   private finished = false;
 
   /**
-   * Finish a recognised stream that stopped without saying so.
-   *
-   * A turn that ends without its terminal frame — a kill, a crash, an older
-   * release that does not emit one — must still hand back the reply it did
-   * produce. Otherwise the runner has a stream it understood and no text, and
-   * the honest fallback would be posting raw JSONL into the room.
+   * A lost terminal frame cannot establish success: the last assistant message
+   * can be pre-tool commentary, as the captured CLI stream demonstrates.
    */
   end(): RunnerEvent[] {
     const events = super.end();
     if (this.recognised && !this.finished) {
       this.finished = true;
-      events.push({ type: "complete", text: this.reply.trim(), usage: this.usage });
+      this.failure = "Codex stopped before confirming the turn completed. Retry the turn.";
     }
     return events;
   }
@@ -339,7 +399,19 @@ export class CodexJsonlAdapter extends JsonLineAdapter {
       if (id) this.sessionId = id;
       return [{ type: "phase", phase: "thinking" }];
     }
-    if (type === "turn.completed" || type === "turn.failed") {
+    if (type === "error") {
+      // Codex also emits this while retrying. The terminal event decides the
+      // outcome; the raw diagnostic must never be mistaken for a chat reply.
+      this.recognised = true;
+      return [];
+    }
+    if (type === "turn.failed") {
+      this.recognised = true;
+      this.finished = true;
+      this.failure = "Codex reported a failed turn. Check the provider account and retry.";
+      return [];
+    }
+    if (type === "turn.completed") {
       this.recognised = true;
       const usage = record(frame.usage);
       if (usage) {
@@ -370,7 +442,7 @@ export class CodexJsonlAdapter extends JsonLineAdapter {
       case "command_execution":
         return [{ type: "phase", phase: "running" }, toolEvent("run", "shell")];
       case "file_change":
-        return this.fileChange(item);
+        return this.fileChange(item, complete);
       case "mcp_tool_call":
         return [toolEvent("other", text(item.tool) ?? text(item.name))];
       case "web_search":
@@ -382,7 +454,7 @@ export class CodexJsonlAdapter extends JsonLineAdapter {
     }
   }
 
-  private fileChange(item: Record<string, unknown>): RunnerEvent[] {
+  private fileChange(item: Record<string, unknown>, complete: boolean): RunnerEvent[] {
     const changes = Array.isArray(item.changes) ? (item.changes as unknown[]) : [];
     const first = record(changes[0]);
     const path = safePath(first?.path, this.cwd);
@@ -391,6 +463,13 @@ export class CodexJsonlAdapter extends JsonLineAdapter {
       toolEvent("edit", "apply_patch", path),
     ];
     if (path) events.push({ type: "location", path });
+    // A completed file_change is evidence that Codex says it changed a file,
+    // not a pre-apply proposal. Only started/updated items with an explicit
+    // patch can feed the temporary review surface.
+    const rawPatch =
+      text(first?.diff) ?? text(first?.patch) ?? text(first?.unified_diff);
+    const patch = complete ? undefined : boundedProposalPatch(rawPatch);
+    if (path && patch) events.push({ type: "proposal", path, patch });
     return events;
   }
 
@@ -416,12 +495,19 @@ export class CodexJsonlAdapter extends JsonLineAdapter {
         return [{ type: "phase", phase: "thinking" }];
       case "patch_apply_begin": {
         const changes = record(msg.changes);
-        const path = changes ? safePath(Object.keys(changes)[0], this.cwd) : undefined;
+        const rawPath = changes ? Object.keys(changes)[0] : undefined;
+        const path = safePath(rawPath, this.cwd);
         const events: RunnerEvent[] = [
           { type: "phase", phase: "editing" },
           toolEvent("edit", "apply_patch", path),
         ];
         if (path) events.push({ type: "location", path });
+        const change = changes && rawPath ? record(changes[rawPath]) : undefined;
+        const update = record(change?.update);
+        const patch = boundedProposalPatch(
+          update?.unified_diff ?? change?.unified_diff ?? change?.diff
+        );
+        if (path && patch) events.push({ type: "proposal", path, patch });
         return events;
       }
       case "token_count": {
@@ -442,6 +528,10 @@ export class CodexJsonlAdapter extends JsonLineAdapter {
         this.finished = true;
         return [{ type: "complete", text: this.reply.trim(), usage: this.usage }];
       }
+      case "error":
+        this.finished = true;
+        this.failure = "Codex reported a failed turn. Check the provider account and retry.";
+        return [];
       default:
         return [];
     }

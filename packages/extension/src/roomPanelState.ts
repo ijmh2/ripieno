@@ -1,8 +1,10 @@
 import type {
+  ContextItem,
   ActionEntry,
   AgentActivity,
   AgentCapability,
   AgentPresence,
+  AgentProposal,
   AgentUsage,
   Goal,
   HandoffOffer,
@@ -11,6 +13,8 @@ import type {
   RosterEntry,
 } from "@ripieno/protocol";
 import type { ConnectionState } from "@ripieno/relay-client";
+import type { WorkClaim } from "@ripieno/protocol";
+import { buildTeamBoard } from "./teamBoard";
 
 /**
  * Configuration visible only inside the owning member's extension host.
@@ -33,12 +37,19 @@ export interface LocalAgentPanelDetail {
 }
 
 export interface RoomPanelInput {
+  collaborationSupported?: boolean;
+  context?: ContextItem[];
+  workClaims?: WorkClaim[];
+  claimsSupported?: boolean;
+  pendingApprovalCount?: number;
   room?: string;
   mode?: RoomMode;
   you?: RosterEntry;
   roster: RosterEntry[];
   transcriptCount: number;
   actions: ActionEntry[];
+  /** Relay-owned, ephemeral review material. */
+  proposals: AgentProposal[];
   goals: Goal[];
   contextCount: number;
   handoffs: HandoffOffer[];
@@ -63,6 +74,9 @@ export interface RoomPanelAgent {
   capability?: AgentCapability;
   state?: AgentActivity;
   activity?: AgentPresence;
+  proposal?: AgentProposal;
+  /** The proposal path can be mapped through Phase 5's shared tree. */
+  proposalOpenable: boolean;
   /** The extension host can map this exact coordinate to a document. */
   locationOpenable: boolean;
   statusGroup: "active" | "idle" | "unknown";
@@ -77,6 +91,11 @@ export interface RoomPanelAgent {
 }
 
 export interface RoomPanelSnapshot {
+  collaborationSupported: boolean;
+  goals: Goal[];
+  context: ContextItem[];
+  recoveryHandoffs: HandoffOffer[];
+  board: ReturnType<typeof buildTeamBoard> & { canClaim: boolean; supported: boolean; pendingApprovalCount: number };
   type: "panelSnapshot";
   room?: string;
   mode?: RoomMode;
@@ -107,6 +126,7 @@ export function buildRoomPanelSnapshot(input: RoomPanelInput): RoomPanelSnapshot
   const members = input.roster.filter((entry) => entry.kind !== "workspace");
   const activeGoals = input.goals.filter((goal) => goal.status === "active");
   const usageByAgent = new Map(input.usage.map((entry) => [entry.agentId, entry]));
+  const proposalByAgent = new Map(input.proposals.map((entry) => [entry.agentId, entry]));
 
   const agents = members.flatMap((member) =>
     (member.agents ?? []).map((agent): RoomPanelAgent => {
@@ -122,22 +142,24 @@ export function buildRoomPanelSnapshot(input: RoomPanelInput): RoomPanelSnapshot
         .slice(-6)
         .reverse();
       const liveHandoff = relevantHandoffs.find((handoff) => ACTIVE_HANDOFFS.has(handoff.status));
-      const phase = agent.activity?.phase ?? agent.state;
+      const phase = input.connection === "online" ? agent.activity?.phase ?? agent.state : undefined;
       const currentTask =
-        agent.activity?.summary ??
+        (input.connection !== "online" ? "Reconnect to see current activity" : undefined) ?? agent.activity?.summary ??
         liveHandoff?.task ??
         (phase && phase !== "idle"
           ? `${phase.replaceAll("-", " ")} — no task summary reported`
           : "No current task reported");
 
       const workingSet: string[] = [];
-      if (agent.activity?.path) workingSet.push(agent.activity.path);
+      if (input.connection === "online" && agent.activity?.path) workingSet.push(agent.activity.path);
       for (const action of recentActions) {
         if (!workingSet.includes(action.target)) workingSet.push(action.target);
         if (workingSet.length >= 6) break;
       }
 
       const privateLocal = localDetailFor(input.you, agent.id, agent.owner, input.localAgents);
+      const proposal = input.connection === "online" ? proposalByAgent.get(agent.id) : undefined;
+      if (proposal?.path && !workingSet.includes(proposal.path)) workingSet.unshift(proposal.path);
       return {
         agentId: agent.id,
         label: agent.label,
@@ -146,9 +168,15 @@ export function buildRoomPanelSnapshot(input: RoomPanelInput): RoomPanelSnapshot
         ownerColor: member.color,
         ownerPresent: member.present,
         capability: agent.capability,
-        state: agent.state,
-        activity: agent.activity ? { ...agent.activity } : undefined,
+        state: input.connection === "online" ? agent.state : undefined,
+        activity: input.connection === "online" && agent.activity ? { ...agent.activity } : undefined,
+        proposal: proposal ? { ...proposal } : undefined,
+        proposalOpenable:
+          Boolean(proposal?.path) &&
+          proposal?.locationScope === "shared" &&
+          Boolean(input.workspaceHost),
         locationOpenable:
+          input.connection === "online" &&
           Boolean(agent.activity?.path) &&
           (agent.activity?.locationScope === "shared"
             ? Boolean(input.workspaceHost)
@@ -168,6 +196,16 @@ export function buildRoomPanelSnapshot(input: RoomPanelInput): RoomPanelSnapshot
 
   return {
     type: "panelSnapshot",
+    collaborationSupported: input.collaborationSupported === true,
+    goals: structuredClone(input.goals),
+    context: structuredClone(input.context ?? []),
+    recoveryHandoffs: input.handoffs.map(h => structuredClone(h)),
+    board: {
+      ...buildTeamBoard({ claims: input.workClaims ?? [], roster: input.roster, proposals: input.proposals, workspaceHost: input.workspaceHost, online: input.connection === "online" }),
+      supported: input.claimsSupported === true,
+      canClaim: input.claimsSupported === true && input.connection === "online" && (input.you?.role === "owner" || input.you?.role === "member"),
+      pendingApprovalCount: input.pendingApprovalCount ?? 0,
+    },
     room: input.room,
     mode: input.mode,
     you: input.you

@@ -85,6 +85,19 @@ export const MAX_AGENT_DRAFT_FRAMES_PER_SECOND = 20;
 export const MAX_ROOM_DRAFT_FRAMES_PER_SECOND = 80;
 export const AGENT_DRAFT_TTL_MS = 45_000;
 
+/**
+ * Live proposed patches are review material, never instructions to mutate a file.
+ *
+ * One exact agent may expose one proposal at a time. The relay also applies a
+ * room-wide byte cap, so a room with many attached agents cannot turn an
+ * ephemeral review surface into unbounded shared storage.
+ */
+export const MAX_AGENT_PROPOSAL_PATCH_BYTES = 32_000;
+export const MAX_ROOM_PROPOSAL_PATCH_BYTES = 128_000;
+export const MAX_AGENT_PROPOSALS_PER_SECOND = 4;
+export const MAX_ROOM_PROPOSALS_PER_SECOND = 20;
+export const AGENT_PROPOSAL_TTL_MS = 45_000;
+
 /** The coordinate system an exact presence path belongs to. */
 export type PresenceLocationScope = "shared" | "private";
 
@@ -264,7 +277,35 @@ export type ContextStatus = "proposed" | "accepted" | "superseded" | "archived";
  * People create accepted context. Agent-created context starts proposed so a
  * model cannot silently turn an assertion into a durable room instruction.
  */
+/** Shared-tree anchor: exact file digest prevents stale lines from masquerading as current code. */
+export interface CodeAnchor {
+  path: string;
+  workspaceHost: string;
+  startLine: number;
+  endLine: number;
+  sha256: string;
+}
+export interface CollaborationStep {
+  assigneeHandle?: string;
+  id: string;
+  text: string;
+  status: "todo" | "doing" | "done";
+  dependsOn: string[];
+}
+/** Human-owned work and memory, using the durable context version/audit lifecycle. */
+export interface CollaborationRecord {
+  replyTo?: string;
+  type: "comment" | "task" | "plan" | "memory";
+  anchor?: CodeAnchor;
+  assigneeHandle?: string;
+  goalId?: string;
+  claimId?: string;
+  progress: "todo" | "doing" | "done";
+  steps: CollaborationStep[];
+}
+
 export interface ContextItem {
+  collaboration?: CollaborationRecord;
   id: string;
   kind: ContextKind;
   title: string;
@@ -662,6 +703,28 @@ export interface AgentDraftCancelMsg {
   t: "agentDraftCancel";
 }
 
+/**
+ * A patch the authenticated agent's provider exposed before a write completed.
+ *
+ * There is deliberately no identity or proposal id. Proposals may describe
+ * only the room's current shared tree: private source text needs a stronger
+ * consent boundary than Phase 5's path-only private-presence opt-in.
+ */
+export interface AgentProposalMsg {
+  t: "agentProposal";
+  path: string;
+  locationScope: "shared";
+  /** Unified or unified-like review text. It is never applied by this message. */
+  patch: string;
+  /** Positive, monotonically increasing for this agent connection. */
+  sequence: number;
+}
+
+/** Withdraw this authenticated agent's current incomplete proposal. */
+export interface AgentProposalCancelMsg {
+  t: "agentProposalCancel";
+}
+
 /** The room's running totals, per agent. */
 export interface UsageMsg {
   t: "usage";
@@ -698,6 +761,7 @@ export interface GoalTransitionMsg {
 }
 
 export interface ContextCreateMsg {
+  collaboration?: CollaborationRecord;
   t: "contextCreate";
   requestId: string;
   kind: ContextKind;
@@ -712,6 +776,7 @@ export interface ContextCreateMsg {
  * an unseen text change.
  */
 export interface ContextUpdateMsg {
+  collaboration?: CollaborationRecord;
   t: "contextUpdate";
   requestId: string;
   contextId: string;
@@ -769,6 +834,9 @@ export interface HandoffOutcomeMsg {
 }
 
 export type ClientMsg =
+  | WorkClaimCreateMsg
+  | WorkClaimReleaseMsg
+  | WorkClaimRenewMsg
   | JoinMsg
   | SayMsg
   | ToolResultMsg
@@ -782,6 +850,8 @@ export type ClientMsg =
   | AgentActivityMsg
   | AgentDraftMsg
   | AgentDraftCancelMsg
+  | AgentProposalMsg
+  | AgentProposalCancelMsg
   | WorkspaceChangedMsg
   | GoalCreateMsg
   | GoalTransitionMsg
@@ -805,6 +875,7 @@ export type ClientMsg =
 export type RoomMode = "hosted" | "byo";
 
 export interface JoinedMsg {
+  collaborationVersion?: 1;
   t: "joined";
   room: string;
   mode: RoomMode;
@@ -813,6 +884,9 @@ export interface JoinedMsg {
    * Agents pointed at "the room" act there rather than on their owner's machine.
    */
   workspaceHost?: string;
+  /** Ephemeral human-owned work intentions; never restored after restart. */
+  workClaims?: WorkClaim[];
+  workClaimRevision?: number;
   /** Work already done in this room, so a joiner is not starting blind. */
   actions?: ActionEntry[];
   /** Per-agent spend so far, so a joiner sees the room's cost immediately. */
@@ -843,6 +917,8 @@ export interface JoinedMsg {
   transcript: TranscriptEntry[];
   /** Current reply previews only. Never persisted or restored after restart. */
   drafts?: AgentDraft[];
+  /** Current proposed patches only. Never persisted or restored after restart. */
+  proposals?: AgentProposal[];
 }
 
 export interface RosterMsg {
@@ -896,6 +972,46 @@ export interface AgentDeltaMsg {
 export interface AgentDeltaCancelMsg {
   t: "agentDeltaCancel";
   entryId: string;
+}
+
+/** One relay-owned, non-durable proposed patch. */
+export interface AgentProposal {
+  /** Relay-minted; clients cannot choose a row to replace or resolve. */
+  id: string;
+  /** Exact identity derived from the authenticated agent connection. */
+  agentId: string;
+  agentLabel: string;
+  authorHandle: string;
+  path: string;
+  locationScope: "shared";
+  patch: string;
+  updatedAt: number;
+}
+
+/** A new or replacement proposal for one exact agent. */
+export interface AgentProposalUpdateMsg {
+  t: "agentProposalUpdate";
+  proposal: AgentProposal;
+}
+
+/**
+ * A proposal stopped being current. Completed Work, not this frame, remains
+ * the durable evidence that a write happened.
+ */
+export interface AgentProposalResolvedMsg {
+  t: "agentProposalResolved";
+  proposalId: string;
+  agentId: string;
+  reason:
+    | "replaced"
+    | "cancelled"
+    | "expired"
+    | "workspace-changed"
+    | "work-completed"
+    | "work-failed"
+    | "authority-ended";
+  /** Present only when a durable Work entry caused reconciliation. */
+  actionId?: string;
 }
 
 /**
@@ -1067,11 +1183,15 @@ export interface HandoffReleasedMsg {
 }
 
 export type ServerMsg =
+  | WorkClaimStateMsg
+  | WorkClaimResultMsg
   | JoinedMsg
   | RosterMsg
   | EntryMsg
   | AgentDeltaMsg
   | AgentDeltaCancelMsg
+  | AgentProposalUpdateMsg
+  | AgentProposalResolvedMsg
   | ToolCallMsg
   | RemoteToolRequestMsg
   | RemoteToolReplyMsg
@@ -1089,6 +1209,55 @@ export type ServerMsg =
   | HandoffReleasedMsg
   | StatusMsg
   | ErrorMsg;
+
+/** Claims coordinate people; they are advisory and never authorize a write. */
+export const WORK_CLAIM_TTL_MS = 90_000;
+export const MAX_WORK_CLAIMS = 50;
+export const MAX_WORK_CLAIMS_PER_MEMBER = 5;
+export const MAX_WORK_CLAIM_PATHS = 8;
+export const MAX_WORK_CLAIM_TASK_CHARS = 240;
+export interface WorkClaim {
+  id: string;
+  ownerHandle: string;
+  ownerName: string;
+  task: string;
+  /** Explicit shared-workspace paths, not inferred private file names. */
+  paths: string[];
+  workspaceHost?: string;
+  agentId?: string;
+  goalId?: string;
+  createdAt: number;
+  expiresAt: number;
+}
+export interface WorkClaimCreateMsg {
+  t: "workClaimCreate";
+  requestId: string;
+  task: string;
+  paths: string[];
+  agentId?: string;
+  goalId?: string;
+}
+export interface WorkClaimReleaseMsg {
+  t: "workClaimRelease";
+  requestId: string;
+  claimId: string;
+}
+export interface WorkClaimRenewMsg {
+  t: "workClaimRenew";
+  claimIds: string[];
+}
+export interface WorkClaimStateMsg {
+  t: "workClaims";
+  claims: WorkClaim[];
+  revision: number;
+}
+export interface WorkClaimResultMsg {
+  t: "workClaimResult";
+  requestId: string;
+  ok: boolean;
+  message?: string;
+  claimId?: string;
+}
 
 /* ------------------------------------------------------------------ */
 /* Shared helpers                                                      */

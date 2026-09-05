@@ -15,6 +15,7 @@ const {
   PROVIDERS,
   argsForAgentModel,
   argsForAgentPermission,
+  argsForProviderEvents,
 } = require("../dist/runners.js");
 
 const context = {
@@ -85,6 +86,7 @@ describe("a declared parser, and only a declared one", () => {
             item: { id: "1", type: "command_execution", command: "psql -U admin -W hunter2", exit_code: 0 },
           },
           { type: "item.completed", item: { id: "2", type: "agent_message", text: "Migrated." } },
+          { type: "turn.completed" },
         ]),
         "{prompt}",
       ],
@@ -117,8 +119,7 @@ describe("a declared parser, and only a declared one", () => {
   });
 
   test("a declared parser that does not recognise the output changes nothing", async () => {
-    // The presets declare Codex's format, but the shipped arguments do not turn
-    // its JSON mode on. That must be a no-op, not a broken agent.
+    // A member's custom arguments can still request plain output.
     const runner = new CliRunner({
       command: process.execPath,
       args: ["-e", "process.stdout.write('Plain prose, as before.')", "{prompt}"],
@@ -148,6 +149,7 @@ test("the recommended ChatGPT preset uses Codex non-interactively and sends room
   assert.equal(codex.command, "codex");
   assert.deepEqual(codex.args.slice(0, 2), ["exec", "--color"]);
   assert.ok(codex.args.includes("-"));
+  assert.ok(codex.args.includes("--json"));
   assert.ok(!codex.args.some((arg) => arg.includes("{prompt}")));
 });
 
@@ -203,6 +205,79 @@ describe("per-agent Codex permissions", () => {
     const gemini = ["-p", "{prompt}"];
     assert.deepEqual(argsForAgentPermission("gemini", gemini, "full"), gemini);
     assert.deepEqual(argsForAgentPermission("codex", base), base);
+  });
+});
+
+describe("Codex event defaults", () => {
+  test("saved stock arguments upgrade without changing model or permission flags", () => {
+    const old = ["exec", "--color", "never", "--skip-git-repo-check", "-"];
+    const upgraded = argsForProviderEvents("codex", old);
+    assert.deepEqual(upgraded, PROVIDERS.find((p) => p.id === "codex").args);
+    assert.equal(old.includes("--json"), false);
+    assert.deepEqual(argsForProviderEvents("codex", upgraded), upgraded);
+    const configured = argsForAgentModel("codex", argsForAgentPermission("codex", upgraded, "readOnly"), "chosen-model");
+    assert.ok(configured.includes("--json"));
+    assert.ok(configured.includes("read-only"));
+    assert.ok(configured.includes("chosen-model"));
+  });
+
+  test("custom commands and customised arguments remain unchanged", () => {
+    for (const args of [["exec", "{prompt}"], ["exec", "--profile", "mine", "-"], ["wrapper.js", "{prompt}"]]) {
+      assert.deepEqual(argsForProviderEvents("codex", args), args);
+    }
+    const stock = ["exec", "--color", "never", "--skip-git-repo-check", "-"];
+    assert.deepEqual(argsForProviderEvents("cli-custom", stock), stock);
+  });
+});
+
+describe("structured CLI turn outcomes", () => {
+  function runnerFor(frames, { exit = 0, extraArgs = [] } = {}) {
+    const output = typeof frames === "string" ? frames : frames.map(JSON.stringify).join("\n");
+    return new CliRunner({
+      command: process.execPath,
+      args: ["-e", `process.stdout.write(${JSON.stringify(output)}); process.exitCode=${exit}`, "--", ...extraArgs, "{prompt}"],
+      label: "Test Codex", timeoutMs: 5000, eventFormat: "codex-jsonl",
+    });
+  }
+
+  test("a reported failure rejects even when the process exits zero", async () => {
+    const runner = runnerFor([
+      { type: "item.completed", item: { type: "agent_message", text: "I will start." } },
+      { type: "turn.failed", error: { message: "PRIVATE ACCOUNT DETAIL" } },
+    ]);
+    await assert.rejects(runner.run(context, () => {}), /Codex reported a failed turn/);
+    assert.equal(runner.lastUsage(), undefined);
+  });
+
+  test("an interrupted stream rejects instead of posting the last interim message", async () => {
+    const runner = runnerFor([
+      { type: "thread.started", thread_id: "t" },
+      { type: "item.completed", item: { type: "agent_message", text: "I'll read sample.txt." } },
+    ]);
+    await assert.rejects(runner.run(context, () => {}), /before confirming/);
+  });
+
+  test("an explicitly requested JSON stream cannot fall back to unknown machine output", async () => {
+    const runner = runnerFor('{"future_event":{"private":"PRIVATE"}}', { extraArgs: ["--json"] });
+    await assert.rejects(runner.run(context, () => {}), /did not emit the expected JSON events/);
+  });
+
+  test("the real CLI capture is consumed correctly through a subprocess", async () => {
+    const raw = require("node:fs").readFileSync(path.join(__dirname, "fixtures/codex-0.153.1-readonly.jsonl"), "utf8");
+    const runner = runnerFor(raw, { extraArgs: ["--json"] });
+    assert.equal(await runner.run(context, () => {}), "Probe complete.");
+    assert.equal(runner.lastUsage().outputTokens, 48);
+  });
+
+  test("UTF-8 reply characters survive pipe boundaries", async () => {
+    const reply = "Amoeba 🦠 café";
+    const raw = [{ type: "item.completed", item: { type: "agent_message", text: reply } }, { type: "turn.completed" }].map(JSON.stringify).join("\n");
+    const runner = new CliRunner({
+      command: process.execPath,
+      args: ["-e", `const b=Buffer.from(${JSON.stringify(raw)});let i=0;function next(){if(i<b.length){process.stdout.write(b.subarray(i,i+1));i++;setTimeout(next,1)}}next()`, "{prompt}"],
+      label: "Unicode", timeoutMs: 5000, eventFormat: "codex-jsonl",
+    });
+    assert.equal(await runner.run(context, () => {}), reply);
   });
 });
 

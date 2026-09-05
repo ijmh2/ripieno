@@ -262,6 +262,34 @@ async function member(r, handle, displayName) {
   return { say: (text) => ws.send(JSON.stringify({ t: "say", text })), ws };
 }
 
+test("live work claims reach the real runner prompt and disappear after release", async () => {
+  const r = await room("claims-reach-runner");
+  const mira = await member(r, "mira", "Mira");
+  const sam = await member(r, "sam", "Sam");
+  const result = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("claim was not acknowledged")), 3000);
+    const listener = raw => {
+      const msg = JSON.parse(String(raw));
+      if (msg.t !== "workClaimResult") return;
+      clearTimeout(timer); sam.ws.off("message", listener); resolve(msg);
+    };
+    sam.ws.on("message", listener);
+  });
+  sam.ws.send(JSON.stringify({ t: "workClaimCreate", requestId: "runner-claim", task: "Sam is preparing authentication regression tests", paths: [] }));
+  const claimed = await result;
+  assert.equal(claimed.ok, true);
+  agent(r, { id: "coder", label: "Coder", handle: "mira", displayName: "Mira" });
+  await wait(350);
+  mira.say("Describe the current team work claims.");
+  await wait(3000);
+  assert.match((await r.prompts()).at(-1), /Sam is preparing authentication regression tests/);
+  sam.ws.send(JSON.stringify({ t: "workClaimRelease", requestId: "runner-release", claimId: claimed.claimId }));
+  await wait(300);
+  mira.say("What intentions are current now?");
+  await wait(3000);
+  assert.doesNotMatch((await r.prompts()).at(-1), /Sam is preparing authentication regression tests/);
+});
+
 describe("the agent is told who is in the room", () => {
   test("the roster reaches it, and stays true as the room changes", async () => {
     const r = await room("roster");
@@ -322,46 +350,70 @@ describe("the agent is told who is in the room", () => {
 });
 
 describe("provider failures stay with the owner", () => {
-  test("a billing or login error is not posted as the agent's chat reply", async () => {
-    const r = await room("provider-failure");
-    const states = [];
-    const host = new AgentHost({
-      id: "ivan:agent",
-      label: "Ivan's agent",
-      url: r.url,
-      room: r.code,
-      member: { handle: "ivan", displayName: "Ivan" },
-      providerId: "cli-custom",
-      command: process.execPath,
-      args: [FAILING_CLI, "{prompt}"],
-      approvals: { start: async () => ({ url: "", token: "" }) },
-      permissionServerPath: "unused",
-      workspaceServerPath: "unused",
-      // A real directory: a workspace agent now refuses to start without one.
-      cwd: __dirname,
-      onStateChange: (_id, state) => states.push(state),
-    });
-    host.attach();
-    cleanup.push(() => host.dispose());
+  for (const scenario of [
+    { label: "a billing or login error", providerId: "cli-custom", args: [FAILING_CLI, "{prompt}"] },
+    {
+      label: "a Codex terminal failure with a zero exit",
+      providerId: "codex",
+      args: ["-e", `process.stdout.write([
+        { type: "thread.started", thread_id: "failed" },
+        { type: "item.completed", item: { type: "agent_message", text: "I'll investigate." } },
+        { type: "turn.failed", error: { message: "PRIVATE ACCOUNT DETAILS" } }
+      ].map(JSON.stringify).join("\\n"))`, "{prompt}"],
+    },
+    {
+      label: "a Codex stream missing its terminal event",
+      providerId: "codex",
+      args: ["-e", `process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "I'll investigate." } }))`, "{prompt}"],
+    },
+  ]) {
+    test(`${scenario.label} is not posted as the agent's chat reply`, async () => {
+      const r = await room("provider-failure");
+      const states = [];
+      const host = new AgentHost({
+        id: "ivan:agent",
+        label: "Ivan's agent",
+        url: r.url,
+        room: r.code,
+        member: { handle: "ivan", displayName: "Ivan" },
+        providerId: scenario.providerId,
+        command: process.execPath,
+        args: scenario.args,
+        approvals: { start: async () => ({ url: "", token: "" }) },
+        permissionServerPath: "unused",
+        workspaceServerPath: "unused",
+        // A real directory: a workspace agent now refuses to start without one.
+        cwd: __dirname,
+        onStateChange: (_id, state) => states.push(state),
+      });
+      host.attach();
+      cleanup.push(() => host.dispose());
 
-    const ivan = await member(r, "ivan", "Ivan");
-    const entries = [];
-    ivan.ws.on("message", (raw) => {
-      const msg = JSON.parse(String(raw));
-      if (msg.t === "entry") entries.push(msg.entry);
-    });
-    await wait(300);
-    ivan.say("hello");
-    await wait(3_000);
+      const ivan = await member(r, "ivan", "Ivan");
+      const entries = [];
+      const rosters = [];
+      ivan.ws.on("message", (raw) => {
+        const msg = JSON.parse(String(raw));
+        if (msg.t === "entry") entries.push(msg.entry);
+        if (msg.t === "roster") rosters.push(msg.roster);
+      });
+      await wait(300);
+      ivan.say("hello");
+      await wait(3_000);
 
-    assert.equal(host.currentState, "error");
-    assert.ok(states.includes("error"));
-    assert.equal(
-      entries.some((entry) => entry.kind === "agent"),
-      false,
-      "local provider/account details must not be broadcast as conversation"
-    );
-  });
+      assert.equal(host.currentState, "error");
+      assert.ok(states.includes("error"));
+      assert.ok(rosters.some((members) => members.some((member) =>
+        member.agents?.some((agent) => agent.activity?.summary === "Turn failed; owner attention needed")
+      )), "the room sees a fixed attention status");
+      assert.equal(JSON.stringify(rosters).includes("PRIVATE ACCOUNT DETAILS"), false);
+      assert.equal(
+        entries.some((entry) => entry.kind === "agent"),
+        false,
+        "local provider/account details must not be broadcast as conversation"
+      );
+    });
+  }
 });
 
 describe("an agent does not answer a message that names nobody", () => {
@@ -743,9 +795,13 @@ describe("a provider's event stream reaches the room as presence", () => {
     await wait(300);
 
     const rosters = [];
+    const proposals = [];
+    const proposalResolutions = [];
     mira.ws.on("message", (raw) => {
       const message = JSON.parse(String(raw));
       if (message.t === "roster") rosters.push(message);
+      if (message.t === "agentProposalUpdate") proposals.push(message.proposal);
+      if (message.t === "agentProposalResolved") proposalResolutions.push(message);
     });
     // An exact path is only claimed where the room can map it, so this room
     // needs a shared workspace before one is honest.
@@ -785,6 +841,15 @@ describe("a provider's event stream reaches the room as presence", () => {
     const sequences = presences.map((presence) => presence.sequence).filter((n) => n !== undefined);
     assert.ok(sequences.length > 0, "presence should be sequenced");
     assert.deepEqual(sequences, [...sequences].sort((a, b) => a - b));
+
+    assert.equal(proposals.length, 1, "the real subprocess exposed one bounded proposed patch");
+    assert.equal(proposals[0].agentId, "mellery::mira:coder");
+    assert.equal(proposals[0].path, "packages/extension/src/runners.ts");
+    assert.match(proposals[0].patch, /-const mode = 'old'/);
+    assert.ok(
+      proposalResolutions.some((message) => message.proposalId === proposals[0].id),
+      "the final turn withdraws a proposal that did not reconcile through durable Work"
+    );
   });
 
   test("the reply comes from the event stream, not from the raw JSONL", async () => {
