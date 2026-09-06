@@ -107,15 +107,15 @@
       let tx=0,ty=0,near=0;
       if(pointer&&!paused){const dx=p.x-pointer.x,dy=p.y-pointer.y;const dist=Math.hypot(dx,dy);if(dist<95){near=1-dist/95;tx=(dx/(dist||1))*near*12;ty=(dy/(dist||1))*near*12;}}
       p.dx=paused?0:p.dx+(tx-p.dx)*.13;p.dy=paused?0:p.dy+(ty-p.dy)*.13;
-      ctx.beginPath();ctx.arc(p.x+p.dx,p.y+p.dy,near>0?1+near:0.7,0,Math.PI*2);ctx.fillStyle=near>0?`rgba(222,107,55,${.25+near*.4})`:'rgba(109,124,89,.20)';ctx.fill();
-      if(near>.55){ctx.beginPath();ctx.moveTo(p.x+p.dx,p.y+p.dy);ctx.lineTo(pointer.x,pointer.y);ctx.strokeStyle=`rgba(222,107,55,${near*.1})`;ctx.lineWidth=.65;ctx.stroke();}
+      ctx.beginPath();ctx.arc(p.x+p.dx,p.y+p.dy,near>0?1+near:0.7,0,Math.PI*2);ctx.fillStyle=near>0?`rgba(217,249,136,${.25+near*.4})`:'rgba(157,179,214,.20)';ctx.fill();
+      if(near>.55){ctx.beginPath();ctx.moveTo(p.x+p.dx,p.y+p.dy);ctx.lineTo(pointer.x,pointer.y);ctx.strokeStyle=`rgba(217,249,136,${near*.1})`;ctx.lineWidth=.65;ctx.stroke();}
     }
     links.forEach(([a,b])=>{
       const p=nodePoint(nodes[a]),q=nodePoint(nodes[b]); const active=nodes[a].id===selected||nodes[b].id===selected;
-      ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.lineWidth=active?1.15:.8;ctx.strokeStyle=active?'rgba(220,112,64,.46)':'rgba(116,131,99,.25)';ctx.setLineDash(a===0?[]:[3,6]);ctx.stroke();ctx.setLineDash([]);
+      ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.lineWidth=active?1.15:.8;ctx.strokeStyle=active?'rgba(217,249,136,.46)':'rgba(157,179,214,.25)';ctx.setLineDash(a===0?[]:[3,6]);ctx.stroke();ctx.setLineDash([]);
     });
     if(!paused){
-      for(let i=pulses.length-1;i>=0;i--){const pulse=pulses[i];pulse.p+=dt/1400;if(pulse.p>=1){pulses.splice(i,1);continue;}const a=nodePoint(nodes[pulse.a]),b=nodePoint(nodes[pulse.b]),x=a.x+(b.x-a.x)*pulse.p,y=a.y+(b.y-a.y)*pulse.p;ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fillStyle='#ed642b';ctx.fill();ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fillStyle='#ed642b15';ctx.fill();}
+      for(let i=pulses.length-1;i>=0;i--){const pulse=pulses[i];pulse.p+=dt/1400;if(pulse.p>=1){pulses.splice(i,1);continue;}const a=nodePoint(nodes[pulse.a]),b=nodePoint(nodes[pulse.b]),x=a.x+(b.x-a.x)*pulse.p,y=a.y+(b.y-a.y)*pulse.p;ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fillStyle='#d9f988';ctx.fill();ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fillStyle='#d9f98815';ctx.fill();}
       if(now-lastAutoPulse>3200 && now-lastInteraction>2200){lastAutoPulse=now;links.slice(0,5).forEach(([a,b])=>pulses.push({a,b,p:0}));}
     }
   }
@@ -129,20 +129,11 @@
   if('ResizeObserver' in window)new ResizeObserver(resize).observe(graph);else window.addEventListener('resize',resize);
   updateMotionLabel();resize();
 
-  const tabs=[...document.querySelectorAll('[data-demo]')];
-  function showDemo(id,focus=false){
-    tabs.forEach(tab=>{const active=tab.dataset.demo===id;tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;document.getElementById(tab.getAttribute('aria-controls')).hidden=!active;if(active&&focus)tab.focus();});
-  }
-  tabs.forEach((tab,index)=>{
-    tab.addEventListener('click',()=>showDemo(tab.dataset.demo));
-    tab.addEventListener('keydown',event=>{
-      let next;if(event.key==='ArrowRight')next=(index+1)%tabs.length;if(event.key==='ArrowLeft')next=(index-1+tabs.length)%tabs.length;if(event.key==='Home')next=0;if(event.key==='End')next=tabs.length-1;
-      if(next!==undefined){event.preventDefault();showDemo(tabs[next].dataset.demo,true);}
-    });
-  });
-  document.querySelectorAll('[data-demo-link]').forEach(button=>button.addEventListener('click',()=>showDemo(button.dataset.demoLink,true)));
-  const accents=['#e56331','#5c795d','#526cab'];let accent=0;
-  document.getElementById('preview-color').addEventListener('click',()=>{accent=(accent+1)%accents.length;document.querySelector('.mini-site').style.setProperty('--mini-accent',accents[accent]);});
-  const reports={design:['DESIGN REVIEW','Give the main idea room to breathe. Keep one clear action, use the network to explain the product, and make every interaction feel intentional.'],quality:['QUALITY REVIEW','Keep the experience usable with a keyboard, on a small screen, and with motion switched off. Preserve clear ownership when people and agents share a page.']};
-  document.querySelectorAll('[data-report]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-report]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));const [label,text]=reports[button.dataset.report];document.getElementById('report-label').textContent=label;document.getElementById('report-text').textContent=text;}));
+})();
+
+(() => {
+const stages={review:{prompt:'Review this homepage copy for clarity and usability. Bring me a plan.',reply:'Two reviewers have the same brief. Their findings stay attached to this conversation.',detail:'<h3>Reviewers <span class="tag">2 reports</span></h3><div class="agentrow"><div>Clarity review<small>Sample reviewer A</small></div><span class="green">Done</span></div><div class="agentrow"><div>Usability review<small>Sample reviewer B</small></div><span class="green">Done</span></div>',report:'<strong class="green">A common next step</strong><p>Make the setup path explicit. Show what the product does before asking someone to install it.</p>'},browser:{prompt:'Open the preview so we can inspect the same page.',reply:'The page and the conversation belong together. A visible control handover keeps the next action clear.',detail:'<h3>Browser <span class="tag">Illustration</span></h3><div class="browsermock"><small>localhost / project</small><h4>A little more<br>room to think.</h4><button id="sample-accent">Try sample accent</button></div>',report:'<strong class="green">You have control</strong><p>One visible page for you and your agent, with a handover when you want to take the lead.</p>'},context:{prompt:'Keep the decision: one clear setup action, and a real product walkthrough.',reply:'Save useful decisions where the next task can find them. Review agent suggestions before accepting them.',detail:'<h3>Shared decisions</h3><div class="agentrow"><div>Show the product first<small>Example note · accepted by you</small></div></div><div class="agentrow"><div>Explain the preview setup<small>Example note · accepted by you</small></div></div>',report:'<strong class="green">Less context to repeat</strong><p>Notes, decisions, and references stay attached to the room.</p>'}};
+function stage(id){document.querySelectorAll('[data-stage]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.stage===id)));let s=stages[id];document.getElementById('a-prompt').textContent=s.prompt;document.getElementById('a-reply').textContent=s.reply;document.getElementById('a-detail').innerHTML=s.detail;document.getElementById('a-report').innerHTML=s.report;const accent=document.getElementById('sample-accent');if(accent)accent.onclick=()=>{accent.parentElement.style.background=accent.parentElement.style.background?'':'#dce2fa';};}
+document.querySelectorAll('[data-stage]').forEach(x=>x.onclick=()=>stage(x.dataset.stage));stage('review');
+
 })();
