@@ -9,7 +9,7 @@ const os = require("node:os");
 const Module = require("node:module");
 
 let root, documents, previews, ask, saves, applications, provider;
-let failApply, failSave, afterApply, defaultEol;
+let failApply, failSave, afterApply, defaultEol, separateDocumentUris;
 const withEol = (text, eol) => text.replace(/\r\n|\r|\n/g, eol === 2 ? "\r\n" : "\n");
 const uri = (scheme, file, query = "") => ({
   scheme, path: file, fsPath: file, query,
@@ -30,7 +30,13 @@ const vscode = {
     get workspaceFolders() { return [{ uri: vscode.Uri.file(root) }]; },
     registerTextDocumentContentProvider(_scheme, value) { provider = value; return { dispose() {} }; },
     async openTextDocument(target) {
-      if (documents.has(target.fsPath)) return documents.get(target.fsPath);
+      // Model VS Code's document identity, not the caller's raw spelling. The
+      // Windows runner's temporary directory can differ from fs.realpath's
+      // canonical spelling, which previously created a second fake buffer.
+      // Alias tests can also model an editor keeping two separate documents.
+      const canonical = await fs.realpath(target.fsPath);
+      const key = separateDocumentUris ? target.fsPath : process.platform === "win32" ? canonical.toLowerCase() : canonical;
+      if (documents.has(key)) return documents.get(key);
       const disk = await fs.readFile(target.fsPath, "utf8");
       const eol = disk.includes("\r\n") ? 2 : disk.includes("\n") ? 1 : defaultEol;
       const bom = disk.startsWith("\uFEFF");
@@ -48,7 +54,7 @@ const vscode = {
           return true;
         },
       };
-      documents.set(target.fsPath, doc);
+      documents.set(key, doc);
       return doc;
     },
     async applyEdit(edit) {
@@ -93,14 +99,18 @@ beforeEach(async () => {
   documents = new Map(); previews = []; saves = 0; applications = 0;
   failApply = false; failSave = false; afterApply = async () => {};
   defaultEol = vscode.EndOfLine.LF;
+  separateDocumentUris = false;
   ask = async () => "Apply";
 });
 afterEach(async () => { await fs.rm(root, { recursive: true, force: true }); });
 const file = () => path.join(root, "shared.txt");
-async function seed(text = "one\ntwo\n") {
+async function seed(text = "one\ntwo\n", target = vscode.Uri.file(file())) {
   await fs.writeFile(file(), text, "utf8");
-  return vscode.workspace.openTextDocument(vscode.Uri.file(file()));
+  return vscode.workspace.openTextDocument(target);
 }
+// A real filesystem alias without symlink privileges, portable on Windows and
+// POSIX. Retain the spelling in the URI while realpath resolves it to file().
+const aliasUri = () => vscode.Uri.file(`${root}${path.sep}.${path.sep}shared.txt`);
 const edit = (old_text = "one", new_text = "ONE") => new ToolExecutor().execute({
   name: "edit_file", input: { path: "shared.txt", old_text, new_text },
 });
@@ -114,6 +124,81 @@ test("an unchanged approved edit is applied and saved", async () => {
   assert.equal(await fs.readFile(file(), "utf8"), "ONE\ntwo\n");
   assert.equal(applications, 1);
   assert.equal(saves, 1);
+});
+
+test("a canonical request reuses the editor document opened under a path alias", async () => {
+  const doc = await seed("one\ntwo\n", aliasUri());
+  assert.equal((await edit()).isError, undefined);
+  assert.equal(doc.getText(), "ONE\ntwo\n");
+  assert.equal(documents.size, 1);
+  assert.equal(saves, 1);
+});
+
+test("a dirty document remains protected when its URI differs from the requested path", async () => {
+  const doc = await seed("one\ntwo\n", aliasUri());
+  doc.text = "unsaved via alias"; doc.isDirty = true;
+  ask = async () => { assert.fail("the aliased dirty document must not reach approval"); };
+  assert.equal((await edit()).isError, true);
+  assert.equal(doc.getText(), "unsaved via alias");
+  assert.equal(await fs.readFile(file(), "utf8"), "one\ntwo\n");
+  assert.equal(applications, 0); assert.equal(saves, 0);
+});
+
+test("distinct editor documents for one physical file are refused without overwriting either", async () => {
+  separateDocumentUris = true;
+  const doc = await seed("one\ntwo\n", aliasUri());
+  doc.text = "unsaved in a separate model"; doc.isDirty = true;
+  ask = async () => { assert.fail("the separate aliased model must not reach approval"); };
+  const result = await edit();
+  assert.equal(result.isError, true);
+  assert.match(result.content, /also open under another path/);
+  assert.equal(doc.getText(), "unsaved in a separate model");
+  assert.equal(await fs.readFile(file(), "utf8"), "one\ntwo\n");
+  assert.equal(applications, 0); assert.equal(saves, 0);
+});
+
+test("a distinct alias opened during approval invalidates the proposal before application", async () => {
+  const original = await seed();
+  let other;
+  ask = async () => {
+    separateDocumentUris = true;
+    other = await vscode.workspace.openTextDocument(aliasUri());
+    other.text = "typed in another path"; other.isDirty = true;
+    return "Apply";
+  };
+  const result = await edit();
+  assert.equal(result.isError, true);
+  assert.match(result.content, /also open under another path/);
+  assert.equal(original.getText(), "one\ntwo\n");
+  assert.equal(other.getText(), "typed in another path");
+  assert.equal(applications, 0); assert.equal(saves, 0);
+});
+
+test("retargeting the original document's directory alias during approval is refused", async () => {
+  const link = path.join(root, "alias");
+  const other = path.join(root, "other");
+  await fs.mkdir(other);
+  await fs.writeFile(path.join(other, "shared.txt"), "other file", "utf8");
+  const linkType = process.platform === "win32" ? "junction" : "dir";
+  // rmdir on Windows removes the junction itself; unlink does the same for a
+  // POSIX symbolic link. Neither operation recursively visits its target.
+  const removeLink = () => process.platform === "win32" ? fs.rmdir(link) : fs.unlink(link);
+  await fs.symlink(root, link, linkType);
+  try {
+    const doc = await seed("one\ntwo\n", vscode.Uri.file(path.join(link, "shared.txt")));
+    ask = async () => {
+      await removeLink();
+      await fs.symlink(other, link, linkType);
+      return "Apply";
+    };
+    assert.equal((await edit()).isError, true);
+    assert.equal(doc.getText(), "one\ntwo\n");
+    assert.equal(await fs.readFile(file(), "utf8"), "one\ntwo\n");
+    assert.equal(await fs.readFile(path.join(other, "shared.txt"), "utf8"), "other file");
+    assert.equal(applications, 0); assert.equal(saves, 0);
+  } finally {
+    await removeLink();
+  }
 });
 
 test("LF replacement text in a CRLF document is saved with the editor's line endings", async () => {

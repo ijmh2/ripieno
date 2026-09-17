@@ -19,7 +19,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm audit --omit=dev
+      - run: npm audit
       # No explicit build step: `test` and `typecheck` each build first, so what
       # runs here is the same command a reader runs after cloning. A CI that
       # prepares the tree differently from the README stops being evidence for
@@ -43,7 +43,7 @@ jobs:
       # Exercise the actual fresh-clone lifecycle, including prepare. A build
       # that only works after --ignore-scripts would not validate setup.
       - run: npm ci
-      - run: npm audit --omit=dev
+      - run: npm audit
       - run: npm run typecheck
       - run: npm run test:setup
       - run: npm test -w @ripieno/protocol -w @ripieno/relay-client -w @ripieno/workspace-core -w @ripieno/relay -w ripieno

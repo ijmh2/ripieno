@@ -16,6 +16,7 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import { randomUUID } from "crypto";
+import { realpath } from "fs/promises";
 import type { ToolCallMsg } from "@ripieno/protocol";
 import {
   WorkspaceCore,
@@ -110,10 +111,15 @@ class EditorGate implements ApprovalGate {
    * reverse the agent with Cmd+Z like any other edit.
    */
   async applyWrite(p: WriteProposal): Promise<ToolResult> {
-    const target = vscode.Uri.file(p.abs);
+    const requestedTarget = vscode.Uri.file(p.abs);
     const conflict = await writeProposalConflict(p);
     if (conflict) return conflict;
-    const original = p.existed ? await vscode.workspace.openTextDocument(target) : undefined;
+    const original = p.existed ? await vscode.workspace.openTextDocument(requestedTarget) : undefined;
+    // VS Code can return an existing model whose URI has different casing or
+    // another spelling. Address edits to that model so its version is used.
+    const target = original?.uri ?? requestedTarget;
+    const aliasConflict = await editorAliasConflict(p, original);
+    if (aliasConflict) return aliasConflict;
     const bufferConflict = editorConflict(p, target, original);
     if (bufferConflict) return bufferConflict;
     const originalVersion = original?.version;
@@ -160,6 +166,8 @@ class EditorGate implements ApprovalGate {
         // Recheck both disk and buffer after approval, inside the write queue.
         // Do not await between the final version check and applyEdit: VS Code
         // then submits the edit against the document version it has observed.
+        const aliasConflict = await editorAliasConflict(p, original);
+        if (aliasConflict) return aliasConflict;
         const diskConflict = await writeProposalConflict(p);
         if (diskConflict) return diskConflict;
         const bufferConflict = editorConflict(p, target, original, originalVersion);
@@ -213,9 +221,9 @@ function editorConflict(
   original?: vscode.TextDocument,
   version?: number
 ): ToolResult | undefined {
-  const open = vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === target.toString());
-  if (!p.existed) return open ? staleWriteResult(p.rawPath) : undefined;
-  if (!original || original.isClosed || open !== original ||
+  const documents = vscode.workspace.textDocuments;
+  if (!p.existed) return documents.some((doc) => doc.uri.toString() === target.toString()) ? staleWriteResult(p.rawPath) : undefined;
+  if (!original || original.isClosed || !documents.includes(original) ||
       (version !== undefined && original.version !== version)) return staleWriteResult(p.rawPath);
   if (original.isDirty) {
     return { content: `Cannot edit ${p.rawPath}: it has unsaved editor changes. Save or discard them, then read the file and retry.`, isError: true };
@@ -226,6 +234,36 @@ function editorConflict(
   // line endings and may omit its UTF-8 encoding marker.
   return actual === expected || (expected.startsWith("\uFEFF") && actual === expected.slice(1))
     ? undefined : staleWriteResult(p.rawPath);
+}
+
+/** Refuse distinct editor models for one physical file rather than pick a winner. */
+async function editorAliasConflict(p: WriteProposal, original?: vscode.TextDocument): Promise<ToolResult | undefined> {
+  if (original && path.relative(original.uri.fsPath, p.abs) !== "") {
+    try {
+      if (path.relative(await realpath(original.uri.fsPath), p.abs) !== "") return staleWriteResult(p.rawPath);
+    } catch {
+      return staleWriteResult(p.rawPath);
+    }
+  }
+  for (const doc of vscode.workspace.textDocuments) {
+    if (doc === original || doc.isClosed || doc.uri.scheme !== "file") continue;
+    let abs: string;
+    try {
+      abs = await realpath(doc.uri.fsPath);
+    } catch {
+      // A deleted file can still have an unsaved buffer. Resolve its parent so
+      // an alias of that buffer also blocks a new-file proposal.
+      try { abs = path.join(await realpath(path.dirname(doc.uri.fsPath)), path.basename(doc.uri.fsPath)); }
+      catch { continue; }
+    }
+    if (path.relative(abs, p.abs) === "") {
+      return {
+        content: `Cannot edit ${p.rawPath}: it is also open under another path. Save any changes and close the other editor document, then read the file and retry.`,
+        isError: true,
+      };
+    }
+  }
+  return undefined;
 }
 
 function editorLineEndings(text: string, eol: vscode.EndOfLine): string {
