@@ -12,6 +12,7 @@ import {
   resolveToken,
   type ResolvedToken,
 } from "./bootstrap.js";
+import { loadRoomPolicy } from "./admission.js";
 
 // Railway (and most hosts) inject PORT. Honour it first so a deploy needs no
 // bespoke config, then fall back to our own variable, then a local default.
@@ -27,10 +28,6 @@ const dataDir = process.env.RIPIENO_DATA_DIR;
 // A deployed relay must listen on all interfaces; a local one need not.
 const host = resolveRelayHost(process.env.RIPIENO_HOST, Boolean(process.env.PORT));
 const requireGithub = resolveStandaloneRequireGithub(process.env.RIPIENO_REQUIRE_GITHUB);
-// Only a suggestion, printed so the summary is copyable as a whole. Rooms are
-// created by whoever joins one, so nothing here reserves it.
-const room = process.env.RIPIENO_ROOM?.trim() || "general";
-
 /**
  * How long to wait for somebody to tell us our own public address before
  * printing the local one instead.
@@ -42,6 +39,13 @@ const room = process.env.RIPIENO_ROOM?.trim() || "general";
 const ADDRESS_GRACE_MS = 2_000;
 
 async function main(): Promise<void> {
+  // Load before listening or generating credentials. A configured policy must
+  // never be silently ignored because a file is missing or malformed.
+  const roomPolicy = await loadRoomPolicy(process.env.RIPIENO_ROOM_POLICY_FILE);
+  // This is only a suggestion, not a reservation or an admission grant. Prefer
+  // a configured room so the default boot instructions work on restricted relays.
+  const room = process.env.RIPIENO_ROOM?.trim() ||
+    (roomPolicy ? Object.keys(roomPolicy.rooms)[0] : undefined) || "general";
   // Generated rather than demanded. Refusing to boot without RIPIENO_TOKEN was
   // safe and made the first thing a new operator saw an error whose fix —
   // `openssl rand -hex 24` — a machine can perform for them. A generated secret
@@ -76,6 +80,7 @@ async function main(): Promise<void> {
     token: token.token,
     workspaceToken,
     requireGithub,
+    roomPolicy,
     host,
     dataDir,
     onPublicUrl: (url) => {

@@ -12,6 +12,7 @@
 import { test, describe, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -28,6 +29,7 @@ import {
 class AutoGate implements ApprovalGate {
   commandsSeen: string[] = [];
   allow = true;
+  proposals: WriteProposal[] = [];
 
   async approveCommand(command: string): Promise<boolean> {
     this.commandsSeen.push(command);
@@ -35,6 +37,7 @@ class AutoGate implements ApprovalGate {
   }
 
   async applyWrite(p: WriteProposal): Promise<ToolResult> {
+    this.proposals.push(p);
     await writeFile(p.abs, p.proposed, "utf8");
     return { content: `${p.existed ? "Updated" : "Created"} ${p.rawPath}.` };
   }
@@ -171,6 +174,22 @@ describe("the tools", () => {
     await writeFile(path.join(root, "once.txt"), "keep\nchangeme\n", "utf8");
     await run("edit_file", { path: "once.txt", old_text: "changeme", new_text: "changed" });
     assert.equal(await readFile(path.join(root, "once.txt"), "utf8"), "keep\nchanged\n");
+    assert.equal(gate.proposals[0]?.expectedContent, "keep\nchangeme\n");
+  });
+
+  test("whole-file writes retain the existing content as their approval baseline", async () => {
+    await writeFile(path.join(root, "whole.txt"), "base", "utf8");
+    await run("write_file", { path: "whole.txt", content: "replacement" });
+    assert.equal(gate.proposals[0]?.expectedContent, "base");
+    assert.equal(gate.proposals[0]?.existed, true);
+  });
+
+  test("creation distinguishes a missing path from an existing empty file", async () => {
+    await run("write_file", { path: "absent.txt", content: "created" });
+    await writeFile(path.join(root, "empty.txt"), "", "utf8");
+    await run("write_file", { path: "empty.txt", content: "updated" });
+    assert.equal(gate.proposals[0]?.expectedContent, null);
+    assert.equal(gate.proposals[1]?.expectedContent, "");
   });
 
   test("writing outside the workspace is refused before the gate sees it", async () => {
@@ -188,7 +207,7 @@ describe("the tools", () => {
   });
 
   test("an approved command runs in the workspace", async () => {
-    const res = await run("run_command", { command: "pwd" });
+    const res = await run("run_command", { command: process.platform === "win32" ? "cd" : "pwd" });
     assert.ok(res.content.includes(path.basename(root)));
   });
 
@@ -219,13 +238,23 @@ describe("git authorship follows the acting agent", () => {
     const env = commandEnv({ label: "Mira's reviewer", handle: "mellery" });
     assert.equal(env.GIT_AUTHOR_NAME, "Mira's reviewer");
     assert.equal(env.GIT_AUTHOR_EMAIL, "mellery+agent@users.noreply.github.com");
-    assert.equal(env.GIT_COMMITTER_NAME, undefined);
+    assert.equal(env.GIT_COMMITTER_NAME, process.env.GIT_COMMITTER_NAME);
   });
 
   test("without a requester there is simply no author to set", () => {
     const env = commandEnv();
-    assert.equal(env.GIT_AUTHOR_NAME, undefined);
-    assert.equal(env.PATH, process.env.PATH, "ordinary variables still get through");
+    assert.equal(env.GIT_AUTHOR_NAME, process.env.GIT_AUTHOR_NAME);
+    // process.env on Windows resolves PATH case-insensitively, while the plain
+    // object returned by commandEnv keeps the actual enumerated spelling.
+    const pathKeys = Object.keys(process.env).filter((key) =>
+      process.platform === "win32" ? key.toUpperCase() === "PATH" : key === "PATH"
+    );
+    assert.ok(pathKeys.length > 0, "the test environment must provide a search path");
+    for (const key of pathKeys) {
+      assert.equal(env[key], process.env[key], `ordinary variable ${key} still gets through`);
+    }
+    const childPath = JSON.parse(execFileSync(process.execPath, ["-p", "JSON.stringify(process.env.PATH)"], { env, encoding: "utf8" }));
+    assert.equal(childPath, process.env.PATH, "a real child receives the same command search path");
   });
 });
 

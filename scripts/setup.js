@@ -16,19 +16,15 @@
  * where the same executable has been all along.
  */
 
-const { execFileSync, execSync } = require("node:child_process");
-const { existsSync, readdirSync, readFileSync } = require("node:fs");
+const { existsSync, readFileSync } = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const { onPath, runNpm, runCli } = require("./cli.js");
 
 const root = path.join(__dirname, "..");
 const step = (n, text) => console.log(`\n\x1b[1m[${n}]\x1b[0m ${text}`);
 const ok = (text) => console.log(`    \x1b[32m✓\x1b[0m ${text}`);
 const warn = (text) => console.log(`    \x1b[33m!\x1b[0m ${text}`);
-
-function run(command, args) {
-  execFileSync(command, args, { cwd: root, stdio: "inherit" });
-}
 
 /**
  * Every editor that can install a VSIX, in the order we would prefer them.
@@ -47,15 +43,6 @@ const EDITORS = [
   { name: "VSCodium", bin: "codium", app: "VSCodium.app", cli: "codium" },
   { name: "Positron", bin: "positron", app: "Positron.app", cli: "positron" },
 ];
-
-function onPath(bin) {
-  try {
-    execSync(process.platform === "win32" ? `where ${bin}` : `command -v ${bin}`, { stdio: "ignore" });
-    return bin;
-  } catch {
-    return undefined;
-  }
-}
 
 /** The same executable, inside the .app bundle, for people who never ran the PATH installer. */
 function inBundle(editor) {
@@ -83,18 +70,17 @@ function main() {
   step(1, "Installing dependencies");
   // `ci` rather than `install`, so a clone gets exactly the tested tree and a
   // lock file that has drifted fails here rather than three steps later.
-  run("npm", ["ci"]);
+  runNpm(["ci"], { cwd: root, stdio: "inherit" });
   ok("dependencies installed");
 
   step(2, "Building and packaging the extension");
-  run("npm", ["run", "package"]);
+  runNpm(["run", "package"], { cwd: root, stdio: "inherit" });
   const dist = path.join(root, "dist");
-  const vsix = readdirSync(dist).filter((f) => f.endsWith(".vsix")).sort().at(-1);
-  if (!vsix) {
-    console.error("\n    Packaging reported success but produced no .vsix. Stopping.");
+  const vsixPath = path.join(dist, `${pkg.name}-${pkg.version}.vsix`);
+  if (!existsSync(vsixPath)) {
+    console.error(`\n    Packaging reported success but did not produce ${vsixPath}. Stopping.`);
     process.exit(1);
   }
-  const vsixPath = path.join(dist, vsix);
   ok(vsixPath);
 
   step(3, "Installing into your editor");
@@ -115,7 +101,7 @@ function main() {
   } else {
     for (const editor of editors) {
       try {
-        execFileSync(editor.cli, ["--install-extension", vsixPath, "--force"], { stdio: "pipe" });
+        runCli(editor.cli, ["--install-extension", vsixPath, "--force"], { stdio: "pipe" });
         ok(`installed into ${editor.name}`);
       } catch (err) {
         warn(`${editor.name} refused it: ${String(err.stderr ?? err.message).trim().split("\n")[0]}`);
@@ -127,10 +113,10 @@ function main() {
   console.log(
     [
       "",
-      "\x1b[1mWhat is left, and it is genuinely two steps:\x1b[0m",
+      "\x1b[1mFinish setup:\x1b[0m",
       "",
       "  1. Reload the editor window  (Cmd/Ctrl+Shift+P → “Reload Window”)",
-      "  2. Cmd/Ctrl+Shift+P → “Ripieno: Join Room”, then type any room code",
+      "  2. Cmd/Ctrl+Shift+P → “Ripieno: Start a Room for Yourself”",
       "",
       "That is a working room, on your own machine, with no relay, no account and",
       "no token. Attach an agent from the Ripieno panel in the activity bar.",
@@ -142,4 +128,4 @@ function main() {
   );
 }
 
-main();
+if (require.main === module) main();

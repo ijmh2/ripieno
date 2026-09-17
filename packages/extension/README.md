@@ -6,6 +6,10 @@ route workspace work through explicit host-side boundaries.
 
 This is a **0.0.x Preview**, free for personal and non-commercial use. It runs locally
 or against a relay you operate; the project does not provide a hosted relay.
+Organisations may evaluate for 30 days; other organisational use requires a
+commercial licence under the [alpha terms](https://github.com/ijmh2/ripieno/blob/main/LICENSE).
+Provider subscriptions, API charges and hosting costs are separate. Commercial
+prices are not yet published; [contact the author](https://github.com/ijmh2) to arrange terms.
 
 ## Quick start
 

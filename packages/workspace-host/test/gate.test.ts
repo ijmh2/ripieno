@@ -13,6 +13,7 @@ import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ContainerGate, isAllowed, type CommandPolicy } from "../src/gate.js";
+import { WorkspaceCore, type WriteProposal, type ToolResult } from "@ripieno/workspace-core";
 import { parseRepo, shellQuote } from "../src/git.js";
 
 describe("the command policy", () => {
@@ -89,11 +90,12 @@ describe("the gate applies writes and tells the room", () => {
     });
   });
 
-  const proposal = (rel: string, content: string, existed = false) => ({
+  const proposal = (rel: string, content: string, expectedContent: string | null = null): WriteProposal => ({
     rawPath: rel,
     abs: path.join(root, rel),
     proposed: content,
-    existed,
+    existed: expectedContent !== null,
+    expectedContent,
     requester: { label: "Mira's coder", handle: "mellery" },
     report: () => {},
   });
@@ -123,7 +125,7 @@ describe("the gate applies writes and tells the room", () => {
   test("the room is told even when a commit fails, so caches still drop", async () => {
     failCommit = true;
     await writeFile(path.join(root, "d.txt"), "old", "utf8");
-    await gate.applyWrite(proposal("d.txt", "new", true));
+    await gate.applyWrite(proposal("d.txt", "new", "old"));
     assert.deepEqual(changed, ["d.txt"]);
   });
 
@@ -133,6 +135,89 @@ describe("the gate applies writes and tells the room", () => {
     const states: string[] = [];
     await gate.applyWrite({ ...proposal("e.txt", "z"), report: (s) => states.push(s) });
     assert.deepEqual(states, ["running"]);
+  });
+
+  test("an existing file is updated only when its exact base still matches", async () => {
+    await writeFile(path.join(root, "unchanged.txt"), "original", "utf8");
+    const result = await gate.applyWrite(proposal("unchanged.txt", "replacement", "original"));
+    assert.equal(result.isError, undefined);
+    assert.equal(await readFile(path.join(root, "unchanged.txt"), "utf8"), "replacement");
+    assert.deepEqual(changed, ["unchanged.txt"]);
+  });
+
+  test("a stale proposal neither overwrites, commits nor announces newer bytes", async () => {
+    await writeFile(path.join(root, "stale.txt"), "new base", "utf8");
+    const result = await gate.applyWrite(proposal("stale.txt", "replacement", "old base"));
+    assert.equal(result.isError, true);
+    assert.match(result.content, /Conflict.*Read the latest/);
+    assert.equal(await readFile(path.join(root, "stale.txt"), "utf8"), "new base");
+    assert.deepEqual(committed, []);
+    assert.deepEqual(changed, []);
+  });
+
+  test("a creation does not overwrite a file that appeared meanwhile", async () => {
+    await writeFile(path.join(root, "appeared.txt"), "someone else's file", "utf8");
+    const result = await gate.applyWrite(proposal("appeared.txt", "my new file"));
+    assert.equal(result.isError, true);
+    assert.equal(await readFile(path.join(root, "appeared.txt"), "utf8"), "someone else's file");
+    assert.deepEqual(committed, []);
+    assert.deepEqual(changed, []);
+  });
+
+  test("an edit does not recreate a file deleted after proposal preparation", async () => {
+    const result = await gate.applyWrite(proposal("deleted.txt", "replacement", "original"));
+    assert.equal(result.isError, true);
+    await assert.rejects(readFile(path.join(root, "deleted.txt")), { code: "ENOENT" });
+    assert.deepEqual(changed, []);
+  });
+
+  test("two edit_file calls computed from the same base reject the stale second edit", async () => {
+    const rel = "parallel.txt";
+    await writeFile(path.join(root, rel), "one\ntwo\n", "utf8");
+    let tail = Promise.resolve();
+    const locked = new ContainerGate({
+      policy: { allow: [], allowAll: false },
+      commit: async (p) => { committed.push({ rel: p.rawPath }); },
+      onChanged: (abs) => changed.push(path.relative(root, abs)),
+      rootFor: () => root,
+      commitCommandOutput: async () => [],
+      serialise: <T>(fn: () => Promise<T>): Promise<T> => {
+        const next = tail.then(fn);
+        tail = next.then(() => undefined, () => undefined);
+        return next;
+      },
+    });
+    // Barrier at the gate makes the lost-update schedule deterministic: both
+    // proposals were computed before either is allowed to write.
+    const pending: Array<{ proposal: WriteProposal; resolve: (r: ToolResult) => void }> = [];
+    let bothReady!: () => void;
+    const ready = new Promise<void>((resolve) => { bothReady = resolve; });
+    const core = new WorkspaceCore({
+      resolveRoot: () => ({ ok: true, abs: root }),
+      gate: {
+        approveCommand: async () => false,
+        applyWrite: (p) => new Promise((resolve) => {
+          pending.push({ proposal: p, resolve });
+          if (pending.length === 2) bothReady();
+        }),
+      },
+    });
+    const first = core.execute("edit_file", { path: rel, old_text: "one", new_text: "ONE" });
+    const second = core.execute("edit_file", { path: rel, old_text: "two", new_text: "TWO" });
+    await ready;
+    assert.ok(pending.every(({ proposal: p }) => p.expectedContent === "one\ntwo\n"));
+    await Promise.all(pending.map(async ({ proposal: p, resolve }) => resolve(await locked.applyWrite(p))));
+    const results = await Promise.all([first, second]);
+    assert.equal(results.filter((r) => !r?.isError).length, 1);
+    assert.equal(results.filter((r) => r?.isError).length, 1);
+    const disk = await readFile(path.join(root, rel), "utf8");
+    assert.ok(disk === "ONE\ntwo\n" || disk === "one\nTWO\n");
+    assert.equal(committed.length, 1);
+    assert.deepEqual(changed, [rel]);
+    const retry = new WorkspaceCore({ resolveRoot: () => ({ ok: true, abs: root }), gate: locked });
+    const remaining = disk.startsWith("ONE") ? ["two", "TWO"] : ["one", "ONE"];
+    assert.equal((await retry.execute("edit_file", { path: rel, old_text: remaining[0], new_text: remaining[1] }))?.isError, undefined);
+    assert.equal(await readFile(path.join(root, rel), "utf8"), "ONE\nTWO\n");
   });
 });
 

@@ -34,6 +34,30 @@ Shared deployments also need the matching relay build. An updated extension
 can read legacy context from an older relay, but plans and claims require the
 corresponding relay capabilities.
 
+## Acceptance record
+
+Copy this checklist into the release notes and fill in the evidence. Leave
+unperformed checks marked **not run**. Do not publish a build as verified by
+reusing results from a different commit or a mocked provider.
+
+| Check | Required evidence |
+|---|---|
+| Build identity | Commit SHA, extension version, VSIX SHA-256, relay version, CI run link |
+| Supported environment | OS, editor version, provider CLI/API and version for each participant |
+| Fresh setup | Install on a clean Windows machine and a supported Unix machine; open the packaged extension and start a solo room |
+| Team activation | Two accounts on separate machines join, attach agents and complete one shared task; record setup time and failures |
+| Access boundary | Allowed accounts join their configured room; another verified account and an unknown room are denied without receiving history |
+| Stale file proposal | Two proposals begin from the same file; after the first is accepted, the stale second is rejected and refreshed without losing the first change |
+| Editor approval | Change or dirty the target while approval is open, and create an expected-absent file; both conflicts must preserve current work |
+| Declined approval | Reject a write and a command; verify no corresponding file/command side effect |
+| Recovery | Disconnect a member, restart the relay with persisted state, rejoin, inspect bounded history and resume an explicit handoff without repeating accepted work |
+| Headless host, if offered | Deploy the actual container and verify attributed commits, restart and reconnect; restricted room policies currently reject workspace-role joins |
+| Evidence and privacy | Review the relevant diff and recorded test results; remove private prompts, code and credentials from any shared report |
+
+Record the observer, date, result and evidence for each check. Automated smoke
+checks cover only their scripted paths; provider authentication, live account
+billing and real team behavior still need the manual exercise above.
+
 ## Publish
 
 Commit the version and changelog before producing the release artifact. Attach

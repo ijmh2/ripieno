@@ -15,6 +15,7 @@
 
 import * as vscode from "vscode";
 import * as path from "path";
+import { randomUUID } from "crypto";
 import type { ToolCallMsg } from "@ripieno/protocol";
 import {
   WorkspaceCore,
@@ -22,6 +23,8 @@ import {
   matchesAllowlist,
   errText,
   isInside,
+  writeProposalConflict,
+  staleWriteResult,
   type ApprovalGate,
   type ProgressReporter,
   type Requester,
@@ -108,15 +111,33 @@ class EditorGate implements ApprovalGate {
    */
   async applyWrite(p: WriteProposal): Promise<ToolResult> {
     const target = vscode.Uri.file(p.abs);
+    const conflict = await writeProposalConflict(p);
+    if (conflict) return conflict;
+    const original = p.existed ? await vscode.workspace.openTextDocument(target) : undefined;
+    const bufferConflict = editorConflict(p, target, original);
+    if (bufferConflict) return bufferConflict;
+    const originalVersion = original?.version;
+    const originalEol = original?.eol;
+    // A BOM read from disk is normally encoding metadata, absent from getText.
+    // If it is already literal buffer text (e.g. inserted before a reload), keep
+    // it literal. Strip only the one marker that this document hides.
+    const hidesBom = original && p.expectedContent?.startsWith("\uFEFF") &&
+      original.getText() === editorLineEndings(p.expectedContent.slice(1), original.eol);
+    const proposedText = hidesBom && p.proposed.startsWith("\uFEFF") ? p.proposed.slice(1) : p.proposed;
     p.report("awaiting-approval");
 
-    const preview = vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: p.abs });
+    // A separate immutable pair per request keeps concurrent previews from
+    // replacing one another, and shows exactly the baseline being approved.
+    const id = randomUUID();
+    const preview = vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: p.abs, query: `${id}-proposed` });
+    const baseline = vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: p.abs, query: `${id}-base` });
     proposedContents.set(preview.toString(), p.proposed);
+    proposedContents.set(baseline.toString(), p.expectedContent ?? "");
     proposedChanged.fire(preview);
     try {
       await vscode.commands.executeCommand(
         "vscode.diff",
-        p.existed ? target : vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: "/empty" }),
+        baseline,
         preview,
         `${path.basename(p.abs)} — proposed by the room`,
         { preview: true }
@@ -135,23 +156,80 @@ class EditorGate implements ApprovalGate {
       }
 
       p.report("running");
-      const edit = new vscode.WorkspaceEdit();
-      if (p.existed) {
-        const doc = await vscode.workspace.openTextDocument(target);
-        edit.replace(target, new vscode.Range(0, 0, doc.lineCount, 0), p.proposed);
-      } else {
-        edit.createFile(target, { contents: Buffer.from(p.proposed, "utf8") });
-      }
-      if (!(await vscode.workspace.applyEdit(edit))) {
-        return { content: `The edit to ${p.rawPath} could not be applied.`, isError: true };
-      }
-      const doc = await vscode.workspace.openTextDocument(target);
-      await doc.save();
-      return { content: `${p.existed ? "Updated" : "Created"} ${p.rawPath}.` };
+      return await serialiseEditorWrite(async () => {
+        // Recheck both disk and buffer after approval, inside the write queue.
+        // Do not await between the final version check and applyEdit: VS Code
+        // then submits the edit against the document version it has observed.
+        const diskConflict = await writeProposalConflict(p);
+        if (diskConflict) return diskConflict;
+        const bufferConflict = editorConflict(p, target, original, originalVersion);
+        if (bufferConflict) return bufferConflict;
+        const edit = new vscode.WorkspaceEdit();
+        if (original) {
+          edit.replace(target, new vscode.Range(0, 0, original.lineCount, 0), proposedText);
+        } else {
+          // Supported in VS Code 1.85. A single resource operation avoids a
+          // create+insert failure leaving an empty file behind.
+          edit.createFile(target, {
+            contents: Buffer.from(p.proposed, "utf8"), overwrite: false, ignoreIfExists: false,
+          });
+        }
+        if (!(await vscode.workspace.applyEdit(edit))) {
+          return { content: `The edit to ${p.rawPath} could not be applied. Read the latest file and retry.`, isError: true };
+        }
+        // Creation already wrote the exact bytes; do not open and resave them
+        // through a potentially different editor encoding or default EOL.
+        if (!original) return { content: `Created ${p.rawPath}.` };
+        const doc = original;
+        // A member can type while the host processes applyEdit. Never silently
+        // save that additional work on their behalf.
+        if (doc.isClosed || doc.eol !== originalEol ||
+            doc.getText() !== editorLineEndings(proposedText, doc.eol)) {
+          return { content: `The edit to ${p.rawPath} was applied, but the editor changed again. Review and save it manually.`, isError: true };
+        }
+        if (!(await doc.save())) {
+          return { content: `The edit to ${p.rawPath} was applied in the editor but could not be saved.`, isError: true };
+        }
+        return { content: `${p.existed ? "Updated" : "Created"} ${p.rawPath}.` };
+      });
     } finally {
       proposedContents.delete(preview.toString());
+      proposedContents.delete(baseline.toString());
     }
   }
+}
+
+/** Shared by all ToolExecutor instances in this extension host. */
+let editorWriteQueue: Promise<unknown> = Promise.resolve();
+function serialiseEditorWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const next = editorWriteQueue.then(fn, fn);
+  editorWriteQueue = next.then(() => undefined, () => undefined);
+  return next;
+}
+
+function editorConflict(
+  p: WriteProposal,
+  target: vscode.Uri,
+  original?: vscode.TextDocument,
+  version?: number
+): ToolResult | undefined {
+  const open = vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === target.toString());
+  if (!p.existed) return open ? staleWriteResult(p.rawPath) : undefined;
+  if (!original || original.isClosed || open !== original ||
+      (version !== undefined && original.version !== version)) return staleWriteResult(p.rawPath);
+  if (original.isDirty) {
+    return { content: `Cannot edit ${p.rawPath}: it has unsaved editor changes. Save or discard them, then read the file and retry.`, isError: true };
+  }
+  const expected = editorLineEndings(p.expectedContent!, original.eol);
+  const actual = original.getText();
+  // Keep the raw disk comparison exact. Only the buffer view has normalized
+  // line endings and may omit its UTF-8 encoding marker.
+  return actual === expected || (expected.startsWith("\uFEFF") && actual === expected.slice(1))
+    ? undefined : staleWriteResult(p.rawPath);
+}
+
+function editorLineEndings(text: string, eol: vscode.EndOfLine): string {
+  return text.replace(/\r\n|\r|\n/g, eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n");
 }
 
 /* ------------------------------------------------------------------ */

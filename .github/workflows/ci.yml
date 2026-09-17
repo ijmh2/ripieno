@@ -19,6 +19,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npm audit --omit=dev
       # No explicit build step: `test` and `typecheck` each build first, so what
       # runs here is the same command a reader runs after cloning. A CI that
       # prepares the tree differently from the README stops being evidence for
@@ -30,6 +31,31 @@ jobs:
           git config --global user.email ci@example.com
           git config --global user.name CI
       - run: npm test
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # Exercise the actual fresh-clone lifecycle, including prepare. A build
+      # that only works after --ignore-scripts would not validate setup.
+      - run: npm ci
+      - run: npm audit --omit=dev
+      - run: npm run typecheck
+      - run: npm run test:setup
+      - run: npm test -w @ripieno/protocol -w @ripieno/relay-client -w @ripieno/workspace-core -w @ripieno/relay -w ripieno
+      # The headless workspace host is a Linux container. Its integration suite
+      # remains in the Linux job; Windows verifies the editor/relay distribution.
+      - run: npm run package
+      - run: npm run test:extension-host -w ripieno
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ripieno-windows-preview-vsix
+          path: dist/*.vsix
+          if-no-files-found: error
 
   extension-node18:
     runs-on: ubuntu-latest

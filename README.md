@@ -209,8 +209,13 @@ deployment. The extension's embedded solo relay remains tokenless and local.
 ## Bring your own agent
 
 Each member attaches their own agent, running on their own machine, and pays for
-it however they already do. There is no per-seat cost here and nothing to sign
-up for — the room does not resell anyone's inference.
+it under that provider's terms. Ripieno does not resell inference. Provider
+subscriptions, API charges and hosting costs are separate from Ripieno licensing.
+
+Under the current [alpha terms](LICENSE), personal and non-commercial use is
+free. Organisations may evaluate for 30 days; other organisational use requires
+a commercial licence. Commercial prices and terms are not yet published;
+[contact the author](https://github.com/ijmh2) to arrange them.
 
 | You have | Attach | Cost | Can touch files |
 |---|---|---|---|

@@ -47,14 +47,35 @@ persisted.
 The live relay keeps at most 500 transcript entries and 200 actions per room;
 individual messages are capped at 32,000 characters. If `RIPIENO_DATA_DIR` is
 configured, the relay writes plaintext JSON snapshots containing transcript,
-actions, roster/roles and usage. Persisted history keeps up to 500 transcript
-entries and 200 actions within an approximately 1,000,000-character serialized
-budget. There is no retention timer or purge UI in this Preview.
+actions, roster/roles, usage, goals, shared context, handoffs and their bounded
+mutation histories. Persisted history keeps up to 500 transcript entries within
+an approximately 1,000,000-character serialized transcript budget, plus up to
+200 actions. That budget applies only to the transcript, not the whole snapshot
+or its UTF-8 byte size. Other state is stored alongside it under separate limits.
+There is no retention timer or purge UI in this Preview. Old entries may be
+dropped or truncated; history is an editable operational record, not a complete
+or tamper-evident audit trail.
 
 Solo mode writes the same plaintext room snapshots under the extension's VS
 Code global-storage directory so history survives an editor reload. Without a
 relay data directory, a remote relay's history disappears when that process
 restarts.
+
+## Operator backup and review
+
+For a stable backup, ask members to leave and stop the relay cleanly, then copy
+the files in its configured `RIPIENO_DATA_DIR` to a private location. Room JSON
+filenames are derived from the room code, and snapshots can contain code,
+prompts, names and private project context. Solo snapshots live under the
+extension's global-storage directory. This is an operator backup procedure;
+there is no member-facing export command yet.
+
+Before sharing evidence for a change, select and inspect only the relevant
+decisions and actions, and attach the Git commit/diff and actual verification
+results. An agent saying a test passed is a reported result, not independent
+verification. A backup does not restore entries already discarded by limits
+and does not make the history immutable. Anyone with a copy controls its
+retention, separately from the running relay.
 
 ## Deletion
 
