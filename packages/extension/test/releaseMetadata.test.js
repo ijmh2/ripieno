@@ -12,10 +12,11 @@ const readExtension = (name) => fs.readFileSync(path.join(extensionRoot, name), 
 const readRoot = (name) => fs.readFileSync(path.join(repositoryRoot, name), "utf8");
 
 describe("Preview release metadata", () => {
-  test("the manifest describes an honest free Preview", () => {
+  test("the manifest describes an MIT-licensed Preview", () => {
     assert.equal(manifest.preview, true);
     assert.match(manifest.version, /^0\.0\./);
     assert.equal(manifest.pricing, "Free");
+    assert.equal(manifest.license, "MIT");
     for (const url of [manifest.homepage, manifest.repository?.url, manifest.bugs?.url]) {
       assert.match(url ?? "", /^https:\/\//);
     }

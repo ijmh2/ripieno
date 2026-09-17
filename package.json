@@ -1,5 +1,6 @@
 {
   "name": "ripieno-workspace",
+  "license": "MIT",
   "private": true,
   "version": "0.0.0",
   "description": "A shared AI agent room — one conversation, multiple people, one agent that knows who said what.",

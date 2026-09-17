@@ -1,6 +1,6 @@
 # Support
 
-Ripieno is a Preview, free for personal and non-commercial use. Support is
+Ripieno is an open-source Preview under the [MIT License](LICENSE). Support is
 best-effort through
 [GitHub Issues](https://github.com/ijmh2/ripieno/issues).
 

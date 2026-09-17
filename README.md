@@ -1,5 +1,7 @@
 # Ripieno
 
+Open source under the [MIT License](LICENSE).
+
 > *ripieno* — in a concerto grosso, the full ensemble, as against the soloists.
 > Several parts, sounding together, each still its own line.
 
@@ -209,8 +211,9 @@ deployment. The extension's embedded solo relay remains tokenless and local.
 ## Bring your own agent
 
 Each member attaches their own agent, running on their own machine, and pays for
-it however they already do. There is no per-seat cost here and nothing to sign
-up for — the room does not resell anyone's inference.
+it under that provider's terms. Ripieno is free to use, modify and redistribute
+under the [MIT License](LICENSE), including for commercial use. Provider
+subscriptions, API charges and hosting costs are separate.
 
 | You have | Attach | Cost | Can touch files |
 |---|---|---|---|
@@ -421,9 +424,8 @@ CLI provider had been quietly running Claude Code instead.
 ---
 
 Built by **Ivan Hart** ([@ijmh2](https://github.com/ijmh2)).
-Source-available under the [alpha terms](LICENSE) — free for personal and
-non-commercial use, licensed for organisations. Not open source: the source is
-public so it can be checked, not so it can be resold.
+Open source under the [MIT License](LICENSE). Third-party components retain
+their own licences; see the bundled dependency notices below.
 
 Before using a shared room, read the [security model](SECURITY.md) and
 [privacy and data-flow disclosure](PRIVACY.md). Help and issue-reporting guidance
