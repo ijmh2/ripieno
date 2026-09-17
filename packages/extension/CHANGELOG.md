@@ -1,5 +1,10 @@
 # Change Log
 
+## Unreleased
+
+- Release Ripieno under the MIT License, replacing the source-available Alpha Terms.
+- Clarify that personal and commercial use, modification and redistribution are permitted.
+
 ## 0.0.5
 
 - Close the Ripieno sidebar when opening or focusing the full workspace so the interface occupies one surface. Other active sidebars remain open.
