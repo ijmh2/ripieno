@@ -108,7 +108,8 @@ message, per room).
 | `RIPIENO_PUBLIC_URL` | learned from the proxy | The address to hand out. Only needed when the printed one is wrong. |
 | `RIPIENO_DATA_DIR` | none | Where room history is written. Without it, a restart empties every room. Point it at a mounted volume. |
 | `RIPIENO_REQUIRE_GITHUB` | on for the standalone relay | Verify members against GitHub rather than believing the handle they send. Set `0` to turn it off — see below. |
-| `RIPIENO_WORKSPACE_TOKEN` | none | Separate secret for the shared-workspace container. Without it the workspace role is refused entirely. |
+| `RIPIENO_ROOM_POLICY_FILE` | none (trusted-team mode) | Path to a JSON file mapping rooms to allowed GitHub logins. Requires GitHub verification and denies every unlisted room. See restricted rooms below. |
+| `RIPIENO_WORKSPACE_TOKEN` | none | Separate secret for the shared-workspace container. Without it the workspace role is refused entirely. Workspace-role joins are also refused whenever a room policy is configured. |
 | `RIPIENO_PORT` / `PORT` | 8787 | `PORT` wins, so most hosts need no configuration. |
 | `RIPIENO_HOST` | `127.0.0.1` locally; `0.0.0.0` when `PORT` is injected | Interface to bind. Setting any non-loopback host also requires `RIPIENO_TOKEN`. |
 
@@ -134,6 +135,80 @@ The extension's embedded solo relay skips both the shared token and GitHub
 verification. A standalone loopback relay is different: a proxy or tunnel can
 make it externally reachable, so it retains the secure standalone defaults.
 
+### Trusted-team mode and restricted rooms
+
+Without `RIPIENO_ROOM_POLICY_FILE`, the relay is **one trust domain**: anyone
+holding its token and satisfying its identity check can join any room whose code
+they know, including its saved transcript. Room codes are names, not secrets or
+invitations. Owner, member and viewer roles control actions after admission;
+they do not decide who may enter. Use this default only for people who already
+trust one another with every room on that relay.
+
+To restrict admission, create a file controlled by the relay operator:
+
+```json
+{
+  "rooms": {
+    "team-review": ["ijmh2", "teammate"],
+    "private-planning": ["ijmh2"]
+  }
+}
+```
+
+Then set `RIPIENO_ROOM_POLICY_FILE` to its path and keep
+`RIPIENO_REQUIRE_GITHUB=1`. For example, from a POSIX shell:
+
+```bash
+RIPIENO_ROOM_POLICY_FILE=./room-policy.json RIPIENO_REQUIRE_GITHUB=1 npm start
+```
+
+Or in PowerShell:
+
+```powershell
+$env:RIPIENO_ROOM_POLICY_FILE = "./room-policy.json"
+$env:RIPIENO_REQUIRE_GITHUB = "1"
+npm start
+```
+
+For Docker, mount the policy file read-only and set the variable to its path
+inside the container. The relay must be able to read it at startup. A missing,
+unreadable or malformed configured file stops startup, as does disabling GitHub
+verification. Do not remove the variable to work around a configuration error:
+doing so restores trusted-team admission.
+
+The relay checks the login returned by GitHub before creating or restoring the
+room or sending its history. Human and agent connections need both the shared
+relay token and a verified login in that room's allowlist. An agent uses its
+owner's verified login. A claimed handle, an invite link, or a saved owner role
+does not override the allowlist. Unknown rooms are denied. GitHub logins match
+without regard to case; room codes match exactly after the client's surrounding
+whitespace is trimmed. Logins must omit `@`; empty lists and duplicate logins
+are configuration errors. Room names that differ only by case, or resolve to
+the same persisted filename, cannot coexist in one policy. `{"rooms": {}}`
+deliberately denies all rooms.
+
+The policy does not assign roles: the existing first-admitted-account ownership
+rule and saved roles still apply. In a new room, have the intended owner join
+first. Owners can change admitted members' roles but cannot grant access to
+accounts missing from the operator's policy. Keep the policy current when
+GitHub accounts are renamed or removed; entries identify logins, not permanent
+GitHub numeric account IDs.
+
+Policies are loaded once. To add or revoke access, edit the file and restart the
+relay so every existing connection is dropped and checked again. No live reload
+or editor invite-management interface is provided. Removing access does not
+erase transcripts already delivered to a client or change stored room roles.
+When restricting an existing relay, review its saved history as well as its room
+names; the policy does not migrate or separate legacy history files.
+
+**Shared-workspace containers cannot join a restricted relay.** The global
+`RIPIENO_WORKSPACE_TOKEN` is not scoped to a room, so accepting it would bypass
+the allowlist. This restriction applies even if that token is configured and
+correct. Admitted members can still host their own workspaces and attach agents
+using the existing tool-permission controls. For a shared-workspace container,
+use a separate trusted-team relay for that one trusted group until scoped
+container credentials are supported.
+
 ## Why there is no hosted option
 
 Two reasons, one principled and one practical.
@@ -149,6 +224,9 @@ the first page.
 either a bill or a business, and this is neither. Running your own costs a few
 pounds a month, or nothing at all if you use your own machine.
 
-If you deploy one and share the URL, remember that everyone you give the token to
-can join every room on it. One relay per group of people who already trust each
-other; a separate relay, or at least a separate token, for anyone else.
+If you deploy one and share the URL, choose its admission model explicitly:
+one trusted group per default relay, or verified per-room allowlists as described
+above. Separate relay processes and data directories remain the appropriate
+boundary for groups who must not share an operator or infrastructure. A single
+relay has a single shared token; changing that token alone does not create
+separate groups within it.

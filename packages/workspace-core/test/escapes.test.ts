@@ -41,8 +41,9 @@ describe("a symlinked directory cannot be used to write outside the workspace", 
     await mkdir(root, { recursive: true });
     await mkdir(outside, { recursive: true });
     await writeFile(path.join(outside, "existing"), "secret", "utf8");
-    // The shape a repository can carry in git: a committed symlink to /.
-    await symlink(outside, path.join(root, "vendor"), "dir");
+    // A Windows junction exercises the same realpath escape without requiring
+    // Developer Mode or the administrator-only file symlink privilege.
+    await symlink(outside, path.join(root, "vendor"), process.platform === "win32" ? "junction" : "dir");
   });
 
   after(async () => {
@@ -88,6 +89,8 @@ describe("a symlinked directory cannot be used to write outside the workspace", 
 describe("a symlinked file cannot be read out of the workspace by search", () => {
   let base: string;
   let root: string;
+  let missingSymlinkPrivilege = false;
+  const symlinkSkipReason = "Windows file symlinks require Developer Mode or the Create symbolic links privilege; directory escapes are still tested using junctions.";
 
   before(async () => {
     base = await mkdtemp(path.join(tmpdir(), "mpa-leak-"));
@@ -97,15 +100,22 @@ describe("a symlinked file cannot be read out of the workspace by search", () =>
     await writeFile(path.join(root, "real.txt"), "ordinary content\n", "utf8");
     // Directly in the root, so its *parent* realpaths inside — which is all the
     // old check looked at.
-    await symlink(path.join(base, "id_rsa"), path.join(root, "leak.env"));
-    await symlink(path.join(base, "id_rsa"), path.join(root, "src", "nested-leak.env"));
+    try {
+      await symlink(path.join(base, "id_rsa"), path.join(root, "leak.env"));
+      await symlink(path.join(base, "id_rsa"), path.join(root, "src", "nested-leak.env"));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(code ?? "")) throw error;
+      missingSymlinkPrivilege = true;
+    }
   });
 
   after(async () => {
     await rm(base, { recursive: true, force: true });
   });
 
-  test("confineToWorkspace drops a file symlink pointing outside", async () => {
+  test("confineToWorkspace drops a file symlink pointing outside", async (t) => {
+    if (missingSymlinkPrivilege) return t.skip(symlinkSkipReason);
     const kept = await confineToWorkspace(
       [path.join(root, "real.txt"), path.join(root, "leak.env")],
       root
@@ -113,7 +123,8 @@ describe("a symlinked file cannot be read out of the workspace by search", () =>
     assert.deepEqual(kept, [path.join(root, "real.txt")]);
   });
 
-  test("search does not return content from outside the workspace", async () => {
+  test("search does not return content from outside the workspace", async (t) => {
+    if (missingSymlinkPrivilege) return t.skip(symlinkSkipReason);
     // read_file already refused this exact path. search printed it — and the
     // inconsistency between the two is what proves the boundary was wrong.
     const core = new WorkspaceCore({
@@ -125,7 +136,8 @@ describe("a symlinked file cannot be read out of the workspace by search", () =>
     assert.ok(!res!.content.includes("AWS_SECRET_ACCESS_KEY"), "not even the matching line");
   });
 
-  test("list_files does not name files that resolve outside", async () => {
+  test("list_files does not name files that resolve outside", async (t) => {
+    if (missingSymlinkPrivilege) return t.skip(symlinkSkipReason);
     const core = new WorkspaceCore({
       resolveRoot: () => ({ ok: true, abs: root }),
       gate: new RecordingGate(),

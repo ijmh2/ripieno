@@ -62,7 +62,7 @@ describe("a path from an agent cannot leave the workspace", () => {
   test("a symlink pointing out of the workspace is refused", async () => {
     // The case a syntactic check cannot catch: the path looks entirely innocent
     // and only realpath reveals where it lands.
-    await symlink(outside, path.join(root, "vendor"), "dir");
+    await symlink(outside, path.join(root, "vendor"), process.platform === "win32" ? "junction" : "dir");
     const safe = await resolveSafePath(root, "vendor/id_rsa");
     assert.equal(safe.ok, false);
     assert.match((safe as { reason: string }).reason, /symlink/);
@@ -90,7 +90,7 @@ describe("confineToWorkspace drops results that only look internal", () => {
     await mkdir(outside, { recursive: true });
     await writeFile(path.join(root, "real.ts"), "", "utf8");
     await writeFile(path.join(outside, "leaked.ts"), "", "utf8");
-    await symlink(outside, path.join(root, "linked"), "dir");
+    await symlink(outside, path.join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
   });
 
   after(async () => {
@@ -113,7 +113,8 @@ describe("confineToWorkspace drops results that only look internal", () => {
 describe("isInside", () => {
   test("a sibling with a shared prefix is not inside", () => {
     // "/a/workspace-old" must not count as inside "/a/workspace".
-    assert.equal(isInside("/a/workspace-old/f.ts", "/a/workspace"), false);
-    assert.equal(isInside("/a/workspace/f.ts", "/a/workspace"), true);
+    const root = path.resolve("a/workspace");
+    assert.equal(isInside(path.resolve("a/workspace-old/f.ts"), root), false);
+    assert.equal(isInside(path.join(root, "f.ts"), root), true);
   });
 });

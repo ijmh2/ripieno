@@ -16,7 +16,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm audit --omit=dev
+      - run: npm audit
       - run: npm run typecheck
       - name: Give git an identity for integration tests
         run: |

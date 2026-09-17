@@ -3,7 +3,7 @@
   "license": "MIT",
   "private": true,
   "version": "0.0.0",
-  "description": "A shared AI agent room — one conversation, multiple people, one agent that knows who said what.",
+  "description": "A self-hosted shared workspace for people and their AI agents, with attributable work.",
   "author": "Ivan Hart (@ijmh2)",
   "workspaces": [
     "packages/protocol",
@@ -18,17 +18,18 @@
     "build": "npm run build --workspaces --if-present",
     "setup": "node scripts/setup.js",
     "_comment": "test and typecheck build first: relay-client and mcp have no test script of their own, so nothing else builds them, and both the extension's bundler and its typechecker resolve @ripieno/relay-client through its dist. In a working copy that dist is usually lying around from an earlier build, so the missing step only shows up in a fresh clone — which is exactly who it has to work for.",
-    "test": "npm run build && npm run test --workspaces --if-present",
+    "test": "npm run build && npm run test:setup && npm run test --workspaces --if-present",
     "typecheck": "npm run build && npm run typecheck --workspaces --if-present",
     "build:relay": "npm run build -w @ripieno/protocol && npm run build -w @ripieno/relay",
     "prepare": "npm run build:relay --if-present",
-  "start": "node packages/relay/dist/src/index.js",
+    "start": "node packages/relay/dist/src/index.js",
     "build:workspace": "npm run build -w @ripieno/protocol && npm run build -w @ripieno/relay-client && npm run build -w @ripieno/workspace-core && npm run build -w @ripieno/workspace-host",
     "start:workspace": "node packages/workspace-host/dist/src/index.js",
     "demo:provenance": "npm run build:workspace --silent && node scripts/demo-provenance.js",
     "screenshots": "node scripts/screenshots.js",
     "package": "npm run build && npm run package -w ripieno",
-    "site": "node scripts/site.js"
+    "site": "node scripts/site.js",
+    "test:setup": "node scripts/test-files.js scripts/test"
   },
   "engines": {
     "node": ">=20"

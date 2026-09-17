@@ -84,6 +84,8 @@ export interface WriteProposal {
   rawPath: string;
   abs: string;
   proposed: string;
+  /** Exact text used to compute this proposal; null means the path was absent. */
+  expectedContent: string | null;
   existed: boolean;
   requester?: Requester;
   report: ProgressReporter;
@@ -486,7 +488,12 @@ export class WorkspaceCore {
   ): Promise<ToolResult> {
     const rawPath = requireString(input, "path");
     const content = requireString(input, "content");
-    return this.propose(rawPath, content, report, requester);
+    const safe = await this.safe(rawPath);
+    if (!safe.ok) return { content: safe.reason, isError: true };
+    // Whole-file writes retain their existing API. Their baseline is the file
+    // at tool invocation; edits additionally retain the exact text they used.
+    const expectedContent = await readWriteBase(safe.abs);
+    return this.propose(rawPath, safe.abs, content, expectedContent, report, requester);
   }
 
   /**
@@ -518,31 +525,28 @@ export class WorkspaceCore {
         isError: true,
       };
     }
-    return this.propose(rawPath, current.replace(oldText, newText), report, requester);
+    return this.propose(rawPath, safe.abs, current.replace(oldText, newText), current, report, requester);
   }
 
   /** Compute the change, then hand it to the host to approve and apply. */
   private async propose(
     rawPath: string,
+    abs: string,
     proposed: string,
+    expectedContent: string | null,
     report: ProgressReporter,
     requester?: Requester
   ): Promise<ToolResult> {
-    const safe = await this.safe(rawPath);
-    if (!safe.ok) {
-      return { content: safe.reason, isError: true };
-    }
-
-    const existed = await fileExists(safe.abs);
-    const current = existed ? (await fs.readFile(safe.abs)).toString("utf8") : "";
-    if (existed && current === proposed) {
+    const existed = expectedContent !== null;
+    if (existed && expectedContent === proposed) {
       return { content: `${rawPath} already has exactly that content; nothing to change.` };
     }
 
     return this.options.gate.applyWrite({
       rawPath,
-      abs: safe.abs,
+      abs,
       proposed,
+      expectedContent,
       existed,
       requester,
       report,
@@ -553,6 +557,33 @@ export class WorkspaceCore {
 /* ------------------------------------------------------------------ */
 /* Helpers, shared with the hosts                                      */
 /* ------------------------------------------------------------------ */
+
+/** Read once, distinguishing a missing file from permissions and other errors. */
+export async function readWriteBase(abs: string): Promise<string | null> {
+  try {
+    return await fs.readFile(abs, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+export function staleWriteResult(rawPath: string): ToolResult {
+  return {
+    content: `Conflict: ${rawPath} changed since this edit was prepared. Read the latest file and retry; this proposal was not applied.`,
+    isError: true,
+  };
+}
+
+/** Hosts must call this inside their write lock, immediately before applying. */
+export async function writeProposalConflict(p: WriteProposal): Promise<ToolResult | undefined> {
+  // Also fail closed for callers using an older, unversioned proposal shape.
+  if ((p.expectedContent !== null && typeof p.expectedContent !== "string") ||
+      p.existed !== (p.expectedContent !== null)) {
+    return { content: `Cannot write ${p.rawPath} without its expected original content.`, isError: true };
+  }
+  return await readWriteBase(p.abs) === p.expectedContent ? undefined : staleWriteResult(p.rawPath);
+}
 
 /**
  * Environment for a command run on someone's behalf.

@@ -15,7 +15,7 @@
 import { test, describe, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,19 +23,18 @@ import { GitWorkspace } from "../src/git.js";
 import { ContainerGate } from "../src/gate.js";
 import type { WriteProposal } from "@ripieno/workspace-core";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 async function seedRepo(base: string): Promise<{ origin: string; work: string }> {
   const origin = path.join(base, "origin.git");
   await mkdir(origin, { recursive: true });
-  await execAsync(`git init --bare -b main ${origin}`);
+  await execFileAsync("git", ["init", "--bare", "-b", "main", origin]);
   const seed = path.join(base, "seed");
-  await execAsync(`git clone ${origin} ${seed}`);
+  await execFileAsync("git", ["clone", origin, seed]);
   await writeFile(path.join(seed, "README.md"), "# seed\n", "utf8");
-  await execAsync(
-    "git add -A && git -c user.email=t@t -c user.name=t commit -m seed && git push origin main",
-    { cwd: seed }
-  );
+  await execFileAsync("git", ["add", "-A"], { cwd: seed });
+  await execFileAsync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "seed"], { cwd: seed });
+  await execFileAsync("git", ["push", "origin", "main"], { cwd: seed });
   return { origin, work: path.join(base, "work") };
 }
 
@@ -65,7 +64,8 @@ describe("concurrent agents do not lose work", () => {
       repo: { owner: "t", name: "seed", branch: "main", url: origin },
       announce: (m) => announced.push(m),
     });
-    await git.ensureClone();
+    const clone = await git.ensureClone();
+    assert.equal(clone.ok, true, clone.message);
     gate = new ContainerGate({
       policy: { allow: [], allowAll: false },
       commit: (p) => git.commit(path.relative(root, p.abs), p.requester, `Add ${path.relative(root, p.abs)}`),
@@ -80,13 +80,14 @@ describe("concurrent agents do not lose work", () => {
     rawPath: rel,
     abs: path.join(root, rel),
     proposed: content,
+    expectedContent: null,
     existed: false,
     requester: { label, handle: label.toLowerCase().replace(/\W+/g, "") },
     report: () => {},
   });
 
-  const log = async (format: string, args = ""): Promise<string[]> =>
-    (await execAsync(`git log --format='${format}' ${args}`, { cwd: root })).stdout
+  const log = async (format: string): Promise<string[]> =>
+    (await execFileAsync("git", ["log", `--format=${format}`], { cwd: root })).stdout
       .trim()
       .split("\n")
       .filter(Boolean);
@@ -102,7 +103,7 @@ describe("concurrent agents do not lose work", () => {
       assert.ok(!/could not be committed/.test(r.content), `write ${i}: ${r.content}`);
     }
 
-    const status = (await execAsync("git status --porcelain", { cwd: root })).stdout.trim();
+    const status = (await execFileAsync("git", ["status", "--porcelain"], { cwd: root })).stdout.trim();
     assert.equal(status, "", `nothing should be left uncommitted, got:\n${status}`);
 
     const subjects = await log("%s");
@@ -133,7 +134,7 @@ describe("concurrent agents do not lose work", () => {
     // collapse while every author line still looked correct.
     for (const sha of await log("%H")) {
       const files = (
-        await execAsync(`git show --name-only --format= ${sha}`, { cwd: root })
+        await execFileAsync("git", ["show", "--name-only", "--format=", sha], { cwd: root })
       ).stdout
         .split("\n")
         .filter(Boolean);
@@ -150,10 +151,12 @@ describe("concurrent agents do not lose work", () => {
     // committed under one of their names.
     const long = "written by alice".repeat(40) + "\n";
     const short = "written by bob\n";
-    await Promise.all([
+    const results = await Promise.all([
       gate.applyWrite(propose("shared.txt", long, "Alice")),
       gate.applyWrite(propose("shared.txt", short, "Bob")),
     ]);
+    assert.equal(results.filter((result) => !result.isError).length, 1);
+    assert.equal(results.filter((result) => result.isError).length, 1);
 
     const onDisk = await readFile(path.join(root, "shared.txt"), "utf8");
     assert.ok(
@@ -162,7 +165,7 @@ describe("concurrent agents do not lose work", () => {
     );
 
     // And what git has must match what is on disk.
-    const committed = (await execAsync("git show HEAD:shared.txt", { cwd: root })).stdout;
+    const committed = (await execFileAsync("git", ["show", "HEAD:shared.txt"], { cwd: root })).stdout;
     assert.equal(committed, onDisk, "the commit must contain the bytes that are actually there");
   });
 
@@ -201,7 +204,8 @@ describe("a push is never quietly abandoned", () => {
       repo: { owner: "t", name: "seed", branch: "main", url: origin },
       announce: () => {},
     });
-    await git.ensureClone();
+    const clone = await git.ensureClone();
+    assert.equal(clone.ok, true, clone.message);
   });
 
   after(async () => {
@@ -222,7 +226,7 @@ describe("a push is never quietly abandoned", () => {
     await git.flush();
 
     const remote = (
-      await execAsync(`git log --format='%s' origin/main`, { cwd: root })
+      await execFileAsync("git", ["log", "--format=%s", "origin/main"], { cwd: root })
     ).stdout;
     assert.match(remote, /Add first\.txt/);
     assert.match(remote, /Add second\.txt/, "the commit made during the push must not be stranded");
@@ -234,7 +238,7 @@ describe("a push is never quietly abandoned", () => {
     const inFlight = git.push();
     await git.flush();
     await inFlight;
-    const remote = (await execAsync(`git log --format='%s' origin/main`, { cwd: root })).stdout;
+    const remote = (await execFileAsync("git", ["log", "--format=%s", "origin/main"], { cwd: root })).stdout;
     assert.match(remote, /Add third\.txt/);
   });
 });

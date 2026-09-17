@@ -12,7 +12,7 @@ require it — this file must ship with the extension.
 | `ajv` | 8.20.0 | MIT |
 | `ajv-formats` | 3.0.1 | MIT |
 | `fast-deep-equal` | 3.1.3 | MIT |
-| `fast-uri` | 3.1.5 | BSD-3-Clause |
+| `fast-uri` | 3.1.8 | BSD-3-Clause |
 | `json-schema-traverse` | 1.0.0 | MIT |
 | `ws` | 8.21.1 | MIT |
 | `zod` | 3.25.76 | MIT |

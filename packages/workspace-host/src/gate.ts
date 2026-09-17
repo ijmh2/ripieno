@@ -14,7 +14,7 @@
 
 import { writeFile, mkdir } from "node:fs/promises";
 import * as path from "node:path";
-import { matchesAllowlist } from "@ripieno/workspace-core";
+import { matchesAllowlist, writeProposalConflict, staleWriteResult, errText } from "@ripieno/workspace-core";
 import type { ApprovalGate, Requester, ToolResult, WriteProposal } from "@ripieno/workspace-core";
 
 export interface CommandPolicy {
@@ -87,31 +87,35 @@ export class ContainerGate implements ApprovalGate {
 
   async applyWrite(p: WriteProposal): Promise<ToolResult> {
     p.report("running");
-    const run = async (): Promise<boolean> => {
+    return this.opts.serialise(async (): Promise<ToolResult> => {
       await mkdir(path.dirname(p.abs), { recursive: true });
-      await writeFile(p.abs, p.proposed, "utf8");
+      const conflict = await writeProposalConflict(p);
+      if (conflict) return conflict;
+
+      // The repository lock protects cooperating gates. External processes and
+      // tool-run commands can still race this check; the filesystem has no
+      // compare-and-swap for existing files. New files get atomic O_EXCL.
+      try {
+        await writeFile(p.abs, p.proposed, { encoding: "utf8", flag: p.existed ? "w" : "wx" });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EEXIST") return staleWriteResult(p.rawPath);
+        return { content: `Could not write ${p.rawPath}: ${errText(err)}`, isError: true };
+      }
+      const verb = p.existed ? "Updated" : "Created";
       try {
         await this.opts.commit(p);
-        return true;
+        return { content: `${verb} ${p.rawPath}.` };
       } catch {
-        return false;
+        return {
+          content: `${verb} ${p.rawPath}, but it could not be committed — it is on the workspace disk only and will be lost if this container is replaced.`,
+          isError: true,
+        };
+      } finally {
+        // Written bytes invalidate caches even if the commit failed. A rejected
+        // stale proposal never gets here and must not announce a change.
+        this.opts.onChanged(p.abs);
       }
-    };
-
-    const committed = await this.opts.serialise(run);
-
-    // The room hears about the change either way: the bytes are on disk, so
-    // every member's cache is stale regardless of whether git knows.
-    this.opts.onChanged(p.abs);
-
-    const verb = p.existed ? "Updated" : "Created";
-    if (committed) return { content: `${verb} ${p.rawPath}.` };
-    // isError, not prose. An agent reads the flag; it may never read a sentence
-    // explaining that its work exists on one disposable disk and nowhere else.
-    return {
-      content: `${verb} ${p.rawPath}, but it could not be committed — it is on the workspace disk only and will be lost if this container is replaced.`,
-      isError: true,
-    };
+    });
   }
 }
 

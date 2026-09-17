@@ -19,15 +19,16 @@
  */
 
 const { mkdtemp, mkdir, writeFile, rm } = require("node:fs/promises");
-const { exec } = require("node:child_process");
+const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 
-const run = promisify(exec);
+const run = promisify(execFile);
 const root = path.join(__dirname, "..");
 const { GitWorkspace } = require(path.join(root, "packages/workspace-host/dist/src/git.js"));
 const { ContainerGate } = require(path.join(root, "packages/workspace-host/dist/src/gate.js"));
+const { readWriteBase } = require(path.join(root, "packages/workspace-core/dist/src/index.js"));
 
 /** Who writes what. Two people, three agents, one repository. */
 const WORK = [
@@ -41,14 +42,13 @@ const WORK = [
 async function seed(base) {
   const origin = path.join(base, "origin.git");
   await mkdir(origin, { recursive: true });
-  await run(`git init --bare -b main "${origin}"`);
+  await run("git", ["init", "--bare", "-b", "main", origin]);
   const seedDir = path.join(base, "seed");
-  await run(`git clone "${origin}" "${seedDir}"`);
+  await run("git", ["clone", "--", origin, seedDir]);
   await writeFile(path.join(seedDir, "README.md"), "# demo\n", "utf8");
-  await run(
-    'git add -A && git -c user.email=demo@example.com -c user.name=demo commit -m "Initial commit" && git push -q origin main',
-    { cwd: seedDir }
-  );
+  await run("git", ["add", "-A"], { cwd: seedDir });
+  await run("git", ["-c", "user.email=demo@example.com", "-c", "user.name=demo", "commit", "-m", "Initial commit"], { cwd: seedDir });
+  await run("git", ["push", "-q", "origin", "main"], { cwd: seedDir });
   return origin;
 }
 
@@ -79,7 +79,7 @@ async function main() {
     policy: { allow: [], allowAll: false },
     commit: (p) => {
       const rel = path.relative(work, p.abs);
-      return git.commit(rel, p.requester, subjects.get(rel) ?? `Update ${rel}`);
+      return git.commit(rel, p.requester, subjects.get(rel.split(path.sep).join("/")) ?? `Update ${rel}`);
     },
     onChanged: () => {},
     rootFor: () => work,
@@ -96,16 +96,18 @@ async function main() {
   // serialises on .git/index.lock, and losing that race is how five writes in
   // six used to vanish.
   const results = await Promise.all(
-    WORK.map((w) =>
-      gate.applyWrite({
+    WORK.map(async (w) => {
+      const expectedContent = await readWriteBase(path.join(work, w.file));
+      return gate.applyWrite({
         rawPath: w.file,
         abs: path.join(work, w.file),
         proposed: `// ${w.message}\n`,
-        existed: false,
+        existed: expectedContent !== null,
+        expectedContent,
         requester: { label: w.agent, handle: w.handle },
         report: () => {},
-      })
-    )
+      });
+    })
   );
   const failed = results.filter((r) => r.isError || /could not be committed/.test(r.content));
   if (failed.length > 0) {
@@ -116,7 +118,7 @@ async function main() {
   // `%<(16)` is git's own column padding, so the alignment in a screenshot is
   // still genuinely git's output and not something this script did to it.
   const FORMAT = "%<(16)%an  %s";
-  const log = (await run(`git log --pretty='${FORMAT}' -${WORK.length}`, { cwd: work })).stdout;
+  const log = (await run("git", ["log", `--pretty=${FORMAT}`, `-${WORK.length}`], { cwd: work })).stdout;
   say();
   console.log(`$ git log --pretty='${FORMAT}' -${WORK.length}\n`);
   console.log(
@@ -127,7 +129,7 @@ async function main() {
       .join("\n")
   );
 
-  const dirty = (await run("git status --porcelain", { cwd: work })).stdout.trim();
+  const dirty = (await run("git", ["status", "--porcelain"], { cwd: work })).stdout.trim();
   if (!quiet) console.log(
     `\n${dirty === "" ? "Everything committed" : `UNCOMMITTED:\n${dirty}`} — and the committer is this machine, ` +
       `so each agent authored its own work without being able to claim anyone else's.`

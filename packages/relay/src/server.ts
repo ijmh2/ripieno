@@ -15,6 +15,7 @@ import { Room } from "./room.js";
 import { createRoomStore } from "./roomStore.js";
 import { GithubVerifier } from "./identity.js";
 import { publicUrlFromHeaders } from "./bootstrap.js";
+import { compileRoomPolicy, type RoomPolicyConfig } from "./admission.js";
 
 /**
  * How often to ping clients, and therefore how long a vanished member can look
@@ -55,6 +56,12 @@ export interface ServerConfig {
    * working; turning it on is what makes roles and attribution mean anything.
    */
   requireGithub?: boolean;
+  /**
+   * Optional per-room GitHub allowlists. Unknown rooms fail closed, and verified
+   * identity is mandatory. Workspace-role connections are disabled in this mode:
+   * the global workspace token cannot prove access to an individual room.
+   */
+  roomPolicy?: RoomPolicyConfig;
   /**
    * Refuse connections that carry an `Origin` header.
    *
@@ -173,6 +180,10 @@ export function startServer(config: ServerConfig): Relay {
   const bindHost = config.host ?? "127.0.0.1";
   const exposureError = validateRelayExposure(bindHost, config.token);
   if (exposureError) throw new Error(exposureError);
+  const mayJoin = config.roomPolicy === undefined ? undefined : compileRoomPolicy(config.roomPolicy);
+  if (mayJoin && config.requireGithub !== true) {
+    throw new Error("Room admission policy requires RIPIENO_REQUIRE_GITHUB=1 (requireGithub: true).");
+  }
   const rooms = new Map<string, Room>();
   const store = createRoomStore(config.dataDir);
   const verifier = config.verifier ?? new GithubVerifier();
@@ -438,6 +449,17 @@ export function startServer(config: ServerConfig): Relay {
             }
             const member = sanitise(msg.member);
             if (!member) return send(socket, "invalid member identity");
+            if (typeof msg.room !== "string" || !msg.room.trim()) {
+              return send(socket, "invalid room code");
+            }
+            const roomCode = msg.room.trim();
+            // The shared workspace has no verified human identity, and a global
+            // infrastructure token must not bypass a per-room access policy.
+            if (mayJoin && msg.role === "workspace") {
+              send(socket, "workspace connections are unavailable on a relay with a room admission policy");
+              socket.close(4003, "room access denied");
+              return;
+            }
 
             // Identity before anything else touches room state. The handle is
             // taken from GitHub's answer, never from what the client sent.
@@ -451,6 +473,14 @@ export function startServer(config: ServerConfig): Relay {
               member.handle = verified.identity.handle;
               member.displayName = verified.identity.displayName;
               if (verified.identity.avatarUrl) member.avatarUrl = verified.identity.avatarUrl;
+            }
+            // Before roomFor: denied joins cannot create or restore a room, see
+            // its roster/transcript, or gain ownership by being first to arrive.
+            // Agents must prove that their human owner is allowed in, too.
+            if (mayJoin && !mayJoin(roomCode, member.handle)) {
+              send(socket, "room access denied");
+              socket.close(4003, "room access denied");
+              return;
             }
 
             const wantsWorkspace = msg.role === "workspace";
@@ -476,7 +506,7 @@ export function startServer(config: ServerConfig): Relay {
               : msg.role === "agent"
                 ? "agent"
                 : "human";
-            const room = await roomFor(msg.room.trim());
+            const room = await roomFor(roomCode);
             // Several agents may belong to one person, so each carries its own
             // id. Defaulting keeps single-agent clients working unchanged.
             const agent =
@@ -849,6 +879,7 @@ export function startServer(config: ServerConfig): Relay {
   log(
     `relay listening on ${bindHost}:${config.port} ` +
       `(${config.mode} mode, ${config.token ? "token required" : "OPEN — no token"}, ` +
+      `${mayJoin ? "restricted rooms" : "trusted-team admission"}, ` +
       `${config.dataDir ? `history in ${config.dataDir}` : "history in memory only"})`
   );
   if (!config.token && !isLoopbackHost(bindHost)) {

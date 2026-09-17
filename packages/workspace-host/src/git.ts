@@ -13,13 +13,13 @@
  * from that repository's own settings page.
  */
 
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { access, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { commandEnv, type Requester } from "@ripieno/workspace-core";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface RepoBinding {
   owner: string;
@@ -89,9 +89,7 @@ export class GitWorkspace {
     try {
       await access(pub);
     } catch {
-      await execAsync(
-        `ssh-keygen -t ed25519 -N "" -C "ripieno room workspace" -f ${shellQuote(this.keyPath)}`
-      );
+      await execFileAsync("ssh-keygen", ["-t", "ed25519", "-N", "", "-C", "ripieno room workspace", "-f", this.keyPath]);
     }
     // ssh refuses to use a key others can read, and a fresh volume does not
     // always give us the mode we expect.
@@ -128,8 +126,8 @@ export class GitWorkspace {
     await mkdir(path.dirname(this.opts.root), { recursive: true });
     const url = repo.url ?? `git@github.com:${repo.owner}/${repo.name}.git`;
     try {
-      await execAsync(
-        `git clone --branch ${shellQuote(repo.branch)} ${shellQuote(url)} ${shellQuote(this.opts.root)}`,
+      await execFileAsync(
+        "git", ["clone", "--branch", repo.branch, "--", url, this.opts.root],
         { env: this.sshEnv, timeout: 300_000, maxBuffer: 8 * 1024 * 1024 }
       );
       await this.configureIdentity();
@@ -189,7 +187,7 @@ export class GitWorkspace {
       // No marker: adopt anything that already has commits.
     }
     try {
-      await execAsync("git rev-parse --verify HEAD", {
+      await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
         cwd: this.opts.root,
         env: commandEnv(undefined, true),
       });
@@ -208,8 +206,8 @@ export class GitWorkspace {
    * workspace stopped being somebody's laptop.
    */
   private async configureIdentity(): Promise<void> {
-    await this.run('git config user.name "Shared workspace"');
-    await this.run('git config user.email "workspace@users.noreply.github.com"');
+    await this.run(["config", "user.name", "Shared workspace"]);
+    await this.run(["config", "user.email", "workspace@users.noreply.github.com"]);
   }
 
   /**
@@ -245,20 +243,18 @@ export class GitWorkspace {
       ? `${requester.label} <${requester.handle}+agent@users.noreply.github.com>`
       : "Shared workspace <workspace@users.noreply.github.com>";
 
-    await this.run(`git add -- ${shellQuote(relPath)}`);
+    await this.run(["add", "--", relPath]);
     // Scoped to this path. Asking whether *anything* is staged meant that once
     // something unrelated was left in the index — which an earlier concurrency
     // bug did routinely — the check never fired again and genuine no-ops fell
     // through to a `git commit` that errored.
-    const { stdout } = await execAsync(
-      `git diff --cached --name-only -- ${shellQuote(relPath)}`,
+    const { stdout } = await execFileAsync(
+      "git", ["diff", "--cached", "--name-only", "--", relPath],
       { cwd: this.opts.root, env: commandEnv() }
     );
     if (stdout.trim() === "") return;
 
-    await this.run(
-      `git commit --author=${shellQuote(author)} -m ${shellQuote(summary)} -- ${shellQuote(relPath)}`
-    );
+    await this.run(["commit", `--author=${author}`, "-m", summary, "--", relPath]);
     this.schedulePush();
   }
 
@@ -305,7 +301,7 @@ export class GitWorkspace {
 
   private async doPush(repo: RepoBinding): Promise<void> {
     try {
-      await execAsync(`git push origin HEAD:${shellQuote(repo.branch)}`, {
+      await execFileAsync("git", ["push", "origin", `HEAD:${repo.branch}`], {
         cwd: this.opts.root,
         env: this.sshEnv,
         timeout: 120_000,
@@ -351,8 +347,8 @@ export class GitWorkspace {
     }
   }
 
-  private async run(command: string): Promise<void> {
-    await execAsync(command, {
+  private async run(args: string[]): Promise<void> {
+    await execFileAsync("git", args, {
       cwd: this.opts.root,
       // Even git has no use for the relay's credentials, and a hook in a cloned
       // repository is somebody else's code running in this container.
@@ -365,7 +361,7 @@ export class GitWorkspace {
   async dirtyPaths(): Promise<string[]> {
     if (!(await this.isRepo())) return [];
     try {
-      const { stdout } = await execAsync("git status --porcelain -z", {
+      const { stdout } = await execFileAsync("git", ["status", "--porcelain", "-z"], {
         cwd: this.opts.root,
         env: commandEnv(undefined, true),
         maxBuffer: 8 * 1024 * 1024,
@@ -388,14 +384,14 @@ export class GitWorkspace {
     const author = requester
       ? `${requester.label} <${requester.handle}+agent@users.noreply.github.com>`
       : "Shared workspace <workspace@users.noreply.github.com>";
-    await this.run("git add -A");
-    await this.run(`git commit --author=${shellQuote(author)} -m ${shellQuote(summary)}`);
+    await this.run(["add", "-A"]);
+    await this.run(["commit", `--author=${author}`, "-m", summary]);
     this.schedulePush();
     return paths;
   }
 }
 
-/** Single-quote for /bin/sh. Repo names and agent labels both reach the shell. */
+/** Quote Git's SSH command. Ordinary Git arguments bypass the shell entirely. */
 export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }

@@ -15,7 +15,7 @@ describe("Preview release metadata", () => {
   test("the manifest describes an MIT-licensed Preview", () => {
     assert.equal(manifest.preview, true);
     assert.match(manifest.version, /^0\.0\./);
-    assert.equal(manifest.pricing, "Free");
+    assert.equal(manifest.pricing, undefined);
     assert.equal(manifest.license, "MIT");
     for (const url of [manifest.homepage, manifest.repository?.url, manifest.bugs?.url]) {
       assert.match(url ?? "", /^https:\/\//);
@@ -98,7 +98,8 @@ describe("Preview release metadata", () => {
   });
 
   test("package and publish commands cannot traverse workspace dependencies", () => {
-    assert.match(manifest.scripts.package, /\bvsce package\b.*--no-dependencies/);
+    assert.equal(manifest.scripts.package, "node ../../scripts/package-extension.js");
+    assert.match(readRoot("scripts/package-extension.js"), /"package", "--no-dependencies"/);
     assert.match(manifest.scripts["publish:marketplace"], /\bvsce publish\b.*--no-dependencies/);
     const ignored = readExtension(".vscodeignore");
     assert.match(ignored, /^src\/\*\*/m);

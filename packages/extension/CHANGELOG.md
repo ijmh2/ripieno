@@ -5,6 +5,16 @@
 - Release Ripieno under the MIT License, replacing the source-available Alpha Terms.
 - Clarify that personal and commercial use, modification and redistribution are permitted.
 
+## 0.0.6 — Preview
+
+- Reject stale shared-file proposals and protect unsaved editor buffers during approval.
+- Support explicit GitHub-account room allowlists on standalone relays; restricted relays deny unknown rooms and headless workspace joins.
+- Make setup, builds, test discovery and packaging portable to Windows, with Windows CI coverage.
+- Patch production dependency advisories and clarify licensing and bounded history.
+
+This Preview still requires the real two-editor/provider acceptance checks in
+`docs/releases.md`; automated checks do not prove that workflow.
+
 ## 0.0.5
 
 - Close the Ripieno sidebar when opening or focusing the full workspace so the interface occupies one surface. Other active sidebars remain open.
