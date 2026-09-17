@@ -4,12 +4,11 @@ Ripieno adds a shared room to VS Code and compatible forks. Several people can
 bring their own local or API-backed agents into one attributed conversation and
 route workspace work through explicit host-side boundaries.
 
-This is a **0.0.x Preview**, free for personal and non-commercial use. It runs locally
-or against a relay you operate; the project does not provide a hosted relay.
-Organisations may evaluate for 30 days; other organisational use requires a
-commercial licence under the [alpha terms](https://github.com/ijmh2/ripieno/blob/main/LICENSE).
-Provider subscriptions, API charges and hosting costs are separate. Commercial
-prices are not yet published; [contact the author](https://github.com/ijmh2) to arrange terms.
+This is an open-source **0.0.x Preview** under the
+[MIT License](https://github.com/ijmh2/ripieno/blob/main/LICENSE), free for
+personal and commercial use. It runs locally or against a relay you operate;
+the project does not provide a hosted relay. Provider subscriptions, API charges
+and hosting costs are separate.
 
 ## Quick start
 
@@ -142,8 +141,6 @@ For help, see [SUPPORT.md](https://github.com/ijmh2/ripieno/blob/main/SUPPORT.md
 Follow the security policy for private reporting when available; never include
 sensitive details in a public issue.
 
-Source-available under the [alpha terms](https://github.com/ijmh2/ripieno/blob/main/packages/extension/LICENSE)
-— free for personal and non-commercial use, licensed for organisations. Not open
-source. Bundled dependency
-notices are in
+Open source under the [MIT License](https://github.com/ijmh2/ripieno/blob/main/LICENSE).
+Third-party components retain their own licences; see
 [THIRD_PARTY_NOTICES.md](https://github.com/ijmh2/ripieno/blob/main/packages/extension/THIRD_PARTY_NOTICES.md).

@@ -1,52 +1,21 @@
-Ripieno — Alpha Terms
+MIT License
 
-Copyright (c) 2026 Ivan Hart. All rights reserved.
+Copyright (c) 2026 Ivan Hart
 
-Ripieno is source-available, not open source. The source may be read, built and
-checked; the permissions below are the only ones granted.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-FREE, WITH NO LICENCE REQUIRED
-
-  - Personal use, by an individual, on any number of their own machines.
-  - Non-commercial use: study, teaching, research, and hobby projects.
-  - Evaluation by an organisation, for up to 30 days.
-  - Reading, building and modifying the source for any of the above, so that
-    every claim this project makes about itself can be verified.
-  - Running your own relay and your own shared-workspace host for any of the
-    above.
-
-
-REQUIRES A COMMERCIAL LICENCE
-
-  - Any other use by or for an organisation, including a company, a charity, a
-    public body, or a sole trader acting in the course of business.
-
-  This applies however Ripieno is run. Hosting it yourself does not avoid it:
-  what is licensed is the use, not the delivery. Contact the author to arrange
-  terms; they will be reasonable, and individuals will never be charged.
-
-
-NOT PERMITTED UNDER ANY LICENCE HERE
-
-  - Redistributing Ripieno, or a modified version of it.
-  - Offering Ripieno, or any service based on it, to third parties.
-  - Using it to build a competing product.
-  - Removing or altering this notice.
-
-
-Commercial terms will be published before 1.0. Personal and non-commercial use
-will remain free permanently.
-
-
-THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
-ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-
-Third-party components bundled with Ripieno remain under their own licences,
-which are unaffected by these terms. See
-packages/extension/THIRD_PARTY_NOTICES.md.
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

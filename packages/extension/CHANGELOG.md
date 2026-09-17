@@ -1,5 +1,10 @@
 # Change Log
 
+## Unreleased
+
+- Release Ripieno under the MIT License, replacing the source-available Alpha Terms.
+- Clarify that personal and commercial use, modification and redistribution are permitted.
+
 ## 0.0.6 — Preview
 
 - Reject stale shared-file proposals and protect unsaved editor buffers during approval.

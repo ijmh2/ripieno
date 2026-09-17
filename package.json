@@ -1,5 +1,6 @@
 {
   "name": "ripieno-workspace",
+  "license": "MIT",
   "private": true,
   "version": "0.0.0",
   "description": "A self-hosted shared workspace for people and their AI agents, with attributable work.",

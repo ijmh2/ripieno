@@ -140,7 +140,7 @@ function layout({ title, body, slug, description }) {
 ${body}
 </main>
 <footer class="foot">
-  <p>Source-available. Personal and non-commercial use is free; organisations may evaluate for 30 days, then need a commercial licence. Provider and hosting costs are separate. <a href="https://github.com/ijmh2/ripieno/blob/main/LICENSE">Alpha terms</a>.</p>
+  <p>Open source under the <a href="https://github.com/ijmh2/ripieno/blob/main/LICENSE">MIT License</a>. Free for personal and commercial use; provider and hosting costs are separate.</p>
   <p>Built by Ivan Hart. This page is generated from the repository's own
   markdown — there is no second copy of anything here.</p>
 </footer>
